@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import List, Optional
+from collections.abc import AsyncIterator
+from typing import List, Optional, TYPE_CHECKING
 from urllib.parse import unquote
 
 import google.generativeai as genai
@@ -28,6 +29,9 @@ from api.prompts import (
 
 # Configure logging
 from api.logging_config import setup_logging
+
+if TYPE_CHECKING:
+    from ollama import ChatResponse
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -465,11 +469,18 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             try:
                 if request.provider == "ollama":
                     # Get the response and handle it properly using the previously created api_kwargs
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
+                    response: "AsyncIterator[ChatResponse]" = await model.acall(
+                        api_kwargs=api_kwargs,
+                        model_type=ModelType.LLM,
+                    )
                     # Handle streaming response from Ollama
                     async for chunk in response:
-                        text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None) or str(chunk)
-                        if text and not text.startswith('model=') and not text.startswith('created_at='):
+                        if not hasattr(chunk, "message"):
+                            raise RuntimeError(
+                                "`message` field not found in response. Wrong ollama-python version probably.",
+                            )
+                        text = chunk.message.content
+                        if text:
                             text = text.replace('<think>', '').replace('</think>', '')
                             yield text
                 elif request.provider == "openrouter":
@@ -588,12 +599,19 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                             )
 
                             # Get the response using the simplified prompt
-                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
+                            fallback_response: "AsyncIterator[ChatResponse]" = await model.acall(
+                                api_kwargs=fallback_api_kwargs,
+                                model_type=ModelType.LLM,
+                            )
 
                             # Handle streaming fallback_response from Ollama
                             async for chunk in fallback_response:
-                                text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None) or str(chunk)
-                                if text and not text.startswith('model=') and not text.startswith('created_at='):
+                                if not hasattr(chunk, "message"):
+                                    raise RuntimeError(
+                                        "`message` field not found in response. Wrong ollama-python version probably.",
+                                    )
+                                text = chunk.message.content
+                                if text:
                                     text = text.replace('<think>', '').replace('</think>', '')
                                     yield text
                         elif request.provider == "openrouter":
