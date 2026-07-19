@@ -74,7 +74,7 @@ def start_node_server(node_bin, frontend_port, backend_port):
     
     return proc
 
-def setup_persistent_config_and_logs():
+def setup_persistent_config_and_logs(args):
     home_dir = os.path.expanduser("~")
     freedeepwiki_dir = os.path.join(home_dir, ".freedeepwiki")
     config_dir = os.path.join(freedeepwiki_dir, "config")
@@ -83,16 +83,6 @@ def setup_persistent_config_and_logs():
     os.makedirs(config_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
     
-    # Copy default config templates from api/config in the bundle to ~/.freedeepwiki/config
-    default_config_src = os.path.join(BASE_DIR, "api", "config")
-    if os.path.exists(default_config_src):
-        for item in os.listdir(default_config_src):
-            src_file = os.path.join(default_config_src, item)
-            dest_file = os.path.join(config_dir, item)
-            if os.path.isfile(src_file) and not os.path.exists(dest_file):
-                print(f"Copying default config: {item} -> {config_dir}")
-                shutil.copy2(src_file, dest_file)
-                
     # Set config environment variables
     os.environ["FREEDEPWIKI_CONFIG_DIR"] = config_dir
     os.environ["LOG_FILE_PATH"] = os.path.join(logs_dir, "application.log")
@@ -101,6 +91,45 @@ def setup_persistent_config_and_logs():
     bundled_tiktoken_cache = os.path.join(BASE_DIR, "tiktoken_cache")
     if os.path.exists(bundled_tiktoken_cache):
         os.environ["TIKTOKEN_CACHE_DIR"] = bundled_tiktoken_cache
+        
+    # Load environment variables from args
+    if args.github_token:
+        os.environ["GITHUB_TOKEN"] = args.github_token
+    if args.embed_batch_size:
+        os.environ["OLLAMA_EMBED_BATCH_SIZE"] = str(args.embed_batch_size)
+    if args.ollama_timeout:
+        os.environ["OLLAMA_REQUEST_TIMEOUT"] = str(args.ollama_timeout)
+
+    default_config_src = os.path.join(BASE_DIR, "api", "config")
+    
+    # Try dynamic Ollama discovery first
+    try:
+        from scripts.freedeepwiki_config import render
+        print(f"Checking Ollama status at {args.ollama_endpoint}...")
+        model, embed_model = render(
+            Path(default_config_src),
+            Path(config_dir),
+            args.ollama_endpoint,
+            args.model,
+            args.embed_model
+        )
+        print(f"Successfully configured Ollama: default model '{model}', embedding model '{embed_model}'")
+        os.environ["FREEDEPWIKI_EMBEDDER_TYPE"] = "ollama"
+        os.environ["OLLAMA_HOST"] = args.ollama_endpoint
+        if model:
+            os.environ["OLLAMA_MODEL"] = model
+        if embed_model:
+            os.environ["OLLAMA_EMBED_MODEL"] = embed_model
+    except Exception as e:
+        print(f"Ollama auto-configuration skipped / not available: {e}")
+        print("Falling back to default configuration templates.")
+        if os.path.exists(default_config_src):
+            for item in os.listdir(default_config_src):
+                src_file = os.path.join(default_config_src, item)
+                dest_file = os.path.join(config_dir, item)
+                if os.path.isfile(src_file) and not os.path.exists(dest_file):
+                    print(f"Copying default config: {item} -> {config_dir}")
+                    shutil.copy2(src_file, dest_file)
         
     print(f"Persistent config directory: {config_dir}")
     print(f"Persistent log file: {os.environ['LOG_FILE_PATH']}")
@@ -126,16 +155,29 @@ def is_port_open(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="FreeDeepWiki Standalone Runner")
+    parser.add_argument("--ollama-endpoint", "-ollama-endpoint", default=os.environ.get("OLLAMA_ENDPOINT", "http://127.0.0.1:11434"))
+    parser.add_argument("--model", "-ollama-model", "--ollama-model", default=os.environ.get("OLLAMA_MODEL", ""))
+    parser.add_argument("--embed-model", default=os.environ.get("OLLAMA_EMBED_MODEL", ""))
+    parser.add_argument("--embed-batch-size", type=int, default=int(os.environ.get("OLLAMA_EMBED_BATCH_SIZE", "32")))
+    parser.add_argument("--ollama-timeout", type=int, default=int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", "1800")))
+    parser.add_argument("--github-token", default=os.environ.get("GITHUB_TOKEN", ""))
+    parser.add_argument("--api-port", type=int, default=None)
+    parser.add_argument("--port", type=int, default=None)
+    
+    args, unknown = parser.parse_known_args()
+    
     print("=" * 60)
     print("                FREEDEPWIKI STANDALONE RUNNER")
     print("=" * 60)
     
     # Initialize dirs & paths
-    setup_persistent_config_and_logs()
+    setup_persistent_config_and_logs(args)
     
     # Find free ports
-    backend_port = int(os.environ.get("FREEDEPWIKI_API_PORT", find_free_port(8001)))
-    frontend_port = int(os.environ.get("PORT", find_free_port(3000)))
+    backend_port = args.api_port if args.api_port is not None else int(os.environ.get("FREEDEPWIKI_API_PORT", find_free_port(8001)))
+    frontend_port = args.port if args.port is not None else int(os.environ.get("PORT", find_free_port(3000)))
     
     # Locate Node.js executable
     node_name = "node.exe" if sys.platform == "win32" else "node"

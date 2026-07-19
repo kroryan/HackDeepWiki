@@ -53,7 +53,7 @@ WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('FREEDEPWIKI_AUTH_CODE', '')
 
 # Embedder settings
-EMBEDDER_TYPE = os.environ.get('FREEDEPWIKI_EMBEDDER_TYPE', 'openai').lower()
+EMBEDDER_TYPE = os.environ.get('FREEDEPWIKI_EMBEDDER_TYPE', 'ollama').lower()
 
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('FREEDEPWIKI_CONFIG_DIR', None)
