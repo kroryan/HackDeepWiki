@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 
@@ -16,6 +17,7 @@ datas = [
     # Package the frontend files (Next.js standalone output)
     ('.next/standalone/server.js', '.'),
     ('.next/standalone/node_modules', 'node_modules'),
+    ('.next/standalone/.next', '.next'),  # Contains required-server-files.json and server files
     ('public', 'public'),
     ('.next/static', '.next/static'),
     # Package python api package
@@ -34,20 +36,26 @@ if os.path.exists(tiktoken_cache_source):
 else:
     print(f"Warning: tiktoken cache not found at {tiktoken_cache_source}.")
 
-hidden_imports = [
-    'uvicorn',
+# Collect all hidden submodules of dynamic libraries
+packages_to_collect = [
     'fastapi',
+    'uvicorn',
     'pydantic',
-    'jinja2',
-    'tiktoken',
     'adalflow',
-    'numpy',
-    'faiss',
-    'langid',
+    'google',
+    'tiktoken',
     'websockets',
-    'azure.identity',
-    'azure.core',
-    'google.generativeai',
+    'azure',
+    'boto3',
+    'botocore',
+    'requests',
+    'jinja2',
+    'aiohttp',
+    'langid',
+    'numpy'
+]
+
+hidden_imports = [
     'api',
     'api.api',
     'api.config',
@@ -60,6 +68,20 @@ hidden_imports = [
     'api.websocket_wiki',
     'api.ollama_patch'
 ]
+
+for pkg in packages_to_collect:
+    try:
+        submodules = collect_submodules(pkg)
+        hidden_imports.extend(submodules)
+    except Exception as e:
+        print(f"Warning: Could not collect submodules for {pkg}: {e}")
+
+# Collect data files if needed
+for pkg in ['adalflow', 'langid']:
+    try:
+        datas.extend(collect_data_files(pkg))
+    except Exception as e:
+        print(f"Warning: Could not collect data files for {pkg}: {e}")
 
 a = Analysis(
     ['scripts/launcher.py'],
