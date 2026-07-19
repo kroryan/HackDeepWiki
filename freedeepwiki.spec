@@ -45,6 +45,7 @@ packages_to_collect = [
     'adalflow',
     'google',
     'tiktoken',
+    'tiktoken_ext',
     'websockets',
     'azure',
     'boto3',
