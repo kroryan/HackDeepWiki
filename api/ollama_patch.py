@@ -7,12 +7,77 @@ from adalflow.core.types import Document
 from adalflow.core.component import DataComponent
 import requests
 import os
+import tiktoken
 
 # Configure logging
 from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+DEFAULT_OLLAMA_QUERY_MAX_TOKENS = 1800
+
+
+def prepare_ollama_embedding_query(
+    text: str,
+    max_tokens: int | None = None,
+) -> str:
+    """Keep retrieval queries within the context supported by small embedders.
+
+    The generation prompt is never passed through this function. It is only
+    used for the semantic-search query sent to the Ollama embedding model.
+    Keeping both the beginning and end preserves the topic and any trailing
+    file hints when an older client sends a full generation prompt.
+    """
+    configured_limit = max_tokens or int(
+        os.getenv(
+            "OLLAMA_QUERY_MAX_TOKENS",
+            str(DEFAULT_OLLAMA_QUERY_MAX_TOKENS),
+        )
+    )
+    configured_limit = max(128, configured_limit)
+
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        tokens = encoding.encode(text)
+        if len(tokens) <= configured_limit:
+            return text
+
+        separator = "\n\n[... retrieval query shortened ...]\n\n"
+        separator_tokens = encoding.encode(separator)
+        available = max(1, configured_limit - len(separator_tokens))
+        head_size = max(1, int(available * 0.7))
+        tail_size = max(0, available - head_size)
+        shortened_tokens = (
+            tokens[:head_size]
+            + separator_tokens
+            + (tokens[-tail_size:] if tail_size else [])
+        )
+        shortened = encoding.decode(shortened_tokens)
+        logger.info(
+            "Shortened Ollama retrieval query from %s to %s tokens",
+            len(tokens),
+            len(shortened_tokens),
+        )
+        return shortened
+    except Exception as exc:
+        # A conservative character fallback keeps retrieval available even if
+        # the tokenizer cannot be loaded in a minimal installation.
+        max_characters = configured_limit * 3
+        if len(text) <= max_characters:
+            return text
+        logger.warning(
+            "Could not tokenize Ollama retrieval query; using character limit: %s",
+            exc,
+        )
+        head_size = int(max_characters * 0.7)
+        tail_size = max_characters - head_size
+        return (
+            text[:head_size]
+            + "\n\n[... retrieval query shortened ...]\n\n"
+            + text[-tail_size:]
+        )
+
 
 class OllamaModelNotFoundError(Exception):
     """Custom exception for when Ollama model is not found"""

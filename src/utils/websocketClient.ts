@@ -22,6 +22,7 @@ export interface ChatMessage {
 export interface ChatCompletionRequest {
   repo_url: string;
   messages: ChatMessage[];
+  retrieval_query?: string;
   filePath?: string;
   token?: string;
   type?: string;

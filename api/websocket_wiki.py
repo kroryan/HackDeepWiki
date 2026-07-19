@@ -45,6 +45,10 @@ class ChatCompletionRequest(BaseModel):
     """
     repo_url: str = Field(..., description="URL of the repository to query")
     messages: List[ChatMessage] = Field(..., description="List of chat messages")
+    retrieval_query: Optional[str] = Field(
+        None,
+        description="Optional concise query used only for semantic retrieval",
+    )
     filePath: Optional[str] = Field(None, description="Optional path to a file in the repository to include in the prompt")
     token: Optional[str] = Field(None, description="Personal access token for private repositories")
     type: Optional[str] = Field("github", description="Type of repository (e.g., 'github', 'gitlab', 'bitbucket')")
@@ -198,7 +202,7 @@ async def handle_websocket_chat(websocket: WebSocket):
         if not input_too_large:
             try:
                 # If filePath exists, modify the query for RAG to focus on the file
-                rag_query = query
+                rag_query = request.retrieval_query or query
                 if request.filePath:
                     # Use the file path to get relevant context about the file
                     rag_query = f"Contexts related to {request.filePath}"

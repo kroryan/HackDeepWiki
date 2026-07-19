@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import UserSelector from './UserSelector';
 import TokenInput from './TokenInput';
+import WikiTypeSelector from './WikiTypeSelector';
 
 interface ConfigurationModalProps {
   isOpen: boolean;
@@ -20,6 +21,8 @@ interface ConfigurationModalProps {
   // Wiki type options
   isComprehensiveView: boolean;
   setIsComprehensiveView: (value: boolean) => void;
+  pageCount: number;
+  setPageCount: (value: number) => void;
 
   // Model selection
   provider: string;
@@ -69,6 +72,8 @@ export default function ConfigurationModal({
   supportedLanguages,
   isComprehensiveView,
   setIsComprehensiveView,
+  pageCount,
+  setPageCount,
   provider,
   setProvider,
   model,
@@ -152,61 +157,12 @@ export default function ConfigurationModal({
               </select>
             </div>
 
-            {/* Wiki Type Selector - more compact version */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-                {t.form?.wikiType || 'Wiki Type'}
-              </label>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsComprehensiveView(true)}
-                  className={`flex-1 flex items-center justify-between p-2 rounded-md border transition-colors ${
-                    isComprehensiveView
-                      ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]'
-                      : 'bg-[var(--background)]/50 border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
-                  }`}
-                >
-                  <div className="flex items-center">
-                    <div className="text-left">
-                      <div className="font-medium text-sm">{t.form?.comprehensive || 'Comprehensive'}</div>
-                      <div className="text-xs opacity-80">
-                        {t.form?.comprehensiveDescription || 'Detailed wiki with structured sections'}
-                      </div>
-                    </div>
-                  </div>
-                  {isComprehensiveView && (
-                    <div className="ml-2 h-4 w-4 rounded-full bg-[var(--accent-primary)]/20 flex items-center justify-center">
-                      <div className="h-2 w-2 rounded-full bg-[var(--accent-primary)]"></div>
-                    </div>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsComprehensiveView(false)}
-                  className={`flex-1 flex items-center justify-between p-2 rounded-md border transition-colors ${
-                    !isComprehensiveView
-                      ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]'
-                      : 'bg-[var(--background)]/50 border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
-                  }`}
-                >
-                  <div className="flex items-center">
-                    <div className="text-left">
-                      <div className="font-medium text-sm">{t.form?.concise || 'Concise'}</div>
-                      <div className="text-xs opacity-80">
-                        {t.form?.conciseDescription || 'Simplified wiki with fewer pages'}
-                      </div>
-                    </div>
-                  </div>
-                  {!isComprehensiveView && (
-                    <div className="ml-2 h-4 w-4 rounded-full bg-[var(--accent-primary)]/20 flex items-center justify-center">
-                      <div className="h-2 w-2 rounded-full bg-[var(--accent-primary)]"></div>
-                    </div>
-                  )}
-                </button>
-              </div>
-            </div>
+            <WikiTypeSelector
+              isComprehensiveView={isComprehensiveView}
+              setIsComprehensiveView={setIsComprehensiveView}
+              pageCount={pageCount}
+              setPageCount={setPageCount}
+            />
 
             {/* Model Selector */}
             <div className="mb-4">

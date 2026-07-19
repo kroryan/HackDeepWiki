@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { normalizeMermaidChart } from '@/utils/mermaid';
 // We'll use dynamic import for svg-pan-zoom
 
 // Initialize mermaid with defaults - Japanese aesthetic
@@ -180,7 +182,14 @@ const FullScreenModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   children: React.ReactNode;
-}> = ({ isOpen, onClose, children }) => {
+  labels: {
+    title: string;
+    zoomOut: string;
+    zoomIn: string;
+    resetZoom: string;
+    close: string;
+  };
+}> = ({ isOpen, onClose, children, labels }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
 
@@ -235,13 +244,13 @@ const FullScreenModal: React.FC<{
       >
         {/* Modal header with controls */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
-          <div className="font-medium text-[var(--foreground)] font-serif">図表表示</div>
+          <div className="font-medium text-[var(--foreground)] font-serif">{labels.title}</div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
                 className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-                aria-label="Zoom out"
+                aria-label={labels.zoomOut}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="11" cy="11" r="8"></circle>
@@ -253,7 +262,7 @@ const FullScreenModal: React.FC<{
               <button
                 onClick={() => setZoom(Math.min(2, zoom + 0.1))}
                 className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-                aria-label="Zoom in"
+                aria-label={labels.zoomIn}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="11" cy="11" r="8"></circle>
@@ -265,7 +274,7 @@ const FullScreenModal: React.FC<{
               <button
                 onClick={() => setZoom(1)}
                 className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-                aria-label="Reset zoom"
+                aria-label={labels.resetZoom}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path>
@@ -276,7 +285,7 @@ const FullScreenModal: React.FC<{
             <button
               onClick={onClose}
               className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-              aria-label="Close"
+              aria-label={labels.close}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -304,10 +313,22 @@ const FullScreenModal: React.FC<{
 };
 
 const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled = false }) => {
+  const { messages } = useLanguage();
+  const labels = {
+    title: messages.diagram?.title || 'Diagram view',
+    renderError: messages.diagram?.renderError || 'Diagram rendering error',
+    syntaxError: messages.diagram?.syntaxError || 'The diagram contains invalid Mermaid syntax and could not be rendered.',
+    source: messages.diagram?.source || 'Diagram source',
+    rendering: messages.diagram?.rendering || 'Rendering diagram...',
+    clickToZoom: messages.diagram?.clickToZoom || 'Click to zoom',
+    zoomOut: messages.diagram?.zoomOut || 'Zoom out',
+    zoomIn: messages.diagram?.zoomIn || 'Zoom in',
+    resetZoom: messages.diagram?.resetZoom || 'Reset zoom',
+    close: messages.common?.close || 'Close',
+  };
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const mermaidRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-${Math.random().toString(36).substring(2, 9)}`);
   const isDarkModeRef = useRef(
@@ -365,8 +386,12 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         setError(null);
         setSvg('');
 
-        // Render the chart directly without preprocessing
-        const { svg: renderedSvg } = await mermaid.render(idRef.current, chart);
+        const normalizedChart = normalizeMermaidChart(chart);
+        await mermaid.parse(normalizedChart);
+        const { svg: renderedSvg } = await mermaid.render(
+          idRef.current,
+          normalizedChart,
+        );
 
         if (!isMounted) return;
 
@@ -389,12 +414,6 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         if (isMounted) {
           setError(`Failed to render diagram: ${errorMessage}`);
 
-          if (mermaidRef.current) {
-            mermaidRef.current.innerHTML = `
-              <div class="text-red-500 dark:text-red-400 text-xs mb-1">Syntax error in diagram</div>
-              <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded">${chart}</pre>
-            `;
-          }
         }
       }
     };
@@ -420,12 +439,19 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
-            図表レンダリングエラー
+            {labels.renderError}
           </div>
         </div>
-        <div ref={mermaidRef} className="text-xs overflow-auto"></div>
+        <details className="text-xs">
+          <summary className="cursor-pointer text-[var(--muted)]">
+            {labels.source}
+          </summary>
+          <pre className="mt-2 overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded whitespace-pre-wrap">
+            {chart}
+          </pre>
+        </details>
         <div className="mt-3 text-xs text-[var(--muted)] font-serif">
-          図表に構文エラーがあり、レンダリングできません。
+          {labels.syntaxError}
         </div>
       </div>
     );
@@ -438,7 +464,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
           <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse"></div>
           <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-75"></div>
           <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150"></div>
-          <span className="text-[var(--muted)] text-xs ml-2 font-serif">図表を描画中...</span>
+          <span className="text-[var(--muted)] text-xs ml-2 font-serif">{labels.rendering}</span>
         </div>
       </div>
     );
@@ -457,7 +483,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
             className={`flex justify-center overflow-auto text-center my-2 cursor-pointer hover:shadow-md transition-shadow duration-200 rounded-md ${className} ${zoomingEnabled ? "h-full" : ""}`}
             dangerouslySetInnerHTML={{ __html: svg }}
             onClick={zoomingEnabled ? undefined : handleDiagramClick}
-            title={zoomingEnabled ? undefined : "Click to view fullscreen"}
+            title={zoomingEnabled ? undefined : labels.clickToZoom}
           />
 
           {!zoomingEnabled && (
@@ -468,7 +494,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
                 <line x1="11" y1="8" x2="11" y2="14"></line>
                 <line x1="8" y1="11" x2="14" y2="11"></line>
               </svg>
-              <span>Click to zoom</span>
+              <span>{labels.clickToZoom}</span>
             </div>
           )}
         </div>
@@ -478,6 +504,13 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         <FullScreenModal
           isOpen={isFullscreen}
           onClose={() => setIsFullscreen(false)}
+          labels={{
+            title: labels.title,
+            zoomOut: labels.zoomOut,
+            zoomIn: labels.zoomIn,
+            resetZoom: labels.resetZoom,
+            close: labels.close,
+          }}
         >
           <div dangerouslySetInnerHTML={{ __html: svg }} />
         </FullScreenModal>

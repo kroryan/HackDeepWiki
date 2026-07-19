@@ -1,7 +1,12 @@
 'use client';
 
-import React, {useState, useRef, useEffect} from 'react';
-import {FaChevronLeft, FaChevronRight } from 'react-icons/fa';
+import React, {useState, useRef, useEffect, useMemo} from 'react';
+import {
+  FaChevronLeft,
+  FaChevronRight,
+  FaPlus,
+  FaTrash,
+} from 'react-icons/fa';
 import Markdown from './Markdown';
 import { useLanguage } from '@/contexts/LanguageContext';
 import RepoInfo from '@/types/repoinfo';
@@ -31,6 +36,20 @@ interface ResearchStage {
   content: string;
   iteration: number;
   type: 'plan' | 'update' | 'conclusion';
+}
+
+interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: Message[];
+  response: string;
+  deepResearch: boolean;
+  researchStages: ResearchStage[];
+  currentStageIndex: number;
+  researchIteration: number;
+  researchComplete: boolean;
 }
 
 interface AskProps {
@@ -78,6 +97,120 @@ const Ask: React.FC<AskProps> = ({
   const responseRef = useRef<HTMLDivElement>(null);
   const providerRef = useRef(provider);
   const modelRef = useRef(model);
+  const loadedSessionIdRef = useRef<string | null>(null);
+  const storageKey = useMemo(
+    () => `deepwiki-chat-sessions:${repoInfo.type}:${repoInfo.owner}:${repoInfo.repo}`,
+    [repoInfo.type, repoInfo.owner, repoInfo.repo],
+  );
+  const createSession = (title?: string): ChatSession => {
+    const now = Date.now();
+    return {
+      id: `chat-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      title: title || (messages.ask?.newChat || 'New chat'),
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+      response: '',
+      deepResearch: false,
+      researchStages: [],
+      currentStageIndex: 0,
+      researchIteration: 0,
+      researchComplete: false,
+    };
+  };
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Load chat sessions independently for each repository.
+  useEffect(() => {
+    loadedSessionIdRef.current = null;
+    try {
+      const stored = localStorage.getItem(storageKey);
+      const parsed = stored ? JSON.parse(stored) as ChatSession[] : [];
+      const valid = Array.isArray(parsed)
+        ? parsed.filter(session => session && session.id && Array.isArray(session.messages))
+        : [];
+      const initialSessions = valid.length > 0 ? valid : [createSession()];
+      setSessions(initialSessions);
+      setActiveSessionId(initialSessions[0].id);
+    } catch (error) {
+      console.error('Failed to load chat sessions:', error);
+      const initial = createSession();
+      setSessions([initial]);
+      setActiveSessionId(initial.id);
+    }
+    // createSession deliberately uses the current translated default title.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  // Restore the selected session without writing stale state into it.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const session = sessions.find(item => item.id === activeSessionId);
+    if (!session) return;
+    loadedSessionIdRef.current = null;
+    setQuestion('');
+    setConversationHistory(session.messages || []);
+    setResponse(session.response || '');
+    setDeepResearch(Boolean(session.deepResearch));
+    setResearchStages(session.researchStages || []);
+    setCurrentStageIndex(session.currentStageIndex || 0);
+    setResearchIteration(session.researchIteration || 0);
+    setResearchComplete(Boolean(session.researchComplete));
+    const timer = window.setTimeout(() => {
+      loadedSessionIdRef.current = activeSessionId;
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeSessionId]);
+
+  // Persist the active conversation as it streams.
+  useEffect(() => {
+    if (
+      !activeSessionId ||
+      loadedSessionIdRef.current !== activeSessionId
+    ) return;
+    setSessions(previous => previous.map(session =>
+      session.id === activeSessionId
+        ? {
+            ...session,
+            updatedAt: Date.now(),
+            messages: conversationHistory,
+            response,
+            deepResearch,
+            researchStages,
+            currentStageIndex,
+            researchIteration,
+            researchComplete,
+          }
+        : session
+    ));
+  }, [
+    activeSessionId,
+    conversationHistory,
+    response,
+    deepResearch,
+    researchStages,
+    currentStageIndex,
+    researchIteration,
+    researchComplete,
+  ]);
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify(
+          [...sessions]
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .slice(0, 20),
+        ),
+      );
+    } catch (error) {
+      console.error('Failed to persist chat sessions:', error);
+    }
+  }, [sessions, storageKey]);
 
   // Focus input on component mount
   useEffect(() => {
@@ -98,7 +231,7 @@ const Ask: React.FC<AskProps> = ({
     if (responseRef.current) {
       responseRef.current.scrollTop = responseRef.current.scrollHeight;
     }
-  }, [response]);
+  }, [response, conversationHistory]);
 
   // Close WebSocket when component unmounts
   useEffect(() => {
@@ -149,6 +282,7 @@ const Ask: React.FC<AskProps> = ({
   }, [provider, model]);
 
   const clearConversation = () => {
+    closeWebSocket(webSocketRef.current);
     setQuestion('');
     setResponse('');
     setConversationHistory([]);
@@ -160,8 +294,50 @@ const Ask: React.FC<AskProps> = ({
       inputRef.current.focus();
     }
   };
+
+  const startNewChat = () => {
+    if (isLoading) return;
+    const session = createSession();
+    setSessions(previous => [session, ...previous]);
+    setActiveSessionId(session.id);
+  };
+
+  const selectSession = (sessionId: string) => {
+    if (isLoading || sessionId === activeSessionId) return;
+    closeWebSocket(webSocketRef.current);
+    setActiveSessionId(sessionId);
+  };
+
+  const deleteActiveChat = (sessionId?: string) => {
+    const targetId = sessionId || activeSessionId;
+    if (isLoading || !targetId) return;
+    if (!window.confirm(
+      messages.ask?.deleteChatConfirm ||
+      'Delete this chat and its complete history?',
+    )) return;
+
+    const remaining = sessions.filter(session => session.id !== targetId);
+    if (remaining.length > 0) {
+      setSessions(remaining);
+      setActiveSessionId(remaining[0].id);
+    } else {
+      const replacement = createSession();
+      setSessions([replacement]);
+      setActiveSessionId(replacement.id);
+    }
+  };
+
   const downloadresponse = () =>{
-  const blob = new Blob([response], { type: 'text/markdown' });
+  const transcript = [
+    ...conversationHistory,
+    ...(response ? [{role: 'assistant' as const, content: response}] : []),
+  ]
+    .filter(message => message.content !== '[DEEP RESEARCH] Continue the research')
+    .map(message => `## ${message.role === 'user'
+      ? (messages.ask?.you || 'You')
+      : (messages.ask?.assistant || 'Assistant')}\n\n${message.content}`)
+    .join('\n\n');
+  const blob = new Blob([transcript], { type: 'text/markdown' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -371,7 +547,7 @@ const Ask: React.FC<AskProps> = ({
           setResponse(prev => prev + '\n\nError: WebSocket connection failed. Falling back to HTTP...');
 
           // Fallback to HTTP if WebSocket fails
-          fallbackToHttp(requestBody);
+          void fallbackToHttp(requestBody, newHistory);
         },
         // Close handler
         () => {
@@ -403,7 +579,10 @@ const Ask: React.FC<AskProps> = ({
   };
 
   // Fallback to HTTP if WebSocket fails
-  const fallbackToHttp = async (requestBody: ChatCompletionRequest) => {
+  const fallbackToHttp = async (
+    requestBody: ChatCompletionRequest,
+    historyForRequest: Message[],
+  ) => {
     try {
       // Make the API call using HTTP
       const apiResponse = await fetch(`/api/chat/stream`, {
@@ -469,6 +648,13 @@ const Ask: React.FC<AskProps> = ({
         setResearchComplete(true);
       } else {
         setResearchComplete(isComplete);
+      }
+      if (!deepResearch && fullResponse) {
+        setConversationHistory([
+          ...historyForRequest,
+          { role: 'assistant', content: fullResponse },
+        ]);
+        setResponse('');
       }
     } catch (error) {
       console.error('Error during HTTP fallback:', error);
@@ -552,8 +738,20 @@ const Ask: React.FC<AskProps> = ({
       };
 
       // Set initial conversation history
-      const newHistory: Message[] = [initialMessage];
+      const newHistory: Message[] = [...conversationHistory, initialMessage];
       setConversationHistory(newHistory);
+      setQuestion('');
+      setSessions(previous => previous.map(session => {
+        if (session.id !== activeSessionId || session.messages.length > 0) {
+          return session;
+        }
+        const cleanQuestion = question.trim().replace(/^\[DEEP RESEARCH\]\s*/i, '');
+        return {
+          ...session,
+          title: cleanQuestion.slice(0, 48) || session.title,
+          updatedAt: Date.now(),
+        };
+      }));
 
       // Prepare request body
       const requestBody: ChatCompletionRequest = {
@@ -576,6 +774,7 @@ const Ask: React.FC<AskProps> = ({
       let fullResponse = '';
 
       // Create a new WebSocket connection
+      let usedHttpFallback = false;
       webSocketRef.current = createChatWebSocket(
         requestBody,
         // Message handler
@@ -596,13 +795,14 @@ const Ask: React.FC<AskProps> = ({
         // Error handler
         (error: Event) => {
           console.error('WebSocket error:', error);
-          setResponse(prev => prev + '\n\nError: WebSocket connection failed. Falling back to HTTP...');
-
-          // Fallback to HTTP if WebSocket fails
-          fallbackToHttp(requestBody);
+          if (usedHttpFallback) return;
+          usedHttpFallback = true;
+          setResponse('');
+          void fallbackToHttp(requestBody, newHistory);
         },
         // Close handler
         () => {
+          if (usedHttpFallback) return;
           // If deep research is enabled, check if we should continue
           if (deepResearch) {
             const isComplete = checkIfResearchComplete(fullResponse);
@@ -613,6 +813,12 @@ const Ask: React.FC<AskProps> = ({
               setResearchIteration(1);
               // The continueResearch function will be triggered by the useEffect
             }
+          } else if (fullResponse) {
+            setConversationHistory([
+              ...newHistory,
+              { role: 'assistant', content: fullResponse },
+            ]);
+            setResponse('');
           }
 
           setIsLoading(false);
@@ -640,19 +846,95 @@ const Ask: React.FC<AskProps> = ({
   return (
     <div>
       <div className="p-4">
-        <div className="flex items-center justify-end mb-4">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div className="flex items-center gap-1.5">
+            {/* New chat */}
+            <button
+              type="button"
+              onClick={startNewChat}
+              disabled={isLoading}
+              title={messages.ask?.newChat || 'New chat'}
+              className="text-xs px-2.5 py-1 rounded border border-[var(--border-color)]/40 bg-[var(--background)]/10 text-[var(--foreground)]/80 hover:bg-[var(--background)]/30 hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FaPlus className="h-3 w-3" />
+              <span className="hidden sm:inline">{messages.ask?.newChat || 'New chat'}</span>
+            </button>
+            {/* History toggle */}
+            <button
+              type="button"
+              onClick={() => setShowHistory(previous => !previous)}
+              title={messages.ask?.chatHistory || 'Chat history'}
+              className={`text-xs px-2.5 py-1 rounded border transition-colors flex items-center gap-1.5 ${
+                showHistory
+                  ? 'border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]'
+                  : 'border-[var(--border-color)]/40 bg-[var(--background)]/10 text-[var(--foreground)]/80 hover:bg-[var(--background)]/30'
+              }`}
+            >
+              <FaChevronRight className={`h-3 w-3 transition-transform ${showHistory ? 'rotate-90' : ''}`} />
+              <span className="hidden sm:inline">{messages.ask?.chatHistory || 'Chat history'}</span>
+            </button>
+          </div>
+
           {/* Model selection button */}
           <button
             type="button"
             onClick={() => setIsModelSelectionModalOpen(true)}
             className="text-xs px-2.5 py-1 rounded border border-[var(--border-color)]/40 bg-[var(--background)]/10 text-[var(--foreground)]/80 hover:bg-[var(--background)]/30 hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5"
           >
-            <span>{selectedProvider}/{isCustomSelectedModel ? customSelectedModel : selectedModel}</span>
+            <span className="truncate max-w-[160px]">{selectedProvider}/{isCustomSelectedModel ? customSelectedModel : selectedModel}</span>
             <svg className="h-3.5 w-3.5 text-[var(--accent-primary)]/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
           </button>
         </div>
+
+        {/* Chat history / session list */}
+        {showHistory && (
+          <div className="mb-3 rounded-md border border-[var(--border-color)] bg-[var(--background)]/40 max-h-56 overflow-y-auto">
+            {sessions.length === 0 ? (
+              <p className="p-3 text-xs text-[var(--muted)]">
+                {messages.ask?.emptyConversation || 'Ask a question to start this conversation.'}
+              </p>
+            ) : (
+              <ul className="divide-y divide-[var(--border-color)]/60">
+                {sessions.map(session => (
+                  <li
+                    key={session.id}
+                    className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                      session.id === activeSessionId
+                        ? 'bg-[var(--accent-primary)]/10'
+                        : 'hover:bg-[var(--background)]/30'
+                    }`}
+                    onClick={() => selectSession(session.id)}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium text-[var(--foreground)]">
+                        {session.title || (messages.ask?.newChat || 'New chat')}
+                      </div>
+                      <div className="truncate text-[10px] text-[var(--muted)]">
+                        {session.messages.length > 0
+                          ? `${session.messages.length} ${messages.ask?.messages || 'messages'}`
+                          : (messages.ask?.emptyConversation || 'Ask a question to start this conversation.')}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        deleteActiveChat(session.id);
+                      }}
+                      disabled={isLoading}
+                      title={messages.ask?.deleteChat || 'Delete chat'}
+                      className="text-[var(--muted)] hover:text-red-500 transition-colors p-1 disabled:opacity-50"
+                    >
+                      <FaTrash className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* Question input */}
         <form onSubmit={handleSubmit} className="mt-4">
@@ -731,14 +1013,30 @@ const Ask: React.FC<AskProps> = ({
           </div>
         </form>
 
-        {/* Response area */}
-        {response && (
+        {/* Conversation transcript and response area */}
+        {(conversationHistory.length > 0 || response) && (
           <div className="border-t border-gray-200 dark:border-gray-700 mt-4">
             <div
               ref={responseRef}
-              className="p-4 max-h-[500px] overflow-y-auto"
+              className="p-4 max-h-[500px] overflow-y-auto space-y-4"
             >
-              <Markdown content={response} />
+              {conversationHistory.map((message, index) => {
+                if (message.content === '[DEEP RESEARCH] Continue the research') {
+                  return null;
+                }
+                const isUser = message.role === 'user';
+                return (
+                  <div key={`msg-${index}`} className="space-y-1">
+                    <div className="text-xs font-medium text-[var(--muted)]">
+                      {isUser
+                        ? (messages.ask?.you || 'You')
+                        : (messages.ask?.assistant || 'Assistant')}
+                    </div>
+                    <Markdown content={message.content} />
+                  </div>
+                );
+              })}
+              {response && <Markdown content={response} />}
             </div>
 
             {/* Research navigation and clear button */}
@@ -897,9 +1195,14 @@ const Ask: React.FC<AskProps> = ({
             )}
           </div>
         )}
-      </div>
 
-      {/* Model Selection Modal */}
+        {/* Empty state */}
+        {!isLoading && conversationHistory.length === 0 && !response && (
+          <div className="mt-6 text-center text-sm text-[var(--muted)]">
+            {messages.ask?.emptyConversation || 'Ask a question to start this conversation.'}
+          </div>
+        )}
+      </div>
       <ModelSelectionModal
         isOpen={isModelSelectionModalOpen}
         onClose={() => setIsModelSelectionModalOpen(false)}

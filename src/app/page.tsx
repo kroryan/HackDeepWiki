@@ -7,6 +7,10 @@ import { FaWikipediaW, FaGithub, FaCoffee, FaTwitter } from 'react-icons/fa';
 import ThemeToggle from '@/components/theme-toggle';
 import Mermaid from '../components/Mermaid';
 import ConfigurationModal from '@/components/ConfigurationModal';
+import {
+  getDefaultWikiPageCount,
+  normalizeWikiPageCount,
+} from '@/utils/wikiPageCount';
 import ProcessedProjects from '@/components/ProcessedProjects';
 import { extractUrlPath, extractUrlDomain } from '@/utils/urlDecoder';
 import { useProcessedProjects } from '@/hooks/useProcessedProjects';
@@ -87,8 +91,15 @@ export default function Home() {
         const configs = JSON.parse(cachedConfigs);
         const config = configs[repoUrl.trim()];
         if (config) {
+          const cachedComprehensive =
+            config.isComprehensiveView === undefined
+              ? true
+              : config.isComprehensiveView;
           setSelectedLanguage(config.selectedLanguage || language);
-          setIsComprehensiveView(config.isComprehensiveView === undefined ? true : config.isComprehensiveView);
+          setIsComprehensiveView(cachedComprehensive);
+          setPageCount(
+            normalizeWikiPageCount(config.pageCount, cachedComprehensive),
+          );
           setProvider(config.provider || '');
           setModel(config.model || '');
           setIsCustomModel(config.isCustomModel || false);
@@ -129,6 +140,9 @@ export default function Home() {
 
   // Wiki type state - default to comprehensive view
   const [isComprehensiveView, setIsComprehensiveView] = useState<boolean>(true);
+  const [pageCount, setPageCount] = useState<number>(
+    getDefaultWikiPageCount(true),
+  );
 
   const [excludedDirs, setExcludedDirs] = useState('');
   const [excludedFiles, setExcludedFiles] = useState('');
@@ -313,6 +327,7 @@ export default function Home() {
         const configToSave = {
           selectedLanguage,
           isComprehensiveView,
+          pageCount,
           provider,
           model,
           isCustomModel,
@@ -381,6 +396,7 @@ export default function Home() {
 
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
+    params.append('pages', pageCount.toString());
 
     const queryString = params.toString() ? `?${params.toString()}` : '';
 
@@ -450,6 +466,8 @@ export default function Home() {
             supportedLanguages={supportedLanguages}
             isComprehensiveView={isComprehensiveView}
             setIsComprehensiveView={setIsComprehensiveView}
+            pageCount={pageCount}
+            setPageCount={setPageCount}
             provider={provider}
             setProvider={setProvider}
             model={model}

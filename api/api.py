@@ -97,6 +97,8 @@ class WikiCacheData(BaseModel):
     repo: Optional[RepoInfo] = None
     provider: Optional[str] = None
     model: Optional[str] = None
+    comprehensive: Optional[bool] = None
+    page_count: Optional[int] = None
 
 class WikiCacheRequest(BaseModel):
     """
@@ -108,6 +110,8 @@ class WikiCacheRequest(BaseModel):
     generated_pages: Dict[str, WikiPage]
     provider: str
     model: str
+    comprehensive: bool = True
+    page_count: int = Field(default=10, ge=1, le=50)
 
 class WikiExportRequest(BaseModel):
     """
@@ -405,27 +409,87 @@ app.add_websocket_route("/ws/chat", handle_websocket_chat)
 WIKI_CACHE_DIR = os.path.join(get_adalflow_default_root_path(), "wikicache")
 os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
 
-def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str) -> str:
+def get_wiki_cache_path(
+    owner: str,
+    repo: str,
+    repo_type: str,
+    language: str,
+    comprehensive: Optional[bool] = None,
+    page_count: Optional[int] = None,
+) -> str:
     """Generates the file path for a given wiki cache."""
-    filename = f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json"
+    variant = ""
+    if comprehensive is not None and page_count is not None:
+        mode = "comprehensive" if comprehensive else "concise"
+        variant = f"_{mode}_{page_count}"
+    filename = (
+        f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}{variant}.json"
+    )
     return os.path.join(WIKI_CACHE_DIR, filename)
 
-async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str) -> Optional[WikiCacheData]:
+async def read_wiki_cache(
+    owner: str,
+    repo: str,
+    repo_type: str,
+    language: str,
+    comprehensive: Optional[bool] = None,
+    page_count: Optional[int] = None,
+) -> Optional[WikiCacheData]:
     """Reads wiki cache data from the file system."""
-    cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
-    if os.path.exists(cache_path):
+    cache_paths = [
+        get_wiki_cache_path(
+            owner,
+            repo,
+            repo_type,
+            language,
+            comprehensive,
+            page_count,
+        )
+    ]
+    if comprehensive is not None and page_count is not None:
+        # Backward compatibility for caches created before variants existed.
+        cache_paths.append(
+            get_wiki_cache_path(owner, repo, repo_type, language)
+        )
+
+    for cache_path in dict.fromkeys(cache_paths):
+        if not os.path.exists(cache_path):
+            continue
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                return WikiCacheData(**data)
+                cached = WikiCacheData(**data)
+                if page_count is not None:
+                    actual_page_count = len(cached.wiki_structure.pages)
+                    if actual_page_count != page_count:
+                        logger.info(
+                            "Ignoring cache variant with %s pages; %s requested",
+                            actual_page_count,
+                            page_count,
+                        )
+                        continue
+                if (
+                    comprehensive is not None
+                    and cached.comprehensive is not None
+                    and cached.comprehensive != comprehensive
+                ):
+                    continue
+                return cached
         except Exception as e:
             logger.error(f"Error reading wiki cache from {cache_path}: {e}")
-            return None
+            continue
     return None
 
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
     """Saves wiki cache data to the file system."""
-    cache_path = get_wiki_cache_path(data.repo.owner, data.repo.repo, data.repo.type, data.language)
+    cache_path = get_wiki_cache_path(
+        data.repo.owner,
+        data.repo.repo,
+        data.repo.type,
+        data.language,
+        data.comprehensive,
+        data.page_count,
+    )
     logger.info(f"Attempting to save wiki cache. Path: {cache_path}")
     try:
         payload = WikiCacheData(
@@ -433,7 +497,9 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
             generated_pages=data.generated_pages,
             repo=data.repo,
             provider=data.provider,
-            model=data.model
+            model=data.model,
+            comprehensive=data.comprehensive,
+            page_count=data.page_count,
         )
         # Log size of data to be cached for debugging (avoid logging full content if large)
         try:
@@ -463,7 +529,17 @@ async def get_cached_wiki(
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     repo_type: str = Query(..., description="Repository type (e.g., github, gitlab)"),
-    language: str = Query(..., description="Language of the wiki content")
+    language: str = Query(..., description="Language of the wiki content"),
+    comprehensive: Optional[bool] = Query(
+        None,
+        description="Whether the wiki uses comprehensive sections",
+    ),
+    page_count: Optional[int] = Query(
+        None,
+        ge=1,
+        le=50,
+        description="Requested number of wiki pages",
+    ),
 ):
     """
     Retrieves cached wiki data (structure and generated pages) for a repository.
@@ -474,7 +550,14 @@ async def get_cached_wiki(
         language = configs["lang_config"]["default"]
 
     logger.info(f"Attempting to retrieve wiki cache for {owner}/{repo} ({repo_type}), lang: {language}")
-    cached_data = await read_wiki_cache(owner, repo, repo_type, language)
+    cached_data = await read_wiki_cache(
+        owner,
+        repo,
+        repo_type,
+        language,
+        comprehensive,
+        page_count,
+    )
     if cached_data:
         return cached_data
     else:
@@ -507,7 +590,9 @@ async def delete_wiki_cache(
     repo: str = Query(..., description="Repository name"),
     repo_type: str = Query(..., description="Repository type (e.g., github, gitlab)"),
     language: str = Query(..., description="Language of the wiki content"),
-    authorization_code: Optional[str] = Query(None, description="Authorization code")
+    authorization_code: Optional[str] = Query(None, description="Authorization code"),
+    comprehensive: Optional[bool] = Query(None),
+    page_count: Optional[int] = Query(None, ge=1, le=50),
 ):
     """
     Deletes a specific wiki cache from the file system.
@@ -523,18 +608,71 @@ async def delete_wiki_cache(
             raise HTTPException(status_code=401, detail="Authorization code is invalid")
 
     logger.info(f"Attempting to delete wiki cache for {owner}/{repo} ({repo_type}), lang: {language}")
-    cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
-
-    if os.path.exists(cache_path):
-        try:
-            os.remove(cache_path)
-            logger.info(f"Successfully deleted wiki cache: {cache_path}")
-            return {"message": f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"}
-        except Exception as e:
-            logger.error(f"Error deleting wiki cache {cache_path}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to delete wiki cache: {str(e)}")
+    if comprehensive is not None and page_count is not None:
+        cache_paths = [
+            get_wiki_cache_path(
+                owner,
+                repo,
+                repo_type,
+                language,
+                comprehensive,
+                page_count,
+            )
+        ]
+        # A pre-variant cache may still be the selected wiki. Delete it only
+        # when its shape matches; refreshing another variant must not erase it.
+        legacy_path = get_wiki_cache_path(owner, repo, repo_type, language)
+        if os.path.exists(legacy_path):
+            try:
+                with open(legacy_path, "r", encoding="utf-8") as legacy_file:
+                    legacy_data = WikiCacheData(**json.load(legacy_file))
+                legacy_count = len(legacy_data.wiki_structure.pages)
+                legacy_mode_matches = (
+                    legacy_data.comprehensive is None
+                    or legacy_data.comprehensive == comprehensive
+                )
+                if legacy_count == page_count and legacy_mode_matches:
+                    cache_paths.append(legacy_path)
+            except Exception as legacy_error:
+                logger.warning(
+                    "Could not inspect legacy cache %s before deletion: %s",
+                    legacy_path,
+                    legacy_error,
+                )
     else:
-        logger.warning(f"Wiki cache not found, cannot delete: {cache_path}")
+        prefix = f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}"
+        cache_paths = [
+            os.path.join(WIKI_CACHE_DIR, filename)
+            for filename in os.listdir(WIKI_CACHE_DIR)
+            if filename == f"{prefix}.json"
+            or (filename.startswith(f"{prefix}_") and filename.endswith(".json"))
+        ]
+
+    deleted_paths = []
+    try:
+        for cache_path in dict.fromkeys(cache_paths):
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+                deleted_paths.append(cache_path)
+                logger.info(f"Successfully deleted wiki cache: {cache_path}")
+    except Exception as e:
+        logger.error(f"Error deleting wiki cache {cache_path}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete wiki cache: {str(e)}")
+
+    if deleted_paths:
+        return {
+            "message": (
+                f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"
+            )
+        }
+    else:
+        logger.warning(
+            "Wiki cache not found for %s/%s (%s), lang: %s",
+            owner,
+            repo,
+            repo_type,
+            language,
+        )
         raise HTTPException(status_code=404, detail="Wiki cache not found")
 
 @app.get("/health")
@@ -591,12 +729,19 @@ async def get_processed_projects():
         logger.info(f"Scanning for project cache files in: {WIKI_CACHE_DIR}")
         filenames = await asyncio.to_thread(os.listdir, WIKI_CACHE_DIR) # Use asyncio.to_thread for os.listdir
 
+        newest_projects: Dict[tuple, ProcessedProjectEntry] = {}
         for filename in filenames:
             if filename.startswith("deepwiki_cache_") and filename.endswith(".json"):
                 file_path = os.path.join(WIKI_CACHE_DIR, filename)
                 try:
                     stats = await asyncio.to_thread(os.stat, file_path) # Use asyncio.to_thread for os.stat
-                    parts = filename.replace("deepwiki_cache_", "").replace(".json", "").split('_')
+                    cache_name = filename.replace("deepwiki_cache_", "").replace(".json", "")
+                    cache_name = re.sub(
+                        r"_(?:comprehensive|concise)_\d+$",
+                        "",
+                        cache_name,
+                    )
+                    parts = cache_name.split('_')
 
                     # Expecting repo_type_owner_repo_language
                     # Example: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en.json
@@ -607,8 +752,7 @@ async def get_processed_projects():
                         language = parts[-1] # language is the last part
                         repo = "_".join(parts[2:-1]) # repo can contain underscores
 
-                        project_entries.append(
-                            ProcessedProjectEntry(
+                        entry = ProcessedProjectEntry(
                                 id=filename,
                                 owner=owner,
                                 repo=repo,
@@ -616,14 +760,18 @@ async def get_processed_projects():
                                 repo_type=repo_type,
                                 submittedAt=int(stats.st_mtime * 1000), # Convert to milliseconds
                                 language=language
-                            )
                         )
+                        project_key = (repo_type, owner, repo, language)
+                        previous = newest_projects.get(project_key)
+                        if previous is None or entry.submittedAt > previous.submittedAt:
+                            newest_projects[project_key] = entry
                     else:
                         logger.warning(f"Could not parse project details from filename: {filename}")
                 except Exception as e:
                     logger.error(f"Error processing file {file_path}: {e}")
                     continue # Skip this file on error
 
+        project_entries = list(newest_projects.values())
         # Sort by most recent first
         project_entries.sort(key=lambda p: p.submittedAt, reverse=True)
         logger.info(f"Found {len(project_entries)} processed project entries.")

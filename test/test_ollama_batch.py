@@ -1,6 +1,9 @@
 from adalflow.core.types import Document
 
-from api.ollama_patch import OllamaDocumentProcessor
+from api.ollama_patch import (
+    OllamaDocumentProcessor,
+    prepare_ollama_embedding_query,
+)
 
 
 class FakeResponse:
@@ -50,3 +53,20 @@ def test_ollama_embeddings_use_native_batches(monkeypatch):
     }
     assert calls[1][1]["input"] == ["three"]
     assert all(len(document.vector) == 2 for document in result)
+
+
+def test_short_retrieval_query_is_unchanged():
+    query = "Architecture and data flow"
+
+    assert prepare_ollama_embedding_query(query, max_tokens=128) == query
+
+
+def test_long_retrieval_query_keeps_topic_and_file_hints():
+    query = "TOPIC architecture " + ("implementation " * 600) + "FILES routes.py"
+
+    shortened = prepare_ollama_embedding_query(query, max_tokens=128)
+
+    assert shortened.startswith("TOPIC architecture")
+    assert shortened.endswith("FILES routes.py")
+    assert "retrieval query shortened" in shortened
+    assert len(shortened) < len(query)

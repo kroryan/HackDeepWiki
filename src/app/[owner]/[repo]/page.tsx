@@ -3,7 +3,7 @@
 
 import Ask from '@/components/Ask';
 import Markdown from '@/components/Markdown';
-import ModelSelectionModal from '@/components/ModelSelectionModal';
+import ModelSelectionModal, { AppliedModelSelection } from '@/components/ModelSelectionModal';
 import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -11,6 +11,7 @@ import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
 import { WEBSOCKET_CONNECT_TIMEOUT_MS } from '@/utils/timeouts';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
+import { normalizeWikiPageCount } from '@/utils/wikiPageCount';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -89,8 +90,8 @@ const wikiStyles = `
 `;
 
 // Helper function to generate cache key for localStorage
-const getCacheKey = (owner: string, repo: string, repoType: string, language: string, isComprehensive: boolean = true): string => {
-  return `deepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}`;
+const getCacheKey = (owner: string, repo: string, repoType: string, language: string, isComprehensive: boolean = true, pageCount: number = 10): string => {
+  return `deepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}_${pageCount}`;
 };
 
 // Helper function to add tokens and other parameters to request body
@@ -193,6 +194,11 @@ export default function RepoWikiPage() {
   const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
   const customModelParam = searchParams.get('custom_model') || '';
   const language = searchParams.get('language') || 'en';
+  const isComprehensiveParam = searchParams.get('comprehensive') !== 'false';
+  const pageCountParam = normalizeWikiPageCount(
+    searchParams.get('pages'),
+    isComprehensiveParam,
+  );
   const repoHost = (() => {
     if (!repoUrl) return '';
     try {
@@ -259,8 +265,8 @@ export default function RepoWikiPage() {
 
 
   // Wiki type state - default to comprehensive view
-  const isComprehensiveParam = searchParams.get('comprehensive') !== 'false';
   const [isComprehensiveView, setIsComprehensiveView] = useState(isComprehensiveParam);
+  const [pageCount, setPageCount] = useState(pageCountParam);
   // Using useRef for activeContentRequests to maintain a single instance across renders
   // This map tracks which pages are currently being processed to prevent duplicate requests
   // Note: In a multi-threaded environment, additional synchronization would be needed,
@@ -457,6 +463,7 @@ Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
        - Use "graph TD" (top-down) directive for flow diagrams
        - NEVER use "graph LR" (left-right)
        - Maximum node width should be 3-4 words
+       - Quote every flowchart label that contains parentheses, brackets, colons, URLs, or other punctuation. Example: A["Flask (app.py)"].
        - For sequence diagrams:
          - Start with "sequenceDiagram" directive on its own line
          - Define ALL participants at the beginning using "participant" keyword
@@ -532,6 +539,11 @@ Remember:
         const requestBody: Record<string, any> = {
           repo_url: repoUrl,
           type: effectiveRepoInfo.type,
+          retrieval_query: [
+            page.title,
+            page.content,
+            `Relevant files: ${filePaths.join(', ')}`,
+          ].filter(Boolean).join('\n'),
           messages: [{
             role: 'user',
             content: promptContent
@@ -709,6 +721,7 @@ Remember:
       const requestBody: Record<string, any> = {
         repo_url: repoUrl,
         type: effectiveRepoInfo.type,
+        retrieval_query: `Plan a ${isComprehensiveView ? 'comprehensive' : 'concise'} ${pageCount}-page technical wiki for ${owner}/${repo}. Focus on architecture, features, data flow, deployment, and the files named in the repository tree.`,
         messages: [{
           role: 'user',
 content: `Analyze this GitHub repository ${owner}/${repo} and create a wiki structure for it.
@@ -828,7 +841,7 @@ IMPORTANT FORMATTING INSTRUCTIONS:
 - Start directly with <wiki_structure> and end with </wiki_structure>
 
 IMPORTANT:
-1. Create ${isComprehensiveView ? '8-12' : '4-6'} pages that would make a ${isComprehensiveView ? 'comprehensive' : 'concise'} wiki for this repository
+1. Create exactly ${pageCount} pages that make a ${isComprehensiveView ? 'comprehensive' : 'concise'} wiki for this repository. Do not return more or fewer than ${pageCount} <page> elements.
 2. Each page should focus on a specific aspect of the codebase (e.g., architecture, key features, setup)
 3. The relevant_files should be actual files from the repository that would be used to generate that page
 4. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters`
@@ -1174,7 +1187,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView]);
+  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView, pageCount]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async () => {
@@ -1629,7 +1642,22 @@ IMPORTANT:
 
   // No longer needed as we use the modal directly
 
-  const confirmRefresh = useCallback(async (newToken?: string) => {
+  const confirmRefresh = useCallback(async (
+    newToken?: string,
+    selection?: AppliedModelSelection,
+  ) => {
+    const refreshProvider = selection?.provider ?? selectedProviderState;
+    const refreshModel = selection?.model ?? selectedModelState;
+    const refreshIsCustomModel = selection?.isCustomModel ?? isCustomSelectedModelState;
+    const refreshCustomModel = selection?.customModel ?? customSelectedModelState;
+    const refreshComprehensive = selection?.isComprehensiveView ?? isComprehensiveView;
+    const refreshPageCount = normalizeWikiPageCount(
+      selection?.pageCount ?? pageCount,
+      refreshComprehensive,
+    );
+    const refreshExcludedDirs = selection?.excludedDirs ?? modelExcludedDirs;
+    const refreshExcludedFiles = selection?.excludedFiles ?? modelExcludedFiles;
+
     setShowModelOptions(false);
     setLoadingMessage(messages.loading?.clearingCache || 'Clearing server cache...');
     setIsLoading(true); // Show loading indicator immediately
@@ -1640,20 +1668,21 @@ IMPORTANT:
         repo: effectiveRepoInfo.repo,
         repo_type: effectiveRepoInfo.type,
         language: language,
-        provider: selectedProviderState,
-        model: selectedModelState,
-        is_custom_model: isCustomSelectedModelState.toString(),
-        custom_model: customSelectedModelState,
-        comprehensive: isComprehensiveView.toString(),
+        provider: refreshProvider,
+        model: refreshModel,
+        is_custom_model: refreshIsCustomModel.toString(),
+        custom_model: refreshCustomModel,
+        comprehensive: refreshComprehensive.toString(),
+        page_count: refreshPageCount.toString(),
         authorization_code: authCode,
       });
 
       // Add file filters configuration
-      if (modelExcludedDirs) {
-        params.append('excluded_dirs', modelExcludedDirs);
+      if (refreshExcludedDirs) {
+        params.append('excluded_dirs', refreshExcludedDirs);
       }
-      if (modelExcludedFiles) {
-        params.append('excluded_files', modelExcludedFiles);
+      if (refreshExcludedFiles) {
+        params.append('excluded_files', refreshExcludedFiles);
       }
 
       if(authRequired && !authCode) {
@@ -1706,11 +1735,23 @@ IMPORTANT:
       window.history.replaceState({}, '', currentUrl.toString());
     }
 
+    const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.set('comprehensive', refreshComprehensive.toString());
+    currentUrl.searchParams.set('pages', refreshPageCount.toString());
+    window.history.replaceState({}, '', currentUrl.toString());
+
     // Proceed with the rest of the refresh logic
     console.log('Refreshing wiki. Server cache will be overwritten upon new generation if not cleared.');
 
     // Clear the localStorage cache (if any remnants or if it was used before this change)
-    const localStorageCacheKey = getCacheKey(effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, isComprehensiveView);
+    const localStorageCacheKey = getCacheKey(
+      effectiveRepoInfo.owner,
+      effectiveRepoInfo.repo,
+      effectiveRepoInfo.type,
+      language,
+      refreshComprehensive,
+      refreshPageCount,
+    );
     localStorage.removeItem(localStorageCacheKey);
 
     // Reset cache loaded flag
@@ -1741,7 +1782,7 @@ IMPORTANT:
     // For now, we rely on the standard loadData flow initiated by resetting effectRan and dependencies.
     // This will re-trigger the main data loading useEffect.
     // No direct call to fetchRepositoryStructure here, let the useEffect handle it based on effectRan.current = false.
-  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, authCode, authRequired]);
+  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, pageCount, authCode, authRequired]);
 
   // Start wiki generation when component mounts
   useEffect(() => {
@@ -1758,6 +1799,7 @@ IMPORTANT:
             repo_type: effectiveRepoInfo.type,
             language: language,
             comprehensive: isComprehensiveView.toString(),
+            page_count: pageCount.toString(),
           });
           const response = await fetch(`/api/wiki_cache?${params.toString()}`);
 
@@ -1930,7 +1972,7 @@ IMPORTANT:
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, pageCount]);
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {
@@ -1959,6 +2001,7 @@ IMPORTANT:
               repo: effectiveRepoInfo,
               language: language,
               comprehensive: isComprehensiveView,
+              page_count: pageCount,
               wiki_structure: structureToCache,
               generated_pages: generatedPages,
               provider: selectedProviderState,
@@ -1985,7 +2028,7 @@ IMPORTANT:
     };
 
     saveCache();
-  }, [isLoading, error, wikiStructure, generatedPages, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, effectiveRepoInfo.repoUrl, repoUrl, language, isComprehensiveView]);
+  }, [isLoading, error, wikiStructure, generatedPages, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, effectiveRepoInfo.repoUrl, repoUrl, language, isComprehensiveView, pageCount]);
 
   const handlePageSelect = (pageId: string) => {
     if (currentPageId != pageId) {
@@ -2269,39 +2312,40 @@ IMPORTANT:
       {!isLoading && wikiStructure && (
         <button
           onClick={() => setIsAskModalOpen(true)}
-          className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-[var(--accent-primary)] text-white shadow-lg flex items-center justify-center hover:bg-[var(--accent-primary)]/90 transition-all z-50"
+          className={`fixed bottom-6 right-6 w-14 h-14 rounded-full bg-[var(--accent-primary)] text-white shadow-lg flex items-center justify-center hover:bg-[var(--accent-primary)]/90 transition-all z-50 ${isAskModalOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
           aria-label={messages.ask?.title || 'Ask about this repository'}
         >
           <FaComments className="text-xl" />
         </button>
       )}
 
-      {/* Ask Modal - Always render but conditionally show/hide */}
-      <div className={`fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 transition-opacity duration-300 ${isAskModalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        <div className="bg-[var(--card-bg)] rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
-          <div className="flex items-center justify-end p-3 absolute top-0 right-0 z-10">
-            <button
-              onClick={() => {
-                // Just close the modal without clearing the conversation
-                setIsAskModalOpen(false);
-              }}
-              className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors bg-[var(--card-bg)]/80 rounded-full p-2"
-              aria-label="Close"
-            >
-              <FaTimes className="text-xl" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            <Ask
-              repoInfo={effectiveRepoInfo}
-              provider={selectedProviderState}
-              model={selectedModelState}
-              isCustomModel={isCustomSelectedModelState}
-              customModel={customSelectedModelState}
-              language={language}
-              onRef={(ref) => (askComponentRef.current = ref)}
-            />
-          </div>
+      {/* Ask side drawer - slides in from the right without blocking the wiki */}
+      <div
+        className={`fixed top-0 right-0 h-full w-full sm:w-[420px] bg-[var(--card-bg)] shadow-2xl z-50 flex flex-col transition-transform duration-300 ease-out ${isAskModalOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        aria-hidden={!isAskModalOpen}
+      >
+        <div className="flex items-center justify-between p-3 border-b border-[var(--border-color)]">
+          <span className="text-sm font-medium text-[var(--foreground)]">
+            {messages.ask?.title || 'Repository chat'}
+          </span>
+          <button
+            onClick={() => setIsAskModalOpen(false)}
+            className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors rounded-full p-2"
+            aria-label="Close"
+          >
+            <FaTimes className="text-xl" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <Ask
+            repoInfo={effectiveRepoInfo}
+            provider={selectedProviderState}
+            model={selectedModelState}
+            isCustomModel={isCustomSelectedModelState}
+            customModel={customSelectedModelState}
+            language={language}
+            onRef={(ref) => (askComponentRef.current = ref)}
+          />
         </div>
       </div>
 
@@ -2318,6 +2362,8 @@ IMPORTANT:
         setCustomModel={setCustomSelectedModelState}
         isComprehensiveView={isComprehensiveView}
         setIsComprehensiveView={setIsComprehensiveView}
+        pageCount={pageCount}
+        setPageCount={setPageCount}
         showFileFilters={true}
         excludedDirs={modelExcludedDirs}
         setExcludedDirs={setModelExcludedDirs}

@@ -6,6 +6,19 @@ import UserSelector from './UserSelector';
 import WikiTypeSelector from './WikiTypeSelector';
 import TokenInput from './TokenInput';
 
+export interface AppliedModelSelection {
+  provider: string;
+  model: string;
+  isCustomModel: boolean;
+  customModel: string;
+  isComprehensiveView: boolean;
+  pageCount?: number;
+  excludedDirs: string;
+  excludedFiles: string;
+  includedDirs: string;
+  includedFiles: string;
+}
+
 interface ModelSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -17,11 +30,13 @@ interface ModelSelectionModalProps {
   setIsCustomModel: (value: boolean) => void;
   customModel: string;
   setCustomModel: (value: string) => void;
-  onApply: (token?: string) => void;
+  onApply: (token?: string, selection?: AppliedModelSelection) => void;
 
   // Wiki type options
   isComprehensiveView: boolean;
   setIsComprehensiveView: (value: boolean) => void;
+  pageCount?: number;
+  setPageCount?: (value: number) => void;
 
   // File filter options - optional
   excludedDirs?: string;
@@ -59,6 +74,8 @@ export default function ModelSelectionModal({
   onApply,
   isComprehensiveView,
   setIsComprehensiveView,
+  pageCount,
+  setPageCount,
   excludedDirs = '',
   setExcludedDirs,
   excludedFiles = '',
@@ -84,6 +101,7 @@ export default function ModelSelectionModal({
   const [localIsCustomModel, setLocalIsCustomModel] = useState(isCustomModel);
   const [localCustomModel, setLocalCustomModel] = useState(customModel);
   const [localIsComprehensiveView, setLocalIsComprehensiveView] = useState(isComprehensiveView);
+  const [localPageCount, setLocalPageCount] = useState(pageCount);
   const [localExcludedDirs, setLocalExcludedDirs] = useState(excludedDirs);
   const [localExcludedFiles, setLocalExcludedFiles] = useState(excludedFiles);
   const [localIncludedDirs, setLocalIncludedDirs] = useState(includedDirs);
@@ -102,6 +120,7 @@ export default function ModelSelectionModal({
       setLocalIsCustomModel(isCustomModel);
       setLocalCustomModel(customModel);
       setLocalIsComprehensiveView(isComprehensiveView);
+      setLocalPageCount(pageCount);
       setLocalExcludedDirs(excludedDirs);
       setLocalExcludedFiles(excludedFiles);
       setLocalIncludedDirs(includedDirs);
@@ -110,7 +129,7 @@ export default function ModelSelectionModal({
       setLocalAccessToken('');
       setShowTokenSection(showTokenInput);
     }
-  }, [isOpen, provider, model, isCustomModel, customModel, isComprehensiveView, excludedDirs, excludedFiles, includedDirs, includedFiles, repositoryType, showTokenInput]);
+  }, [isOpen, provider, model, isCustomModel, customModel, isComprehensiveView, pageCount, excludedDirs, excludedFiles, includedDirs, includedFiles, repositoryType, showTokenInput]);
 
   // Handler for applying changes
   const handleApply = () => {
@@ -119,17 +138,26 @@ export default function ModelSelectionModal({
     setIsCustomModel(localIsCustomModel);
     setCustomModel(localCustomModel);
     setIsComprehensiveView(localIsComprehensiveView);
+    if (localPageCount !== undefined) setPageCount?.(localPageCount);
     if (setExcludedDirs) setExcludedDirs(localExcludedDirs);
     if (setExcludedFiles) setExcludedFiles(localExcludedFiles);
     if (setIncludedDirs) setIncludedDirs(localIncludedDirs);
     if (setIncludedFiles) setIncludedFiles(localIncludedFiles);
     
-    // Pass token to onApply if needed
-    if (showTokenInput) {
-      onApply(localAccessToken);
-    } else {
-      onApply();
-    }
+    // React state updates are asynchronous. Pass the exact submitted values so
+    // refresh operations never use the values from the previous render.
+    onApply(showTokenInput ? localAccessToken : undefined, {
+      provider: localProvider,
+      model: localModel,
+      isCustomModel: localIsCustomModel,
+      customModel: localCustomModel,
+      isComprehensiveView: localIsComprehensiveView,
+      pageCount: localPageCount,
+      excludedDirs: localExcludedDirs,
+      excludedFiles: localExcludedFiles,
+      includedDirs: localIncludedDirs,
+      includedFiles: localIncludedFiles,
+    });
     onClose();
   };
 
@@ -162,6 +190,8 @@ export default function ModelSelectionModal({
               showWikiType && <WikiTypeSelector
                     isComprehensiveView={localIsComprehensiveView}
                     setIsComprehensiveView={setLocalIsComprehensiveView}
+                    pageCount={localPageCount}
+                    setPageCount={setLocalPageCount}
                 />
             }
 
