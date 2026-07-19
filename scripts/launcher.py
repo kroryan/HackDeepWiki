@@ -103,8 +103,20 @@ def setup_persistent_config_and_logs(args):
     default_config_src = os.path.join(BASE_DIR, "api", "config")
     
     # Try dynamic Ollama discovery first
+    # Note: freedeepwiki_config.render() raises SystemExit (not Exception) on
+    # connection errors, so we catch BaseException to handle both gracefully.
     try:
-        from scripts.freedeepwiki_config import render
+        # Try both import paths: bundled (scripts package) and dev mode (direct)
+        try:
+            from scripts.freedeepwiki_config import render as _render
+        except ImportError:
+            import importlib.util
+            _spec_path = os.path.join(BASE_DIR, "scripts", "freedeepwiki_config.py")
+            _spec = importlib.util.spec_from_file_location("freedeepwiki_config", _spec_path)
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            _render = _mod.render
+        render = _render
         print(f"Checking Ollama status at {args.ollama_endpoint}...")
         model, embed_model = render(
             Path(default_config_src),
@@ -120,7 +132,7 @@ def setup_persistent_config_and_logs(args):
             os.environ["OLLAMA_MODEL"] = model
         if embed_model:
             os.environ["OLLAMA_EMBED_MODEL"] = embed_model
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         print(f"Ollama auto-configuration skipped / not available: {e}")
         print("Falling back to default configuration templates.")
         if os.path.exists(default_config_src):
@@ -130,6 +142,7 @@ def setup_persistent_config_and_logs(args):
                 if os.path.isfile(src_file) and not os.path.exists(dest_file):
                     print(f"Copying default config: {item} -> {config_dir}")
                     shutil.copy2(src_file, dest_file)
+
         
     print(f"Persistent config directory: {config_dir}")
     print(f"Persistent log file: {os.environ['LOG_FILE_PATH']}")
@@ -157,14 +170,24 @@ def is_port_open(port):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="FreeDeepWiki Standalone Runner")
-    parser.add_argument("--ollama-endpoint", "-ollama-endpoint", default=os.environ.get("OLLAMA_ENDPOINT", "http://127.0.0.1:11434"))
-    parser.add_argument("--model", "-ollama-model", "--ollama-model", default=os.environ.get("OLLAMA_MODEL", ""))
-    parser.add_argument("--embed-model", default=os.environ.get("OLLAMA_EMBED_MODEL", ""))
-    parser.add_argument("--embed-batch-size", type=int, default=int(os.environ.get("OLLAMA_EMBED_BATCH_SIZE", "32")))
-    parser.add_argument("--ollama-timeout", type=int, default=int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", "1800")))
-    parser.add_argument("--github-token", default=os.environ.get("GITHUB_TOKEN", ""))
-    parser.add_argument("--api-port", type=int, default=None)
-    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--ollama-endpoint", default=os.environ.get("OLLAMA_ENDPOINT", "http://127.0.0.1:11434"),
+                        help="Ollama API endpoint URL")
+    parser.add_argument("--model", default=os.environ.get("OLLAMA_MODEL", ""),
+                        help="Ollama completion model to use")
+    parser.add_argument("--embed-model", dest="embed_model", default=os.environ.get("OLLAMA_EMBED_MODEL", ""),
+                        help="Ollama embedding model to use")
+    parser.add_argument("--embed-batch-size", dest="embed_batch_size", type=int,
+                        default=int(os.environ.get("OLLAMA_EMBED_BATCH_SIZE", "32")),
+                        help="Batch size for Ollama embeddings")
+    parser.add_argument("--ollama-timeout", dest="ollama_timeout", type=int,
+                        default=int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", "1800")),
+                        help="Timeout (seconds) for Ollama requests")
+    parser.add_argument("--github-token", dest="github_token", default=os.environ.get("GITHUB_TOKEN", ""),
+                        help="GitHub personal access token")
+    parser.add_argument("--api-port", dest="api_port", type=int, default=None,
+                        help="Backend API port (default: auto-detect from 8001)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="Frontend port (default: auto-detect from 3000)")
     
     args, unknown = parser.parse_known_args()
     

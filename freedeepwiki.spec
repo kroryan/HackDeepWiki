@@ -39,6 +39,7 @@ else:
 # Collect all hidden submodules of dynamic libraries
 packages_to_collect = [
     'api',
+    'scripts',
     'fastapi',
     'uvicorn',
     'pydantic',

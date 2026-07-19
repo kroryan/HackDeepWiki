@@ -342,7 +342,7 @@ lang_config = load_lang_config()
 
 # Update configuration
 if generator_config:
-    configs["default_provider"] = generator_config.get("default_provider", "google")
+    configs["default_provider"] = generator_config.get("default_provider", "ollama")
     configs["providers"] = generator_config.get("providers", {})
 
 # Update embedder configuration
@@ -391,13 +391,17 @@ def get_model_config(provider="google", model=None):
         if not model:
             raise ValueError(f"No default model specified for provider '{provider}'")
 
-    # Get model parameters (if present)
+    # Get model parameters (if present).
+    # For custom models not in the config list, fall back to default model params
+    # or an empty dict (especially important for Ollama which supports any installed model).
     model_params = {}
-    if model in provider_config.get("models", {}):
-        model_params = provider_config["models"][model]
-    else:
-        default_model = provider_config.get("default_model")
-        model_params = provider_config["models"][default_model]
+    models_dict = provider_config.get("models", {})
+    if model in models_dict:
+        model_params = models_dict[model]
+    elif models_dict:
+        # Try default model params as a base; if not found use empty dict
+        default_model = provider_config.get("default_model", "")
+        model_params = models_dict.get(default_model, {})
 
     # Prepare base configuration
     result = {
