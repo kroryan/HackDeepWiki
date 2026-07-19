@@ -38,6 +38,7 @@ else:
 
 # Collect all hidden submodules of dynamic libraries
 packages_to_collect = [
+    'api',
     'fastapi',
     'uvicorn',
     'pydantic',
@@ -52,22 +53,13 @@ packages_to_collect = [
     'jinja2',
     'aiohttp',
     'langid',
-    'numpy'
+    'numpy',
+    'openai',
+    'ollama',
+    'faiss'
 ]
 
-hidden_imports = [
-    'api',
-    'api.api',
-    'api.config',
-    'api.data_pipeline',
-    'api.main',
-    'api.logging_config',
-    'api.prompts',
-    'api.rag',
-    'api.simple_chat',
-    'api.websocket_wiki',
-    'api.ollama_patch'
-]
+hidden_imports = []
 
 for pkg in packages_to_collect:
     try:
