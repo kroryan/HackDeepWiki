@@ -69,6 +69,27 @@ def test_render_can_be_repeated_with_a_different_model(tmp_path):
     assert not output.with_name("config.previous").exists()
 
 
+def test_nomic_is_the_automatic_embedding_default(tmp_path):
+    source = Path(__file__).parents[1] / "api" / "config"
+    output = tmp_path / "config"
+
+    render(
+        source,
+        output,
+        "http://ollama.test:11434",
+        discovered_models=(
+            ["ornith:35b"],
+            ["qwen3-embedding:latest", "nomic-embed-text:latest"],
+        ),
+    )
+
+    embedder = read_json(output / "embedder.json")
+    assert (
+        embedder["embedder_ollama"]["model_kwargs"]["model"]
+        == "nomic-embed-text:latest"
+    )
+
+
 def test_classify_models_uses_capabilities_and_legacy_fallback():
     completion, embedding = classify_models(
         [

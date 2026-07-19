@@ -27,7 +27,9 @@ La interfaz queda en <http://localhost:3000> y la API en
 <http://localhost:8001>. El proveedor predeterminado es Ollama. En cada
 arranque, DeepWiki consulta `/api/tags` y muestra los modelos de generación
 publicados por ese endpoint. Los modelos con capacidad `embedding` se usan
-separadamente y no aparecen mezclados en el selector.
+separadamente y no aparecen mezclados en el selector. Cuando está disponible,
+`nomic-embed-text` se prioriza automáticamente como embedder por su menor
+consumo y latencia; `--embed-model` permite elegir otro explícitamente.
 
 ## Uso diario
 

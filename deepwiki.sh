@@ -18,6 +18,7 @@ OLLAMA_MODEL="${OLLAMA_MODEL:-}"
 OLLAMA_EMBED_MODEL="${OLLAMA_EMBED_MODEL:-}"
 OLLAMA_EMBED_BATCH_SIZE="${OLLAMA_EMBED_BATCH_SIZE:-32}"
 OLLAMA_REQUEST_TIMEOUT="${OLLAMA_REQUEST_TIMEOUT:-1800}"
+OLLAMA_HEALTH_TIMEOUT="${OLLAMA_HEALTH_TIMEOUT:-60}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 DEEPWIKI_API_PORT="${DEEPWIKI_API_PORT:-8001}"
 DEEPWIKI_PROJECT_NAME="${DEEPWIKI_PROJECT_NAME:-deepwiki-open-local}"
@@ -60,6 +61,8 @@ Opciones:
                   Textos por petición de embeddings (por defecto 32)
   --ollama-timeout SEGUNDOS
                   Timeout por tanda de embeddings (por defecto 1800)
+  --ollama-health-timeout SEGUNDOS
+                  Espera del chequeo remoto previo (por defecto 60)
   --github-token-file RUTA
                   Lee un token GitHub desde un archivo (evita el historial)
   --api-port PORT Puerto de la API (por defecto 8001)
@@ -69,7 +72,8 @@ Opciones:
 
 Variables equivalentes:
   OLLAMA_ENDPOINT, OLLAMA_MODEL, OLLAMA_EMBED_MODEL,
-  OLLAMA_EMBED_BATCH_SIZE, OLLAMA_REQUEST_TIMEOUT, GITHUB_TOKEN,
+  OLLAMA_EMBED_BATCH_SIZE, OLLAMA_REQUEST_TIMEOUT, OLLAMA_HEALTH_TIMEOUT,
+  GITHUB_TOKEN,
   DEEPWIKI_API_PORT, DEEPWIKI_PROJECT_NAME, DEEPWIKI_NETWORK_MODE
 
 Ejemplos:
@@ -163,7 +167,8 @@ compose() {
 check_ollama() {
   require_command curl
   curl --fail --silent --show-error \
-    --max-time 5 "${OLLAMA_ENDPOINT}/api/version" >/dev/null ||
+    --max-time "${OLLAMA_HEALTH_TIMEOUT}" \
+    "${OLLAMA_ENDPOINT}/api/version" >/dev/null ||
     die "No se puede acceder a Ollama en ${OLLAMA_ENDPOINT}"
 }
 
@@ -215,6 +220,7 @@ Modelo           : ${selected_model}
 Embeddings       : ${selected_embed_model}
 Tanda embeddings : ${OLLAMA_EMBED_BATCH_SIZE}
 Timeout Ollama   : ${OLLAMA_REQUEST_TIMEOUT}s (solo embeddings)
+Chequeo Ollama   : ${OLLAMA_HEALTH_TIMEOUT}s
 Token GitHub      : ${github_auth}
 Red Docker        : ${EFFECTIVE_NETWORK_MODE}
 Config local     : ${RUNTIME_DIR}/config
@@ -224,7 +230,8 @@ EOF
 
 health() {
   local failed=0
-  if curl --fail --silent --max-time 5 "${OLLAMA_ENDPOINT}/api/version" >/dev/null; then
+  if curl --fail --silent --max-time "${OLLAMA_HEALTH_TIMEOUT}" \
+    "${OLLAMA_ENDPOINT}/api/version" >/dev/null; then
     printf 'OK    Ollama  %s\n' "${OLLAMA_ENDPOINT}"
   else
     printf 'ERROR Ollama  %s\n' "${OLLAMA_ENDPOINT}"
@@ -266,14 +273,14 @@ doctor() {
     printf 'ERROR Docker no accesible\n'
     failed=1
   fi
-  if curl --fail --silent --max-time 5 \
+  if curl --fail --silent --max-time "${OLLAMA_HEALTH_TIMEOUT}" \
     "${OLLAMA_ENDPOINT}/api/version" >/dev/null; then
     printf 'OK    Ollama accesible\n'
   else
     printf 'ERROR Ollama no accesible\n'
     failed=1
   fi
-  if curl --fail --silent --max-time 5 \
+  if curl --fail --silent --max-time "${OLLAMA_HEALTH_TIMEOUT}" \
     "${OLLAMA_ENDPOINT}/api/tags" >/dev/null; then
     printf 'OK    catálogo de modelos accesible\n'
   else
@@ -324,6 +331,11 @@ while (($#)); do
       OLLAMA_REQUEST_TIMEOUT="$2"
       shift 2
       ;;
+    --ollama-health-timeout)
+      (($# >= 2)) || die "Falta el timeout del chequeo de Ollama"
+      OLLAMA_HEALTH_TIMEOUT="$2"
+      shift 2
+      ;;
     --github-token-file)
       (($# >= 2)) || die "Falta la ruta del archivo de token"
       [[ -r "$2" ]] || die "No se puede leer el archivo de token: $2"
@@ -365,6 +377,8 @@ validate_port
   die "El tamaño de tanda debe ser un entero positivo"
 [[ "${OLLAMA_REQUEST_TIMEOUT}" =~ ^[1-9][0-9]*$ ]] ||
   die "El timeout de Ollama debe ser un entero positivo"
+[[ "${OLLAMA_HEALTH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]] ||
+  die "El timeout del chequeo de Ollama debe ser un entero positivo"
 cd "${ROOT_DIR}"
 
 case "${COMMAND}" in

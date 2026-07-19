@@ -84,7 +84,12 @@ def discover_ollama_models(endpoint: str) -> tuple[list[str], list[str]]:
     return completion, embedding
 
 
-def select_model(models: list[str], preferred: str, kind: str) -> str:
+def select_model(
+    models: list[str],
+    preferred: str,
+    kind: str,
+    automatic_priority: tuple[str, ...] = (),
+) -> str:
     if preferred:
         if preferred not in models:
             available = ", ".join(models)
@@ -93,6 +98,13 @@ def select_model(models: list[str], preferred: str, kind: str) -> str:
                 f"Available models: {available}"
             )
         return preferred
+    for candidate in automatic_priority:
+        if candidate in models:
+            return candidate
+        candidate_base = candidate.split(":", 1)[0]
+        for model in models:
+            if model.split(":", 1)[0] == candidate_base:
+                return model
     return models[0]
 
 
@@ -134,7 +146,12 @@ def configure_embedder(
     preferred_model: str,
 ) -> str:
     config = load_json(path)
-    selected = select_model(models, preferred_model, "embedding")
+    selected = select_model(
+        models,
+        preferred_model,
+        "embedding",
+        automatic_priority=("nomic-embed-text:latest",),
+    )
     ollama = config.setdefault("embedder_ollama", {})
     ollama["client_class"] = "OllamaClient"
     ollama.setdefault("model_kwargs", {})["model"] = selected
