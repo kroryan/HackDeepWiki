@@ -75,4 +75,7 @@ certs/
 # Standalone build directories
 /bin/
 /tiktoken_cache/
+/AppDir/
+/*.AppImage
+/appimagetool*
 
