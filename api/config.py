@@ -369,7 +369,7 @@ def get_model_config(provider="google", model=None):
     Get configuration for the specified provider and model
 
     Parameters:
-        provider (str): Model provider ('google', 'openai', 'openrouter', 'ollama', 'bedrock')
+        provider (str): Model provider ('google', 'openai', 'openrouter', 'ollama', 'bedrock', 'claude', 'openai_custom')
         model (str): Model name, or None to use default model
 
     Returns:
@@ -380,8 +380,55 @@ def get_model_config(provider="google", model=None):
         raise ValueError("Provider configuration not loaded")
 
     provider_config = configs["providers"].get(provider)
+
+    # If the provider is not in the config file, create sensible defaults
+    # This is critical for providers like openai, claude, google, openai_custom
+    # that aren't in generator.json when using AppImage with Ollama-only config
     if not provider_config:
-        raise ValueError(f"Configuration for provider '{provider}' not found")
+        default_providers = {
+            "google": {
+                "model_client": GoogleGenAIClient,
+                "default_model": "gemini-2.5-flash",
+                "supportsCustomModel": True,
+                "models": {}
+            },
+            "openai": {
+                "model_client": OpenAIClient,
+                "default_model": "gpt-4o",
+                "supportsCustomModel": True,
+                "models": {}
+            },
+            "openai_custom": {
+                "model_client": OpenAIClient,
+                "default_model": "gpt-4o",
+                "supportsCustomModel": True,
+                "models": {}
+            },
+            "claude": {
+                "model_client": LiteLLMClient,
+                "default_model": "claude-3-7-sonnet-latest",
+                "supportsCustomModel": True,
+                "models": {}
+            },
+            "openrouter": {
+                "model_client": OpenRouterClient,
+                "default_model": "openai/gpt-4o",
+                "supportsCustomModel": True,
+                "models": {}
+            },
+            "litellm": {
+                "model_client": LiteLLMClient,
+                "default_model": "gpt-4o",
+                "supportsCustomModel": True,
+                "models": {}
+            },
+        }
+
+        if provider in default_providers:
+            provider_config = default_providers[provider]
+            logger.info(f"Using default configuration for provider '{provider}' (not in generator.json)")
+        else:
+            raise ValueError(f"Configuration for provider '{provider}' not found")
 
     model_client = provider_config.get("model_client")
     if not model_client:
@@ -419,6 +466,12 @@ def get_model_config(provider="google", model=None):
             result["model_kwargs"] = {"model": model}
     else:
         # Standard structure for other providers
-        result["model_kwargs"] = {"model": model, **model_params}
+        # Ensure temperature exists for non-Ollama providers
+        base_kwargs = {"model": model}
+        if not model_params.get("temperature"):
+            base_kwargs["temperature"] = 0.7
+        if not model_params.get("top_p"):
+            base_kwargs["top_p"] = 0.8
+        result["model_kwargs"] = {**base_kwargs, **model_params}
 
     return result

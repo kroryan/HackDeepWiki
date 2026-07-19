@@ -452,12 +452,12 @@ This file contains...
 
             model = OllamaClient()
             model_kwargs = {
-                "model": model_config["model"],
+                "model": model_config.get("model", request.model),
                 "stream": True,
                 "options": {
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "num_ctx": model_config["num_ctx"]
+                    "temperature": model_config.get("temperature", 0.7),
+                    "top_p": model_config.get("top_p", 0.8),
+                    "num_ctx": model_config.get("num_ctx", 32000)
                 }
             }
 
@@ -478,11 +478,11 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"]
+                "temperature": model_config.get("temperature", 0.7)
             }
             # Only add top_p if it exists in the model config
             if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
+                model_kwargs["top_p"] = model_config.get("top_p", 0.8)
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,
@@ -508,11 +508,11 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"]
+                "temperature": model_config.get("temperature", 0.7)
             }
             # Only add top_p if it exists in the model config
             if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
+                model_kwargs["top_p"] = model_config.get("top_p", 0.8)
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,
@@ -530,16 +530,19 @@ This file contains...
             client_kwargs = {}
             if request.api_key:
                 client_kwargs['api_key'] = request.api_key
+                # LiteLLM routes to underlying providers which need their own env vars
+                if request.provider == "claude":
+                    os.environ["ANTHROPIC_API_KEY"] = request.api_key
             
             model = LiteLLMClient(**client_kwargs)
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"]
+                "temperature": model_config.get("temperature", 0.7)
             }
             # Only add top_p if it exists in the model config
             if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
+                model_kwargs["top_p"] = model_config.get("top_p", 0.8)
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,
@@ -575,8 +578,8 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
+                "temperature": model_config.get("temperature", 0.7),
+                "top_p": model_config.get("top_p", 0.8)
             }
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
@@ -592,8 +595,8 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
+                "temperature": model_config.get("temperature", 0.7),
+                "top_p": model_config.get("top_p", 0.8)
             }
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
@@ -607,11 +610,11 @@ This file contains...
                 genai.configure(api_key=request.api_key)
             # Initialize Google Generative AI model
             model = genai.GenerativeModel(
-                model_name=model_config["model"],
+                model_name=model_config.get("model", "gemini-2.5-flash"),
                 generation_config={
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "top_k": model_config["top_k"]
+                    "temperature": model_config.get("temperature", 0.7),
+                    "top_p": model_config.get("top_p", 0.8),
+                    "top_k": model_config.get("top_k", 40)
                 }
             )
 
