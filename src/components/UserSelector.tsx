@@ -127,7 +127,7 @@ export default function UserSelector({
   // API Key and Endpoint state
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [apiEndpoints, setApiEndpoints] = useState<Record<string, string>>({
-    'openai_custom': 'https://api.openai.com',
+    'openai_custom': 'https://api.openai.com/v1',
     'ollama': 'http://localhost:11434'
   });
   
@@ -451,9 +451,14 @@ next.config.js
                   type="text" 
                   value={apiEndpoints[provider] || ''}
                   onChange={(e) => handleEndpointChange(provider, e.target.value)}
-                  placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com'}
+                  placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.novita.ai/v3/openai'}
                   className="input-japanese block w-full px-2 py-1 text-xs rounded bg-black/20 text-[var(--foreground)] focus:border-[var(--accent-primary)] border-transparent"
                 />
+                {provider === 'openai_custom' && (
+                  <div className="text-[9px] text-[var(--muted)] mt-1 leading-tight">
+                    Examples: <code>https://api.novita.ai/v3/openai</code>, <code>https://api.together.xyz/v1</code>, <code>https://api.groq.com/openai/v1</code>, <code>http://localhost:8000/v1</code> (vLLM)
+                  </div>
+                )}
               </div>
             )}
 
@@ -497,6 +502,11 @@ next.config.js
             {provider === 'google' && (
               <div className="text-[10px] text-[var(--muted)] leading-tight mt-2 p-2 bg-[var(--accent-primary)]/5 rounded">
                 <strong>Gemini Advanced Subscription:</strong> Install Google Antigravity CLI <code>npm i -g @google/agy</code>, run <code>agy auth login</code>, and paste your access token above, OR generate a free API key from Google AI Studio.
+              </div>
+            )}
+            {provider === 'openai_custom' && (
+              <div className="text-[10px] text-[var(--muted)] leading-tight mt-2 p-2 bg-[var(--accent-primary)]/5 rounded">
+                <strong>Custom OpenAI-Compatible Provider:</strong> Enter the base URL of any OpenAI-compatible API (Novita, Together, Groq, vLLM, LM Studio, etc.). Use the <strong>Reload</strong> button to fetch available models, or enable <strong>Custom Model</strong> and type the model name manually. The API key from that provider goes in the field above.
               </div>
             )}
           </div>

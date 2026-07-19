@@ -258,6 +258,8 @@ async def probe_models(request: ModelProbeRequest):
     """
     Probe an OpenAI-compatible or Ollama endpoint and return its model list.
     Used by the frontend to populate the model dropdown for custom providers.
+    Tries multiple URL patterns to support various OpenAI-compatible APIs
+    (Novita, Together, Groq, vLLM, etc.)
     """
     import httpx
 
@@ -267,7 +269,7 @@ async def probe_models(request: ModelProbeRequest):
         headers["Authorization"] = f"Bearer {request.api_key}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             if request.provider_type == "ollama":
                 url = f"{endpoint}/api/tags"
                 resp = await client.get(url, headers=headers)
@@ -278,15 +280,37 @@ async def probe_models(request: ModelProbeRequest):
                     for m in data.get("models", [])
                 ]
             else:
-                # OpenAI-compatible: GET /v1/models
-                url = f"{endpoint}/v1/models"
-                resp = await client.get(url, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                models = [
-                    {"id": m["id"], "name": m.get("name", m["id"])}
-                    for m in data.get("data", [])
+                # Try multiple URL patterns for OpenAI-compatible endpoints
+                # Different providers use different URL structures:
+                # - OpenAI: https://api.openai.com/v1/models
+                # - Novita: https://api.novita.ai/v3/openai/models
+                # - Together: https://api.together.xyz/v1/models
+                # - vLLM: http://localhost:8000/v1/models
+                models = []
+                urls_to_try = [
+                    f"{endpoint}/models",        # If endpoint already includes /v1 or /v3/openai
+                    f"{endpoint}/v1/models",     # Standard OpenAI format
                 ]
+                
+                last_error = None
+                for url in urls_to_try:
+                    try:
+                        resp = await client.get(url, headers=headers)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            models = [
+                                {"id": m["id"], "name": m.get("name", m["id"])}
+                                for m in data.get("data", [])
+                            ]
+                            if models:
+                                break
+                    except Exception as url_err:
+                        last_error = url_err
+                        continue
+                
+                if not models and last_error:
+                    return {"models": [], "error": f"Could not fetch models from any URL pattern. Last error: {last_error}"}
+                    
         return {"models": models}
     except Exception as e:
         logger.warning(f"Model probe failed for {endpoint}: {e}")
