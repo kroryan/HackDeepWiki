@@ -1,12 +1,8 @@
 import logging
 import os
-from collections.abc import AsyncIterator
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 from urllib.parse import unquote
 
-import google.generativeai as genai
-from adalflow.components.model_client.ollama_client import OllamaClient
-from adalflow.core.types import ModelType
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -14,13 +10,7 @@ from pydantic import BaseModel, Field
 
 from api.config import get_model_config, configs, OPENROUTER_API_KEY, OPENAI_API_KEY, LITELLM_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 from api.data_pipeline import count_tokens, get_file_content
-from api.openai_client import OpenAIClient
-from api.openrouter_client import OpenRouterClient
-from api.bedrock_client import BedrockClient
-from api.azureai_client import AzureAIClient
-from api.dashscope_client import DashscopeClient
-from api.litellm_client import LiteLLMClient
-from api.anthropic_client import AnthropicClient
+from api.provider_streaming import stream_provider_response
 from api.rag import RAG
 from api.prompts import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
@@ -31,9 +21,6 @@ from api.prompts import (
 
 # Configure logging
 from api.logging_config import setup_logging
-
-if TYPE_CHECKING:
-    from ollama import ChatResponse
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -342,316 +329,32 @@ async def chat_completions_stream(request: ChatCompletionRequest):
 
         model_config = get_model_config(request.provider, request.model)["model_kwargs"]
 
-        if request.provider == "ollama":
-            prompt += " /no_think"
-
-            model = OllamaClient()
-            model_kwargs = {
-                "model": model_config["model"],
-                "stream": True,
-                "options": {
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "num_ctx": model_config["num_ctx"]
-                }
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "openrouter":
-            logger.info(f"Using OpenRouter with model: {request.model}")
-
-            # Check if OpenRouter API key is set
-            if not OPENROUTER_API_KEY:
-                logger.warning("OPENROUTER_API_KEY not configured, but continuing with request")
-                # We'll let the OpenRouterClient handle this and return a friendly error message
-
-            model = OpenRouterClient()
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config["temperature"]
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider in ("openai", "openai_custom"):
-            logger.info(f"Using Openai protocol with model: {request.model}")
-
-            # Check if an API key is set for Openai
-            if not OPENAI_API_KEY and not request.api_key:
-                logger.warning("API key not configured, but continuing with request")
-                # We'll let the OpenAIClient handle this and return an error message
-
-            # Initialize Openai client, forwarding any custom key/endpoint
-            client_kwargs = {}
-            if request.api_key:
-                client_kwargs['api_key'] = request.api_key
-            if request.api_endpoint:
-                client_kwargs['base_url'] = request.api_endpoint
-
-            model = OpenAIClient(**client_kwargs)
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config["temperature"]
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "claude":
-            logger.info(f"Using native Anthropic API with model: {request.model}")
-
-            if not request.api_key:
-                logger.warning("Anthropic API key/subscription token not configured, but continuing with request")
-
-            model = AnthropicClient(api_key=request.api_key, base_url=request.api_endpoint)
-            model_kwargs = {
-                "model": request.model,
-                "temperature": model_config["temperature"],
-                "max_tokens": 8192,
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "litellm":
-            logger.info(f"Using Openai protocol with model on LiteLLM for provider: {request.provider}")
-
-            if not LITELLM_API_KEY and not request.api_key:
-                logger.warning("API key not configured, but continuing with request")
-
-            client_kwargs = {}
-            if request.api_key:
-                client_kwargs['api_key'] = request.api_key
-
-            model = LiteLLMClient(**client_kwargs)
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config["temperature"]
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "bedrock":
-            logger.info(f"Using AWS Bedrock with model: {request.model}")
-
-            # Check if AWS credentials are set
-            if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
-                logger.warning("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not configured, but continuing with request")
-                # We'll let the BedrockClient handle this and return an error message
-
-            # Initialize Bedrock client
-            model = BedrockClient()
-            model_kwargs = {
-                "model": request.model,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "azure":
-            logger.info(f"Using Azure AI with model: {request.model}")
-
-            # Initialize Azure AI client
-            model = AzureAIClient()
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "dashscope":
-            logger.info(f"Using Dashscope with model: {request.model}")
-
-            model = DashscopeClient()
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"],
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM,
-            )
-        else:
-            # Configure API key for Google GenAI if a custom one was provided
-            if request.api_key:
-                genai.configure(api_key=request.api_key)
-            # Initialize Google Generative AI model (default provider)
-            model = genai.GenerativeModel(
-                model_name=model_config["model"],
-                generation_config={
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "top_k": model_config["top_k"],
-                },
-            )
+        # Warn-only checks for missing API keys, preserved from the original
+        # per-branch dispatch: the request still proceeds and the provider
+        # client itself returns a friendly error if the key is truly required.
+        if request.provider == "openrouter" and not OPENROUTER_API_KEY:
+            logger.warning("OPENROUTER_API_KEY not configured, but continuing with request")
+        elif request.provider in ("openai", "openai_custom") and not OPENAI_API_KEY and not request.api_key:
+            logger.warning("API key not configured, but continuing with request")
+        elif request.provider == "claude" and not request.api_key:
+            logger.warning("Anthropic API key/subscription token not configured, but continuing with request")
+        elif request.provider == "litellm" and not LITELLM_API_KEY and not request.api_key:
+            logger.warning("API key not configured, but continuing with request")
+        elif request.provider == "bedrock" and (not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY):
+            logger.warning("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not configured, but continuing with request")
 
         # Create a streaming response
         async def response_stream():
             try:
-                if request.provider == "ollama":
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    response: "AsyncIterator[ChatResponse]" = await model.acall(
-                        api_kwargs=api_kwargs,
-                        model_type=ModelType.LLM,
-                    )
-                    # Handle streaming response from Ollama
-                    async for chunk in response:
-                        if not hasattr(chunk, "message"):
-                            raise RuntimeError(
-                                "`message` field not found in response. Wrong ollama-python version probably.",
-                            )
-                        text = chunk.message.content
-                        if text:
-                            text = text.replace('<think>', '').replace('</think>', '')
-                            yield text
-                elif request.provider == "openrouter":
-                    try:
-                        # Get the response and handle it properly using the previously created api_kwargs
-                        logger.info("Making OpenRouter API call")
-                        response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                        # Handle streaming response from OpenRouter
-                        async for chunk in response:
-                            yield chunk
-                    except Exception as e_openrouter:
-                        logger.error(f"Error with OpenRouter API: {str(e_openrouter)}")
-                        yield f"\nError with OpenRouter API: {str(e_openrouter)}\n\nPlease check that you have set the OPENROUTER_API_KEY environment variable with a valid API key."
-                elif request.provider in ("openai", "openai_custom"):
-                    try:
-                        # Get the response and handle it properly using the previously created api_kwargs
-                        logger.info("Making Openai API call")
-                        response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                        # Handle streaming response from Openai
-                        async for chunk in response:
-                           choices = getattr(chunk, "choices", [])
-                           if len(choices) > 0:
-                               delta = getattr(choices[0], "delta", None)
-                               if delta is not None:
-                                    text = getattr(delta, "content", None)
-                                    if text is not None:
-                                        yield text
-                    except Exception as e_openai:
-                        logger.error(f"Error with Openai API: {str(e_openai)}")
-                        yield f"\nError with Openai API: {str(e_openai)}\n\nPlease check that you have set a valid API key for this provider."
-                elif request.provider == "claude":
-                    try:
-                        logger.info("Making Anthropic API call")
-                        response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                        async for chunk in response:
-                            if chunk:
-                                yield chunk
-                    except Exception as e_claude:
-                        logger.error(f"Error with Anthropic API: {str(e_claude)}")
-                        yield f"\nError with Anthropic API: {str(e_claude)}\n\nPlease check that you have set a valid API key or subscription token for Claude."
-                elif request.provider == "litellm":
-                    try:
-                        logger.info("Making LiteLLM API call")
-                        response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                        async for chunk in response:
-                            choices = getattr(chunk, "choices", [])
-                            if len(choices) > 0:
-                                delta = getattr(choices[0], "delta", None)
-                                if delta is not None:
-                                    text = getattr(delta, "content", None)
-                                    if text is not None:
-                                        yield text
-                    except Exception as e_litellm:
-                        logger.error(f"Error with LiteLLM API: {str(e_litellm)}")
-                        yield f"\nError with LiteLLM API: {str(e_litellm)}\n\nPlease check that you have set a valid API key for this provider."
-                elif request.provider == "bedrock":
-                    try:
-                        # Get the response and handle it properly using the previously created api_kwargs
-                        logger.info("Making AWS Bedrock API call")
-                        response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                        # Handle response from Bedrock (not streaming yet)
-                        if isinstance(response, str):
-                            yield response
-                        else:
-                            # Try to extract text from the response
-                            yield str(response)
-                    except Exception as e_bedrock:
-                        logger.error(f"Error with AWS Bedrock API: {str(e_bedrock)}")
-                        yield f"\nError with AWS Bedrock API: {str(e_bedrock)}\n\nPlease check that you have set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables with valid credentials."
-                elif request.provider == "azure":
-                    try:
-                        # Get the response and handle it properly using the previously created api_kwargs
-                        logger.info("Making Azure AI API call")
-                        response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                        # Handle streaming response from Azure AI
-                        async for chunk in response:
-                            choices = getattr(chunk, "choices", [])
-                            if len(choices) > 0:
-                                delta = getattr(choices[0], "delta", None)
-                                if delta is not None:
-                                    text = getattr(delta, "content", None)
-                                    if text is not None:
-                                        yield text
-                    except Exception as e_azure:
-                        logger.error(f"Error with Azure AI API: {str(e_azure)}")
-                        yield f"\nError with Azure AI API: {str(e_azure)}\n\nPlease check that you have set the AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION environment variables with valid values."
-                elif request.provider == "dashscope":
-                    try:
-                        logger.info("Making Dashscope API call")
-                        response = await model.acall(
-                            api_kwargs=api_kwargs, model_type=ModelType.LLM
-                        )
-                        # DashscopeClient.acall with stream=True returns an async
-                        # generator of text chunks
-                        async for text in response:
-                            if text:
-                                yield text
-                    except Exception as e_dashscope:
-                        logger.error(f"Error with Dashscope API: {str(e_dashscope)}")
-                        yield (
-                            f"\nError with Dashscope API: {str(e_dashscope)}\n\n"
-                            "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
-                            "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
-                        )
-                else:
-                    # Google Generative AI (default provider)
-                    response = model.generate_content(prompt, stream=True)
-                    for chunk in response:
-                        if hasattr(chunk, "text"):
-                            yield chunk.text
+                async for text in stream_provider_response(
+                    provider=request.provider,
+                    requested_model=request.model,
+                    prompt=prompt,
+                    model_config_kwargs=model_config,
+                    api_key=request.api_key,
+                    api_endpoint=request.api_endpoint,
+                ):
+                    yield text
 
             except Exception as e_outer:
                 logger.error(f"Error in streaming response: {str(e_outer)}")
@@ -677,205 +380,22 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                         if request.provider == "ollama":
                             simplified_prompt += " /no_think"
 
-                            # Create new api_kwargs with the simplified prompt
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM
-                            )
-
-                            # Get the response using the simplified prompt
-                            fallback_response: "AsyncIterator[ChatResponse]" = await model.acall(
-                                api_kwargs=fallback_api_kwargs,
-                                model_type=ModelType.LLM,
-                            )
-
-                            # Handle streaming fallback_response from Ollama
-                            async for chunk in fallback_response:
-                                if not hasattr(chunk, "message"):
-                                    raise RuntimeError(
-                                        "`message` field not found in response. Wrong ollama-python version probably.",
-                                    )
-                                text = chunk.message.content
-                                if text:
-                                    text = text.replace('<think>', '').replace('</think>', '')
-                                    yield text
-                        elif request.provider == "openrouter":
-                            try:
-                                # Create new api_kwargs with the simplified prompt
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM
-                                )
-
-                                # Get the response using the simplified prompt
-                                logger.info("Making fallback OpenRouter API call")
-                                fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                                # Handle streaming fallback_response from OpenRouter
-                                async for chunk in fallback_response:
-                                    yield chunk
-                            except Exception as e_fallback:
-                                logger.error(f"Error with OpenRouter API fallback: {str(e_fallback)}")
-                                yield f"\nError with OpenRouter API fallback: {str(e_fallback)}\n\nPlease check that you have set the OPENROUTER_API_KEY environment variable with a valid API key."
-                        elif request.provider in ("openai", "openai_custom"):
-                            try:
-                                # Create new api_kwargs with the simplified prompt
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM
-                                )
-
-                                # Get the response using the simplified prompt
-                                logger.info("Making fallback Openai API call")
-                                fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                                # Handle streaming fallback_response from Openai
-                                async for chunk in fallback_response:
-                                    choices = getattr(chunk, "choices", [])
-                                    if len(choices) > 0:
-                                        delta = getattr(choices[0], "delta", None)
-                                        if delta is not None:
-                                            text = getattr(delta, "content", None)
-                                            if text is not None:
-                                                yield text
-                            except Exception as e_fallback:
-                                logger.error(f"Error with Openai API fallback: {str(e_fallback)}")
-                                yield f"\nError with Openai API fallback: {str(e_fallback)}\n\nPlease check that you have set a valid API key for this provider."
-                        elif request.provider == "claude":
-                            try:
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM
-                                )
-                                logger.info("Making fallback Anthropic API call")
-                                fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-                                async for chunk in fallback_response:
-                                    if chunk:
-                                        yield chunk
-                            except Exception as e_fallback:
-                                logger.error(f"Error with Anthropic API fallback: {str(e_fallback)}")
-                                yield f"\nError with Anthropic API fallback: {str(e_fallback)}\n\nPlease check that you have set a valid API key or subscription token for Claude."
-                        elif request.provider == "litellm":
-                            try:
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM
-                                )
-
-                                logger.info("Making fallback LiteLLM API call")
-                                fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                                async for chunk in fallback_response:
-                                    choices = getattr(chunk, "choices", [])
-                                    if len(choices) > 0:
-                                        delta = getattr(choices[0], "delta", None)
-                                        if delta is not None:
-                                            text = getattr(delta, "content", None)
-                                            if text is not None:
-                                                yield text
-                            except Exception as e_fallback:
-                                logger.error(f"Error with LiteLLM API fallback: {str(e_fallback)}")
-                                yield f"\nError with LiteLLM API fallback: {str(e_fallback)}\n\nPlease check that you have set a valid API key for this provider."
-                        elif request.provider == "bedrock":
-                            try:
-                                # Create new api_kwargs with the simplified prompt
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM
-                                )
-
-                                # Get the response using the simplified prompt
-                                logger.info("Making fallback AWS Bedrock API call")
-                                fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                                # Handle response from Bedrock
-                                if isinstance(fallback_response, str):
-                                    yield fallback_response
-                                else:
-                                    # Try to extract text from the response
-                                    yield str(fallback_response)
-                            except Exception as e_fallback:
-                                logger.error(f"Error with AWS Bedrock API fallback: {str(e_fallback)}")
-                                yield f"\nError with AWS Bedrock API fallback: {str(e_fallback)}\n\nPlease check that you have set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables with valid credentials."
-                        elif request.provider == "azure":
-                            try:
-                                # Create new api_kwargs with the simplified prompt
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM
-                                )
-
-                                # Get the response using the simplified prompt
-                                logger.info("Making fallback Azure AI API call")
-                                fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                                # Handle streaming fallback response from Azure AI
-                                async for chunk in fallback_response:
-                                    choices = getattr(chunk, "choices", [])
-                                    if len(choices) > 0:
-                                        delta = getattr(choices[0], "delta", None)
-                                        if delta is not None:
-                                            text = getattr(delta, "content", None)
-                                            if text is not None:
-                                                yield text
-                            except Exception as e_fallback:
-                                logger.error(f"Error with Azure AI API fallback: {str(e_fallback)}")
-                                yield f"\nError with Azure AI API fallback: {str(e_fallback)}\n\nPlease check that you have set the AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION environment variables with valid values."
-                        elif request.provider == "dashscope":
-                            try:
-                                # Create new api_kwargs with the simplified prompt
-                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                    input=simplified_prompt,
-                                    model_kwargs=model_kwargs,
-                                    model_type=ModelType.LLM,
-                                )
-
-                                logger.info("Making fallback Dashscope API call")
-                                fallback_response = await model.acall(
-                                    api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
-                                )
-
-                                # DashscopeClient.acall (stream=True) returns an async
-                                # generator of text chunks
-                                async for text in fallback_response:
-                                    if text:
-                                        yield text
-                            except Exception as e_fallback:
-                                logger.error(
-                                    f"Error with Dashscope API fallback: {str(e_fallback)}"
-                                )
-                                yield (
-                                    f"\nError with Dashscope API fallback: {str(e_fallback)}\n\n"
-                                    "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
-                                    "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
-                                )
-                        else:
-                            # Google Generative AI fallback (default provider)
-                            if request.api_key:
-                                genai.configure(api_key=request.api_key)
-                            model_config = get_model_config(request.provider, request.model)
-                            fallback_model = genai.GenerativeModel(
-                                model_name=model_config["model_kwargs"]["model"],
-                                generation_config={
-                                    "temperature": model_config["model_kwargs"].get("temperature", 0.7),
-                                    "top_p": model_config["model_kwargs"].get("top_p", 0.8),
-                                    "top_k": model_config["model_kwargs"].get("top_k", 40),
-                                },
-                            )
-
-                            fallback_response = fallback_model.generate_content(
-                                simplified_prompt, stream=True
-                            )
-                            for chunk in fallback_response:
-                                if hasattr(chunk, "text"):
-                                    yield chunk.text
+                        # Google's original fallback branch recomputed model_config
+                        # from scratch instead of reusing the outer one; every other
+                        # provider reused the outer `model_config`. stream_provider_response
+                        # takes the same dict regardless of provider, so recompute
+                        # unconditionally here (cheap, side-effect-free) to match Google's
+                        # behavior and keep the rest identical for the other providers.
+                        fallback_model_config = get_model_config(request.provider, request.model)["model_kwargs"]
+                        async for text in stream_provider_response(
+                            provider=request.provider,
+                            requested_model=request.model,
+                            prompt=simplified_prompt,
+                            model_config_kwargs=fallback_model_config,
+                            api_key=request.api_key,
+                            api_endpoint=request.api_endpoint,
+                        ):
+                            yield text
                     except Exception as e2:
                         logger.error(f"Error in fallback streaming response: {str(e2)}")
                         yield f"\nI apologize, but your request is too large for me to process. Please try a shorter query or break it into smaller parts."

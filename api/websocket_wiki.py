@@ -3,9 +3,6 @@ import os
 from typing import List, Optional, Dict, Any
 from urllib.parse import unquote
 
-import google.generativeai as genai
-from adalflow.components.model_client.ollama_client import OllamaClient
-from adalflow.core.types import ModelType
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel, Field
 
@@ -19,13 +16,7 @@ from api.config import (
     AWS_SECRET_ACCESS_KEY,
 )
 from api.data_pipeline import count_tokens, get_file_content
-from api.bedrock_client import BedrockClient
-from api.openai_client import OpenAIClient
-from api.litellm_client import LiteLLMClient
-from api.openrouter_client import OpenRouterClient
-from api.anthropic_client import AnthropicClient
-from api.azureai_client import AzureAIClient
-from api.dashscope_client import DashscopeClient
+from api.provider_streaming import stream_provider_response
 from api.rag import RAG
 
 # Configure logging
@@ -453,421 +444,71 @@ This file contains...
 
         model_config = get_model_config(request.provider, request.model)["model_kwargs"]
 
-        if request.provider == "ollama":
-            prompt += " /no_think"
-
-            model = OllamaClient()
-            model_kwargs = {
-                "model": model_config.get("model", request.model),
-                "stream": True,
-                "options": {
-                    "temperature": model_config.get("temperature", 0.7),
-                    "top_p": model_config.get("top_p", 0.8),
-                    "num_ctx": model_config.get("num_ctx", 32000)
-                }
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "openrouter":
-            logger.info(f"Using OpenRouter with model: {request.model}")
-
-            # Check if OpenRouter API key is set
-            if not OPENROUTER_API_KEY:
-                logger.warning("OPENROUTER_API_KEY not configured, but continuing with request")
-                # We'll let the OpenRouterClient handle this and return a friendly error message
-
-            model = OpenRouterClient()
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config.get("temperature", 0.7)
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config.get("top_p", 0.8)
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider in ("openai", "openai_custom"):
-            # Log the exact parameters received from the frontend (api_key masked) so that
-            # misconfigured custom-provider requests (missing endpoint/model/key) can be
-            # diagnosed from the server log instead of producing a cryptic downstream error.
-            _key_present = bool(request.api_key)
-            logger.info(
-                f"Using Openai protocol: provider={request.provider!r} model={request.model!r} "
-                f"endpoint={request.api_endpoint!r} api_key_set={_key_present}"
-            )
-
+        if request.provider == "openai_custom":
             # For custom OpenAI-compatible providers (Novita, Together, Groq, vLLM, ...) the
             # endpoint, model and API key are all mandatory. If the endpoint is missing,
             # OpenAIClient silently falls back to https://api.openai.com/v1 and sends the
             # provider's key to OpenAI, producing a confusing 401 "Incorrect API key". If the
             # model is missing/empty, the provider returns MODEL_NOT_FOUND. Detect both early
             # and surface a clear, actionable error to the client.
-            if request.provider == "openai_custom":
-                if not request.api_endpoint:
-                    error_msg = (
-                        "\nError with Openai API: No API endpoint (base URL) was provided for the "
-                        "custom provider. The request would fall back to OpenAI's endpoint and fail. "
-                        "Please open Settings, set the API Endpoint URL for this provider, click Reload "
-                        f"to fetch models, and select one. (received model={request.model!r})\n"
-                    )
-                    logger.error("openai_custom request rejected: missing api_endpoint")
-                    await websocket.send_text(error_msg)
-                    await websocket.close()
-                    return
-                if not request.model:
-                    error_msg = (
-                        "\nError with Openai API: No model was selected for the custom provider "
-                        f"(endpoint={request.api_endpoint!r}). Please open Settings, click Reload to "
-                        "fetch the available models, and select a model from the list.\n"
-                    )
-                    logger.error("openai_custom request rejected: missing model")
-                    await websocket.send_text(error_msg)
-                    await websocket.close()
-                    return
-                if not request.api_key:
-                    error_msg = (
-                        "\nError with Openai API: No API key was provided for the custom provider "
-                        f"endpoint {request.api_endpoint!r}. Please open Settings and set the API key "
-                        "for this provider.\n"
-                    )
-                    logger.error("openai_custom request rejected: missing api_key")
-                    await websocket.send_text(error_msg)
-                    await websocket.close()
-                    return
-
-            # Check if an API key is set for Openai
-            if not OPENAI_API_KEY and not request.api_key:
-                logger.warning("API key not configured, but continuing with request")
-                # We'll let the OpenAIClient handle this and return an error message
-
-            # Initialize Openai client
-            client_kwargs = {}
-            if request.api_key:
-                client_kwargs['api_key'] = request.api_key
-            if request.api_endpoint:
-                client_kwargs['base_url'] = request.api_endpoint
-
-            model = OpenAIClient(**client_kwargs)
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config.get("temperature", 0.7)
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config.get("top_p", 0.8)
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "claude":
-            logger.info(f"Using native Anthropic API with model: {request.model}")
-
+            if not request.api_endpoint:
+                error_msg = (
+                    "\nError with Openai API: No API endpoint (base URL) was provided for the "
+                    "custom provider. The request would fall back to OpenAI's endpoint and fail. "
+                    "Please open Settings, set the API Endpoint URL for this provider, click Reload "
+                    f"to fetch models, and select one. (received model={request.model!r})\n"
+                )
+                logger.error("openai_custom request rejected: missing api_endpoint")
+                await websocket.send_text(error_msg)
+                await websocket.close()
+                return
+            if not request.model:
+                error_msg = (
+                    "\nError with Openai API: No model was selected for the custom provider "
+                    f"(endpoint={request.api_endpoint!r}). Please open Settings, click Reload to "
+                    "fetch the available models, and select a model from the list.\n"
+                )
+                logger.error("openai_custom request rejected: missing model")
+                await websocket.send_text(error_msg)
+                await websocket.close()
+                return
             if not request.api_key:
-                logger.warning("Anthropic API key/subscription token not configured, but continuing with request")
+                error_msg = (
+                    "\nError with Openai API: No API key was provided for the custom provider "
+                    f"endpoint {request.api_endpoint!r}. Please open Settings and set the API key "
+                    "for this provider.\n"
+                )
+                logger.error("openai_custom request rejected: missing api_key")
+                await websocket.send_text(error_msg)
+                await websocket.close()
+                return
 
-            model = AnthropicClient(api_key=request.api_key, base_url=request.api_endpoint)
-            model_kwargs = {
-                "model": request.model,
-                "temperature": model_config.get("temperature", 0.7),
-                "max_tokens": 8192,
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "litellm":
-            logger.info(f"Using Openai protocol with model on LiteLLM for provider: {request.provider}")
-
-            # Check if an API key is set
-            if not LITELLM_API_KEY and not request.api_key:
-                logger.warning("API key not configured, but continuing with request")
-
-            # Initialize LiteLLM client
-            client_kwargs = {}
-            if request.api_key:
-                client_kwargs['api_key'] = request.api_key
-
-            model = LiteLLMClient(**client_kwargs)
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config.get("temperature", 0.7)
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config.get("top_p", 0.8)
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "bedrock":
-            logger.info(f"Using AWS Bedrock with model: {request.model}")
-
-            if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
-                logger.warning(
-                    "AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not configured, but continuing with request")
-
-            model = BedrockClient()
-            model_kwargs = {
-                "model": request.model,
-            }
-
-            for key in ["temperature", "top_p"]:
-                if key in model_config:
-                    model_kwargs[key] = model_config[key]
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "azure":
-            logger.info(f"Using Azure AI with model: {request.model}")
-
-            # Initialize Azure AI client
-            model = AzureAIClient()
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config.get("temperature", 0.7),
-                "top_p": model_config.get("top_p", 0.8)
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        elif request.provider == "dashscope":
-            logger.info(f"Using Dashscope with model: {request.model}")
-
-            # Initialize Dashscope client
-            model = DashscopeClient()
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config.get("temperature", 0.7),
-                "top_p": model_config.get("top_p", 0.8)
-            }
-
-            api_kwargs = model.convert_inputs_to_api_kwargs(
-                input=prompt,
-                model_kwargs=model_kwargs,
-                model_type=ModelType.LLM
-            )
-        else:
-            # Configure API key for Google GenAI if provided
-            if request.api_key:
-                genai.configure(api_key=request.api_key)
-            # Initialize Google Generative AI model
-            model = genai.GenerativeModel(
-                model_name=model_config.get("model", "gemini-2.5-flash"),
-                generation_config={
-                    "temperature": model_config.get("temperature", 0.7),
-                    "top_p": model_config.get("top_p", 0.8),
-                    "top_k": model_config.get("top_k", 40)
-                }
-            )
+        # Warn-only checks for missing API keys, preserved from the original
+        # per-branch dispatch: the request still proceeds and the provider
+        # client itself returns a friendly error if the key is truly required.
+        if request.provider == "openrouter" and not OPENROUTER_API_KEY:
+            logger.warning("OPENROUTER_API_KEY not configured, but continuing with request")
+        elif request.provider in ("openai", "openai_custom") and not OPENAI_API_KEY and not request.api_key:
+            logger.warning("API key not configured, but continuing with request")
+        elif request.provider == "claude" and not request.api_key:
+            logger.warning("Anthropic API key/subscription token not configured, but continuing with request")
+        elif request.provider == "litellm" and not LITELLM_API_KEY and not request.api_key:
+            logger.warning("API key not configured, but continuing with request")
+        elif request.provider == "bedrock" and (not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY):
+            logger.warning("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not configured, but continuing with request")
 
         # Process the response based on the provider
         try:
-            if request.provider == "ollama":
-                # Get the response and handle it properly using the previously created api_kwargs
-                response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                # Handle streaming response from Ollama
-                async for chunk in response:
-                    text = None
-                    if isinstance(chunk, dict):
-                        text = chunk.get("message", {}).get("content") if isinstance(chunk.get("message"), dict) else chunk.get("message")
-                    else:
-                        message = getattr(chunk, "message", None)
-                        if message is not None:
-                            if isinstance(message, dict):
-                                text = message.get("content")
-                            else:
-                                text = getattr(message, "content", None)
-
-                    if not text:
-                        text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None)
-
-                    if not text and hasattr(chunk, "__dict__"):
-                        message = chunk.__dict__.get("message")
-                        if isinstance(message, dict):
-                            text = message.get("content")
-
-                    if isinstance(text, str) and text and not text.startswith('model=') and not text.startswith('created_at='):
-                        clean_text = text.replace('<think>', '').replace('</think>', '')
-                        await websocket.send_text(clean_text)
-                # Explicitly close the WebSocket connection after the response is complete
-                await websocket.close()
-            elif request.provider == "openrouter":
-                try:
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info("Making OpenRouter API call")
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                    # Handle streaming response from OpenRouter
-                    async for chunk in response:
-                        await websocket.send_text(chunk)
-                    # Explicitly close the WebSocket connection after the response is complete
-                    await websocket.close()
-                except Exception as e_openrouter:
-                    logger.error(f"Error with OpenRouter API: {str(e_openrouter)}")
-                    error_msg = f"\nError with OpenRouter API: {str(e_openrouter)}\n\nPlease check that you have set the OPENROUTER_API_KEY environment variable with a valid API key."
-                    await websocket.send_text(error_msg)
-                    # Close the WebSocket connection after sending the error message
-                    await websocket.close()
-            elif request.provider in ("openai", "openai_custom"):
-                try:
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info("Making Openai API call")
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                    # Handle streaming response from Openai
-                    async for chunk in response:
-                        choices = getattr(chunk, "choices", [])
-                        if len(choices) > 0:
-                            delta = getattr(choices[0], "delta", None)
-                            if delta is not None:
-                                text = getattr(delta, "content", None)
-                                if text is not None:
-                                    await websocket.send_text(text)
-                    # Explicitly close the WebSocket connection after the response is complete
-                    await websocket.close()
-                except Exception as e_openai:
-                    logger.error(f"Error with Openai API: {str(e_openai)}")
-                    # Include the endpoint and model so the frontend can surface a self-
-                    # diagnosing error (e.g. reveals when the endpoint fell back to OpenAI
-                    # because api_endpoint was missing, or which model was not found).
-                    error_msg = (
-                        f"\nError with Openai API: {str(e_openai)}"
-                        f"\n[endpoint={request.api_endpoint or '(default https://api.openai.com/v1)'}"
-                        f" model={request.model!r}]\n"
-                        "Please check your provider settings (API endpoint URL, API key, and selected model).\n"
-                    )
-                    await websocket.send_text(error_msg)
-                    # Close the WebSocket connection after sending the error message
-                    await websocket.close()
-            elif request.provider == "claude":
-                try:
-                    logger.info("Making Anthropic API call")
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                    async for chunk in response:
-                        if chunk:
-                            await websocket.send_text(chunk)
-                    await websocket.close()
-                except Exception as e_claude:
-                    logger.error(f"Error with Anthropic API: {str(e_claude)}")
-                    error_msg = f"\nError with Anthropic API: {str(e_claude)}\n\nPlease check that you have set a valid API key or subscription token for Claude."
-                    await websocket.send_text(error_msg)
-                    await websocket.close()
-            elif request.provider == "litellm":
-                try:
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info("Making LiteLLM API call")
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                    # Handle streaming response from LiteLLM
-                    async for chunk in response:
-                        choices = getattr(chunk, "choices", [])
-                        if len(choices) > 0:
-                            delta = getattr(choices[0], "delta", None)
-                            if delta is not None:
-                                text = getattr(delta, "content", None)
-                                if text is not None:
-                                    await websocket.send_text(text)
-                    # Explicitly close the WebSocket connection after the response is complete
-                    await websocket.close()
-                except Exception as e_litellm:
-                    logger.error(f"Error with LiteLLM API: {str(e_litellm)}")
-                    error_msg = f"\nError with LiteLLM API: {str(e_litellm)}\n\nPlease check that you have set the LITELLM_API_KEY environment variable with a valid API key."
-                    await websocket.send_text(error_msg)
-                    # Close the WebSocket connection after sending the error message
-                    await websocket.close()
-            elif request.provider == "bedrock":
-                try:
-                    logger.info("Making AWS Bedrock API call")
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                    if isinstance(response, str):
-                        await websocket.send_text(response)
-                    else:
-                        await websocket.send_text(str(response))
-                    await websocket.close()
-                except Exception as e_bedrock:
-                    logger.error(f"Error with AWS Bedrock API: {str(e_bedrock)}")
-                    error_msg = (
-                        f"\nError with AWS Bedrock API: {str(e_bedrock)}\n\n"
-                        "Please check that you have set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
-                        "environment variables with valid credentials."
-                    )
-                    await websocket.send_text(error_msg)
-                    await websocket.close()
-            elif request.provider == "azure":
-                try:
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info("Making Azure AI API call")
-                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-                    # Handle streaming response from Azure AI
-                    async for chunk in response:
-                        choices = getattr(chunk, "choices", [])
-                        if len(choices) > 0:
-                            delta = getattr(choices[0], "delta", None)
-                            if delta is not None:
-                                text = getattr(delta, "content", None)
-                                if text is not None:
-                                    await websocket.send_text(text)
-                    # Explicitly close the WebSocket connection after the response is complete
-                    await websocket.close()
-                except Exception as e_azure:
-                    logger.error(f"Error with Azure AI API: {str(e_azure)}")
-                    error_msg = f"\nError with Azure AI API: {str(e_azure)}\n\nPlease check that you have set the AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION environment variables with valid values."
-                    await websocket.send_text(error_msg)
-                    # Close the WebSocket connection after sending the error message
-                    await websocket.close()
-            elif request.provider == "dashscope":
-                try:
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info("Making Dashscope API call")
-                    response = await model.acall(
-                        api_kwargs=api_kwargs, model_type=ModelType.LLM
-                    )
-                    # DashscopeClient.acall with stream=True returns an async
-                    # generator of plain text chunks
-                    async for text in response:
-                        if text:
-                            await websocket.send_text(text)
-                    # Explicitly close the WebSocket connection after the response is complete
-                    await websocket.close()
-                except Exception as e_dashscope:
-                    logger.error(f"Error with Dashscope API: {str(e_dashscope)}")
-                    error_msg = (
-                        f"\nError with Dashscope API: {str(e_dashscope)}\n\n"
-                        "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
-                        "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
-                    )
-                    await websocket.send_text(error_msg)
-                    # Close the WebSocket connection after sending the error message
-                    await websocket.close()
-            else:
-                # Google Generative AI (default provider)
-                response = model.generate_content(prompt, stream=True)
-                for chunk in response:
-                    if hasattr(chunk, 'text'):
-                        await websocket.send_text(chunk.text)
-                await websocket.close()
+            async for text in stream_provider_response(
+                provider=request.provider,
+                requested_model=request.model,
+                prompt=prompt,
+                model_config_kwargs=model_config,
+                api_key=request.api_key,
+                api_endpoint=request.api_endpoint,
+            ):
+                await websocket.send_text(text)
+            await websocket.close()
 
         except Exception as e_outer:
             logger.error(f"Error in streaming response: {str(e_outer)}")
@@ -890,210 +531,22 @@ This file contains...
                     simplified_prompt += "<note>Answering without retrieval augmentation due to input size constraints.</note>\n\n"
                     simplified_prompt += f"<query>\n{query}\n</query>\n\nAssistant: "
 
-                    if request.provider == "ollama":
-                        simplified_prompt += " /no_think"
-
-                        # Create new api_kwargs with the simplified prompt
-                        fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                            input=simplified_prompt,
-                            model_kwargs=model_kwargs,
-                            model_type=ModelType.LLM
-                        )
-
-                        # Get the response using the simplified prompt
-                        fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                        # Handle streaming fallback_response from Ollama
-                        async for chunk in fallback_response:
-                            text = getattr(chunk, 'response', None) or getattr(chunk, 'text', None) or str(chunk)
-                            if text and not text.startswith('model=') and not text.startswith('created_at='):
-                                text = text.replace('<think>', '').replace('</think>', '')
-                                await websocket.send_text(text)
-                    elif request.provider == "openrouter":
-                        try:
-                            # Create new api_kwargs with the simplified prompt
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM
-                            )
-
-                            # Get the response using the simplified prompt
-                            logger.info("Making fallback OpenRouter API call")
-                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                            # Handle streaming fallback_response from OpenRouter
-                            async for chunk in fallback_response:
-                                await websocket.send_text(chunk)
-                        except Exception as e_fallback:
-                            logger.error(f"Error with OpenRouter API fallback: {str(e_fallback)}")
-                            error_msg = f"\nError with OpenRouter API fallback: {str(e_fallback)}\n\nPlease check that you have set the OPENROUTER_API_KEY environment variable with a valid API key."
-                            await websocket.send_text(error_msg)
-                    elif request.provider in ("openai", "openai_custom"):
-                        try:
-                            # Create new api_kwargs with the simplified prompt
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM
-                            )
-
-                            # Get the response using the simplified prompt
-                            logger.info("Making fallback Openai API call")
-                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                            # Handle streaming fallback_response from Openai
-                            async for chunk in fallback_response:
-                                text = chunk if isinstance(chunk, str) else getattr(chunk, 'text', str(chunk))
-                                await websocket.send_text(text)
-                        except Exception as e_fallback:
-                            logger.error(f"Error with Openai API fallback: {str(e_fallback)}")
-                            error_msg = f"\nError with Openai API fallback: {str(e_fallback)}\n\nPlease check that you have set the OPENAI_API_KEY environment variable with a valid API key."
-                            await websocket.send_text(error_msg)
-                    elif request.provider == "claude":
-                        try:
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM
-                            )
-                            logger.info("Making fallback Anthropic API call")
-                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-                            async for chunk in fallback_response:
-                                if chunk:
-                                    await websocket.send_text(chunk)
-                        except Exception as e_fallback:
-                            logger.error(f"Error with Anthropic API fallback: {str(e_fallback)}")
-                            error_msg = f"\nError with Anthropic API fallback: {str(e_fallback)}\n\nPlease check that you have set a valid API key or subscription token for Claude."
-                            await websocket.send_text(error_msg)
-                    elif request.provider == "litellm":
-                        try:
-                            # Create new api_kwargs with the simplified prompt
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM
-                            )
-
-                            # Get the response using the simplified prompt
-                            logger.info("Making fallback LiteLLM API call")
-                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                            # Handle streaming fallback_response from LiteLLM
-                            async for chunk in fallback_response:
-                                choices = getattr(chunk, "choices", [])
-                                if len(choices) > 0:
-                                    delta = getattr(choices[0], "delta", None)
-                                    if delta is not None:
-                                        text = getattr(delta, "content", None)
-                                        if text is not None:
-                                            await websocket.send_text(text)
-                        except Exception as e_fallback:
-                            logger.error(f"Error with LiteLLM API fallback: {str(e_fallback)}")
-                            error_msg = f"\nError with LiteLLM API fallback: {str(e_fallback)}\n\nPlease check that you have set the LITELLM_API_KEY environment variable with a valid API key."
-                            await websocket.send_text(error_msg)
-                    elif request.provider == "bedrock":
-                        try:
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM,
-                            )
-
-                            logger.info("Making fallback AWS Bedrock API call")
-                            fallback_response = await model.acall(
-                                api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
-                            )
-
-                            if isinstance(fallback_response, str):
-                                await websocket.send_text(fallback_response)
-                            else:
-                                await websocket.send_text(str(fallback_response))
-                        except Exception as e_fallback:
-                            logger.error(
-                                f"Error with AWS Bedrock API fallback: {str(e_fallback)}"
-                            )
-                            error_msg = (
-                                f"\nError with AWS Bedrock API fallback: {str(e_fallback)}\n\n"
-                                "Please check that you have set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
-                                "environment variables with valid credentials."
-                            )
-                            await websocket.send_text(error_msg)
-                    elif request.provider == "azure":
-                        try:
-                            # Create new api_kwargs with the simplified prompt
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM
-                            )
-
-                            # Get the response using the simplified prompt
-                            logger.info("Making fallback Azure AI API call")
-                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
-
-                            # Handle streaming fallback response from Azure AI
-                            async for chunk in fallback_response:
-                                choices = getattr(chunk, "choices", [])
-                                if len(choices) > 0:
-                                    delta = getattr(choices[0], "delta", None)
-                                    if delta is not None:
-                                        text = getattr(delta, "content", None)
-                                        if text is not None:
-                                            await websocket.send_text(text)
-                        except Exception as e_fallback:
-                            logger.error(f"Error with Azure AI API fallback: {str(e_fallback)}")
-                            error_msg = f"\nError with Azure AI API fallback: {str(e_fallback)}\n\nPlease check that you have set the AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION environment variables with valid values."
-                            await websocket.send_text(error_msg)
-                    elif request.provider == "dashscope":
-                        try:
-                            # Create new api_kwargs with the simplified prompt
-                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
-                                input=simplified_prompt,
-                                model_kwargs=model_kwargs,
-                                model_type=ModelType.LLM,
-                            )
-
-                            logger.info("Making fallback Dashscope API call")
-                            fallback_response = await model.acall(
-                                api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
-                            )
-
-                            # DashscopeClient.acall (stream=True) returns an async
-                            # generator of text chunks
-                            async for text in fallback_response:
-                                if text:
-                                    await websocket.send_text(text)
-                        except Exception as e_fallback:
-                            logger.error(
-                                f"Error with Dashscope API fallback: {str(e_fallback)}"
-                            )
-                            error_msg = (
-                                f"\nError with Dashscope API fallback: {str(e_fallback)}\n\n"
-                                "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
-                                "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
-                            )
-                            await websocket.send_text(error_msg)
-                    else:
-                        # Google Generative AI fallback (default provider)
-                        if request.api_key:
-                            genai.configure(api_key=request.api_key)
-                        model_config = get_model_config(request.provider, request.model)
-                        fallback_model = genai.GenerativeModel(
-                            model_name=model_config["model_kwargs"]["model"],
-                            generation_config={
-                                "temperature": model_config["model_kwargs"].get("temperature", 0.7),
-                                "top_p": model_config["model_kwargs"].get("top_p", 0.8),
-                                "top_k": model_config["model_kwargs"].get("top_k", 40),
-                            },
-                        )
-
-                        fallback_response = fallback_model.generate_content(
-                            simplified_prompt, stream=True
-                        )
-                        for chunk in fallback_response:
-                            if hasattr(chunk, "text"):
-                                await websocket.send_text(chunk.text)
+                    # Google's original fallback branch recomputed model_config
+                    # from scratch instead of reusing the outer one; every other
+                    # provider reused the outer `model_config`. stream_provider_response
+                    # takes the same dict regardless of provider, so recompute
+                    # unconditionally here (cheap, side-effect-free) to match Google's
+                    # behavior and keep the rest identical for the other providers.
+                    fallback_model_config = get_model_config(request.provider, request.model)["model_kwargs"]
+                    async for text in stream_provider_response(
+                        provider=request.provider,
+                        requested_model=request.model,
+                        prompt=simplified_prompt,
+                        model_config_kwargs=fallback_model_config,
+                        api_key=request.api_key,
+                        api_endpoint=request.api_endpoint,
+                    ):
+                        await websocket.send_text(text)
                 except Exception as e2:
                     logger.error(f"Error in fallback streaming response: {str(e2)}")
                     await websocket.send_text(f"\nI apologize, but your request is too large for me to process. Please try a shorter query or break it into smaller parts.")

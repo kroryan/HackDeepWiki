@@ -70,6 +70,7 @@ certs/
 
 # Local FreeDeepWiki/Ollama runtime state
 /.freedeepwiki/
+/.deepwiki/
 /freedeepwiki.env
 
 # Standalone build directories
