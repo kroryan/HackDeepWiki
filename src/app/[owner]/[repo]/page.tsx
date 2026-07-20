@@ -2733,6 +2733,7 @@ IMPORTANT:
                     <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none">
                       <Markdown
                         content={generatedPages[currentPageId].content}
+                        repoInfo={effectiveRepoInfo}
                       />
                     </div>
                   )}

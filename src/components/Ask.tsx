@@ -14,6 +14,7 @@ import getRepoUrl from '@/utils/getRepoUrl';
 import ModelSelectionModal from './ModelSelectionModal';
 import { createChatWebSocket, closeWebSocket, ChatCompletionRequest } from '@/utils/websocketClient';
 import { getSavedApiCredentials } from '@/utils/apiCredentials';
+import { StreamParser, ProcessEvent } from '@/utils/streamParser';
 
 interface Model {
   id: string;
@@ -82,6 +83,12 @@ const Ask: React.FC<AskProps> = ({
   const [response, setResponse] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [deepResearch, setDeepResearch] = useState(false);
+  // Behind-the-scenes events (tool calls, reasoning tokens) for the CURRENT
+  // in-flight/most recent answer, extracted from the stream by StreamParser
+  // (see src/utils/streamParser.ts) -- shown in a collapsible panel rather
+  // than persisted per history entry.
+  const [processEvents, setProcessEvents] = useState<ProcessEvent[]>([]);
+  const [showProcess, setShowProcess] = useState(false);
 
   // Model selection state
   const [selectedProvider, setSelectedProvider] = useState(provider);
@@ -292,6 +299,7 @@ const Ask: React.FC<AskProps> = ({
     closeWebSocket(webSocketRef.current);
     setQuestion('');
     setResponse('');
+    setProcessEvents([]);
     setConversationHistory([]);
     setResearchIteration(0);
     setResearchComplete(false);
@@ -495,6 +503,7 @@ const Ask: React.FC<AskProps> = ({
 
       // Clear previous response
       setResponse('');
+      setProcessEvents([]);
 
       // Prepare the request body
       const requestBody: ChatCompletionRequest = {
@@ -517,13 +526,18 @@ const Ask: React.FC<AskProps> = ({
       closeWebSocket(webSocketRef.current);
 
       let fullResponse = '';
+      const streamParser = new StreamParser();
 
       // Create a new WebSocket connection
       webSocketRef.current = createChatWebSocket(
         requestBody,
         // Message handler
         (message: string) => {
-          fullResponse += message;
+          const { text, events } = streamParser.feed(message);
+          if (events.length > 0) {
+            setProcessEvents(prev => [...prev, ...events]);
+          }
+          fullResponse += text;
           setResponse(fullResponse);
 
           // Extract research stage if this is a deep research response
@@ -616,12 +630,17 @@ const Ask: React.FC<AskProps> = ({
 
       // Read the stream
       let fullResponse = '';
+      const streamParser = new StreamParser();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
-        fullResponse += chunk;
+        const { text, events } = streamParser.feed(chunk);
+        if (events.length > 0) {
+          setProcessEvents(prev => [...prev, ...events]);
+        }
+        fullResponse += text;
         setResponse(fullResponse);
 
         // Extract research stage if this is a deep research response
@@ -664,6 +683,7 @@ const Ask: React.FC<AskProps> = ({
           { role: 'assistant', content: fullResponse },
         ]);
         setResponse('');
+        setProcessEvents([]);
       }
     } catch (error) {
       console.error('Error during HTTP fallback:', error);
@@ -736,6 +756,7 @@ const Ask: React.FC<AskProps> = ({
   const handleConfirmAsk = async () => {
     setIsLoading(true);
     setResponse('');
+    setProcessEvents([]);
     setResearchIteration(0);
     setResearchComplete(false);
 
@@ -783,6 +804,7 @@ const Ask: React.FC<AskProps> = ({
       closeWebSocket(webSocketRef.current);
 
       let fullResponse = '';
+      const streamParser = new StreamParser();
 
       // Create a new WebSocket connection
       let usedHttpFallback = false;
@@ -790,7 +812,11 @@ const Ask: React.FC<AskProps> = ({
         requestBody,
         // Message handler
         (message: string) => {
-          fullResponse += message;
+          const { text, events } = streamParser.feed(message);
+          if (events.length > 0) {
+            setProcessEvents(prev => [...prev, ...events]);
+          }
+          fullResponse += text;
           setResponse(fullResponse);
 
           // Extract research stage if this is a deep research response
@@ -809,6 +835,7 @@ const Ask: React.FC<AskProps> = ({
           if (usedHttpFallback) return;
           usedHttpFallback = true;
           setResponse('');
+          setProcessEvents([]);
           void fallbackToHttp(requestBody, newHistory);
         },
         // Close handler
@@ -830,6 +857,7 @@ const Ask: React.FC<AskProps> = ({
               { role: 'assistant', content: fullResponse },
             ]);
             setResponse('');
+            setProcessEvents([]);
           }
 
           setIsLoading(false);
@@ -1043,11 +1071,41 @@ const Ask: React.FC<AskProps> = ({
                         ? (messages.ask?.you || 'You')
                         : (messages.ask?.assistant || 'Assistant')}
                     </div>
-                    <Markdown content={message.content} />
+                    <Markdown content={message.content} repoInfo={repoInfo} />
                   </div>
                 );
               })}
-              {response && <Markdown content={response} />}
+              {processEvents.length > 0 && (
+                <div className="rounded-md border border-[var(--border-color)]/60 bg-[var(--background)]/30 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowProcess(previous => !previous)}
+                    className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                  >
+                    <FaChevronRight className={`h-2.5 w-2.5 transition-transform ${showProcess ? 'rotate-90' : ''}`} />
+                    <span>
+                      {messages.ask?.process || 'Process'} ({processEvents.length})
+                    </span>
+                  </button>
+                  {showProcess && (
+                    <ul className="px-2.5 pb-2 space-y-1.5 border-t border-[var(--border-color)]/60 pt-1.5">
+                      {processEvents.map((event, index) => (
+                        <li key={index} className="text-[var(--muted)]">
+                          {event.kind === 'tool' ? (
+                            <span>
+                              <span className="text-[var(--accent-primary)]">{String(event.payload.label || 'Tool')}:</span>{' '}
+                              {String(event.payload.query ?? '')}
+                            </span>
+                          ) : (
+                            <span className="italic whitespace-pre-wrap">{String(event.payload.text ?? '')}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {response && <Markdown content={response} repoInfo={repoInfo} />}
             </div>
 
             {/* Research navigation and clear button */}

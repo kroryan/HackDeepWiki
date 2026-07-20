@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -7,13 +7,41 @@ import rehypeKatex from 'rehype-katex';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { tomorrow } from 'react-syntax-highlighter/dist/cjs/styles/prism';
 import Mermaid from './Mermaid';
+import CodeViewer from './CodeViewer';
+import RepoInfo from '@/types/repoinfo';
 import 'katex/dist/katex.min.css';
 
 interface MarkdownProps {
   content: string;
+  // Needed only to open the in-app code viewer for source-file citations
+  // (see the `a` component below) -- callers rendering content that never
+  // has these, if any, can omit it.
+  repoInfo?: RepoInfo;
 }
 
-const Markdown: React.FC<MarkdownProps> = ({ content }) => {
+// Matches a "Sources: [README.md:1-30]()" style citation's link TEXT (the
+// href is deliberately left empty by the wiki-generation prompt -- see
+// src/app/[owner]/[repo]/page.tsx's generation prompt for the exact
+// "Sources: [filename.ext:start-end]()" format the model is instructed to
+// use). Extracts just the file path, dropping an optional ":line" or
+// ":start-end" suffix. Requires an extension so plain link text like
+// "here" or a version string doesn't get misread as a file citation.
+const FILE_CITATION_RE = /^([\w./-]+\.\w+)(?::\d+(?:-\d+)?)?$/;
+
+function parseFileCitation(children: React.ReactNode): string | null {
+  const text =
+    typeof children === 'string'
+      ? children
+      : Array.isArray(children) && children.length === 1 && typeof children[0] === 'string'
+        ? children[0]
+        : null;
+  if (!text) return null;
+  const match = FILE_CITATION_RE.exec(text.trim());
+  return match ? match[1] : null;
+}
+
+const Markdown: React.FC<MarkdownProps> = ({ content, repoInfo }) => {
+  const [openCodeFile, setOpenCodeFile] = useState<string | null>(null);
   // Define markdown components
   const MarkdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
     p({ children, ...props }: { children?: React.ReactNode }) {
@@ -65,6 +93,34 @@ const Markdown: React.FC<MarkdownProps> = ({ content }) => {
       return <li className="mb-2 text-sm leading-relaxed text-[var(--foreground)]" {...props}>{children}</li>;
     },
     a({ children, href, ...props }: { children?: React.ReactNode; href?: string }) {
+      // Two forms of "this is a repo source file, not a real URL" citation:
+      //  - `codefile:<path>` (api/search_tool.py's format_sources_footer,
+      //    a chat answer's "pages consulted" footer).
+      //  - An empty-href markdown link whose TEXT is the citation itself,
+      //    e.g. `[README.md:1-30]()` -- the format the wiki-generation
+      //    prompt instructs the model to use for "Sources: ..." lines in
+      //    generated wiki pages (see src/app/[owner]/[repo]/page.tsx's
+      //    generation prompt). Both open the in-app CodeViewer instead of
+      //    letting the browser try to navigate to a fake/empty URL.
+      const citedPath = href
+        ? (href.startsWith('codefile:') ? decodeURIComponent(href.slice('codefile:'.length)) : null)
+        : parseFileCitation(children);
+      if (citedPath && repoInfo) {
+        const filePath = citedPath;
+        return (
+          <a
+            href={href}
+            className="text-[var(--link-color)] hover:text-[var(--accent-primary)] border-b border-[var(--link-color)]/35 hover:border-[var(--accent-primary)] no-underline font-medium transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.preventDefault();
+              setOpenCodeFile(filePath);
+            }}
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      }
       return (
         <a
           href={href}
@@ -208,6 +264,13 @@ const Markdown: React.FC<MarkdownProps> = ({ content }) => {
       >
         {content}
       </ReactMarkdown>
+      {openCodeFile && repoInfo && (
+        <CodeViewer
+          filePath={openCodeFile}
+          repoInfo={repoInfo}
+          onClose={() => setOpenCodeFile(null)}
+        />
+      )}
     </div>
   );
 };

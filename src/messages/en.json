@@ -122,6 +122,7 @@
     "you": "You",
     "assistant": "Assistant",
     "thinking": "Thinking...",
+    "process": "Process",
     "emptyConversation": "Ask a question to start this conversation.",
     "deepResearch": "Deep Research",
     "researchInProgress": "Research in progress...",

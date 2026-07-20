@@ -26,6 +26,7 @@ from api.openai_client import OpenAIClient
 from api.litellm_client import LiteLLMClient
 from api.provider_streaming import stream_provider_response
 from api.search_tool import native_tool_name_to_prefix
+from api.stream_events import SendProcess, ThinkingSink, encode_process
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,8 @@ async def _run_agent_rounds(
     tools: dict[str, Callable[[str], str]],
     tool_labels: dict[str, str],
     send_chunk: SendChunk,
+    send_process: Optional[SendProcess] = None,
+    thinking_sink: Optional[ThinkingSink] = None,
 ) -> None:
     # Some models (seen with a reasoning-heavy cloud model under a longer,
     # tool-instructions-laden prompt) can legitimately end their stream
@@ -166,6 +169,7 @@ async def _run_agent_rounds(
             model_config_kwargs=model_config_kwargs,
             api_key=api_key,
             api_endpoint=api_endpoint,
+            thinking_sink=thinking_sink,
         )
 
         if is_last_round:
@@ -184,7 +188,13 @@ async def _run_agent_rounds(
 
         logger.info(f"Agent tool call {prefix} {query!r} (round {round_num})")
         label = tool_labels.get(prefix, "Buscando")
-        await tracked_send_chunk(f"\n\n_({label}: {query})_\n\n")
+        # A tool call is a behind-the-scenes step, not part of the answer:
+        # route it to the Process panel when one is attached, otherwise keep
+        # the old inline "_(Buscando: ...)_" marker in the answer text.
+        if send_process is not None:
+            await send_process("tool", {"label": label, "query": query, "round": round_num})
+        else:
+            await tracked_send_chunk(f"\n\n_({label}: {query})_\n\n")
         try:
             tool_result = handler(query)
         except Exception as e:
@@ -225,6 +235,16 @@ async def run_agent_chat(
     same prefixes to a human-readable label for the "(Buscando: ...)"-style
     status marker shown while a tool runs.
 
+    Behind-the-scenes events -- tool calls and reasoning/"thinking" tokens
+    -- are routed through the SAME internal queue as the answer text, as
+    framed "process" messages (see api/stream_events.py), and yielded
+    interleaved with it. So both transports just iterate this generator and
+    forward every chunk verbatim: answer text goes to the answer bubble, a
+    framed process message goes to the collapsible Process panel. Keeping
+    answer and process on one queue preserves their order for either
+    transport (WebSocket or HTTP), and a callback that can't `yield` into
+    its own driver -- the HTTP case -- works without special handling.
+
     A background task drives the round loop and feeds an internal queue via
     the `send_chunk` callback; this generator just relays the queue in
     order. If the consumer stops iterating early (e.g. the client
@@ -235,6 +255,12 @@ async def run_agent_chat(
 
     async def send_chunk(text: str) -> None:
         await queue.put(text)
+
+    async def send_process(kind: str, payload: dict) -> None:
+        await queue.put(encode_process(kind, payload))
+
+    async def thinking_sink(text: str) -> None:
+        await send_process("thinking", {"text": text})
 
     async def runner() -> None:
         try:
@@ -248,6 +274,8 @@ async def run_agent_chat(
                 tools=tools,
                 tool_labels=tool_labels or {},
                 send_chunk=send_chunk,
+                send_process=send_process,
+                thinking_sink=thinking_sink,
             )
         finally:
             await queue.put(_DONE)
@@ -304,6 +332,7 @@ async def _run_native_tool_rounds(
     tool_schemas_anthropic: list[dict],
     tool_schemas_openai: list[dict],
     send_chunk: SendChunk,
+    send_process: Optional[SendProcess] = None,
 ) -> None:
     """Structured/native tool-calling loop: unlike _run_agent_rounds (which
     sniffs a textual convention out of a token stream), the model's actual
@@ -407,7 +436,12 @@ async def _run_native_tool_rounds(
             else:
                 logger.info(f"Native agent tool call {tc['name']} {query!r} (round {round_num})")
                 label = tool_labels.get(prefix, "Buscando")
-                await send_chunk(f"\n\n_({label}: {query})_\n\n")
+                # Route the tool call to the Process panel when attached
+                # (mirrors the textual loop), else keep the inline marker.
+                if send_process is not None:
+                    await send_process("tool", {"label": label, "query": query, "tool": tc["name"], "round": round_num})
+                else:
+                    await send_chunk(f"\n\n_({label}: {query})_\n\n")
                 try:
                     tool_result = handler(query)
                 except Exception as e:
@@ -453,12 +487,19 @@ async def run_native_tool_chat(
     `run_agent_chat`'s queue-bridging shape so both call sites can consume
     either interchangeably (`async for text in ...`). Use this instead of
     `run_agent_chat` when `provider in api.search_tool.NATIVE_TOOL_PROVIDERS`.
+
+    Like run_agent_chat, native tool calls are routed through the same queue
+    as the answer text as framed "process" messages (see api/stream_events.py),
+    so both transports just iterate and forward every chunk verbatim.
     """
     queue: "asyncio.Queue[Any]" = asyncio.Queue()
     _DONE = object()
 
     async def send_chunk(text: str) -> None:
         await queue.put(text)
+
+    async def send_process(kind: str, payload: dict) -> None:
+        await queue.put(encode_process(kind, payload))
 
     async def runner() -> None:
         try:
@@ -475,7 +516,71 @@ async def run_native_tool_chat(
                 tool_schemas_anthropic=tool_schemas_anthropic,
                 tool_schemas_openai=tool_schemas_openai,
                 send_chunk=send_chunk,
+                send_process=send_process,
             )
+        finally:
+            await queue.put(_DONE)
+
+    task = asyncio.create_task(runner())
+    try:
+        while True:
+            item = await queue.get()
+            if item is _DONE:
+                break
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def stream_chat(
+    *,
+    provider: str,
+    requested_model: Optional[str],
+    prompt: str,
+    model_config_kwargs: dict,
+    api_key: Optional[str] = None,
+    api_endpoint: Optional[str] = None,
+) -> AsyncIterator[str]:
+    """Single-shot (no tool-calling) chat stream with the same out-of-band
+    Process channel as run_agent_chat: reasoning/"thinking" tokens are routed
+    as framed "process" messages through one queue alongside the answer
+    text, so both transports consume this identically to the tool-calling
+    facades (`async for text in ...`, forward every chunk verbatim). This is
+    the tool-calling-OFF path -- a plain stream_provider_response, except its
+    thinking tokens (Ollama thinking models) reach the Process panel instead
+    of being dropped.
+
+    Kept here next to the other two chat facades so all three share one shape
+    and the transports never branch on "is there a Process panel" -- they
+    always iterate a chat facade and forward.
+    """
+    queue: "asyncio.Queue[Any]" = asyncio.Queue()
+    _DONE = object()
+
+    async def send_chunk(text: str) -> None:
+        await queue.put(text)
+
+    async def thinking_sink(text: str) -> None:
+        await queue.put(encode_process("thinking", {"text": text}))
+
+    async def runner() -> None:
+        try:
+            async for text in stream_provider_response(
+                provider=provider,
+                requested_model=requested_model,
+                prompt=prompt,
+                model_config_kwargs=model_config_kwargs,
+                api_key=api_key,
+                api_endpoint=api_endpoint,
+                thinking_sink=thinking_sink,
+            ):
+                await send_chunk(text)
         finally:
             await queue.put(_DONE)
 

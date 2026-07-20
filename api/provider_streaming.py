@@ -34,6 +34,7 @@ from api.dashscope_client import DashscopeClient
 from api.litellm_client import LiteLLMClient
 from api.openai_client import OpenAIClient
 from api.openrouter_client import OpenRouterClient
+from api.stream_events import ThinkingSink
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ async def stream_provider_response(
     model_config_kwargs: dict,
     api_key: Optional[str] = None,
     api_endpoint: Optional[str] = None,
+    thinking_sink: Optional[ThinkingSink] = None,
 ) -> AsyncIterator[str]:
     """Yield text chunks from the given provider for the given prompt.
 
@@ -52,6 +54,14 @@ async def stream_provider_response(
     `get_model_config(provider, requested_model)["model_kwargs"]` by the
     caller (kept as a caller responsibility since it does not vary by
     request-shape between websocket_wiki.py / simple_chat.py).
+
+    `thinking_sink`, when given, receives each reasoning/"thinking" token a
+    model emits (Ollama thinking models put these in a separate `thinking`
+    field, distinct from the `content` that becomes the answer) so a chat
+    transport can route them into the out-of-band "Process" panel instead of
+    discarding them (the default -- non-chat callers like the page-edit
+    stream have no Process panel and leave this None, preserving the old
+    behavior). It is awaited inside this async generator as tokens arrive.
     """
     if provider == "ollama":
         # This branch used to unconditionally append a trailing "/no_think"
@@ -118,6 +128,12 @@ async def stream_provider_response(
 
             if isinstance(thinking, str) and thinking:
                 thinking_parts.append(thinking)
+                # Route reasoning tokens to the Process panel when a sink is
+                # attached (the chat transports), so the user can see what the
+                # model reasoned through; otherwise just buffer them for the
+                # no-content fallback below (non-chat callers, old behavior).
+                if thinking_sink is not None:
+                    await thinking_sink(thinking)
 
             if (
                 isinstance(text, str)
@@ -129,14 +145,16 @@ async def stream_provider_response(
                 clean_text = text.replace("<think>", "").replace("</think>", "")
                 yield clean_text
 
-        if not got_content and thinking_parts:
+        if not got_content and thinking_parts and thinking_sink is None:
             # Reasoning-capable models (seen with an NVIDIA nemotron-3-super
             # cloud model, but this is a general shape any Ollama "thinking"
             # model can produce, not something to special-case by name) can
             # spend an entire turn's budget on internal reasoning and never
             # emit a final `content` message -- silently returning nothing
             # would be worse than surfacing what the model actually reasoned
-            # through, so fall back to that instead of a blank response.
+            # through, so fall back to that instead of a blank response. When
+            # a thinking_sink is attached the reasoning was already streamed
+            # to the Process panel, so don't also dump it into the answer.
             logger.warning(
                 "Ollama model produced only reasoning/thinking output, no final "
                 "content -- falling back to the reasoning text"

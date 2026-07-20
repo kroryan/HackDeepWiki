@@ -13,7 +13,7 @@ from api.config import (
     AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY,
 )
-from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat
+from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
 from api.chat_models import ChatCompletionRequest, ChatMessage  # noqa: F401 (ChatMessage re-exported for callers)
 from api.data_pipeline import count_tokens, get_file_content
 from api.prompts import (
@@ -25,7 +25,6 @@ from api.prompts import (
     TOOL_CALLING_INSTRUCTIONS,
     prepend_no_think,
 )
-from api.provider_streaming import stream_provider_response
 from api.rag import RAG
 from api import search_tool
 from api import zim_reader
@@ -480,7 +479,11 @@ async def handle_websocket_chat(websocket: WebSocket):
         # (schema-driven, still real live streaming -- see api/agent_loop.py);
         # every other provider uses run_agent_chat's textual SEARCH_WIKI:
         # sniff-and-relay convention instead. With tool calling off, this is
-        # the original single-shot stream.
+        # the original single-shot stream. All three facades route behind-the-
+        # scenes events (tool calls + reasoning tokens) as framed "process"
+        # messages interleaved with the answer (see api/stream_events.py), so
+        # this loop just forwards every chunk verbatim and the UI splits answer
+        # vs. Process panel on the leading sentinel byte.
         try:
             if tool_calling_enabled and request.provider in search_tool.NATIVE_TOOL_PROVIDERS:
                 response_stream = run_native_tool_chat(
@@ -508,7 +511,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     tool_labels=search_tool.TOOL_LABELS,
                 )
             else:
-                response_stream = stream_provider_response(
+                response_stream = stream_chat(
                     provider=request.provider,
                     requested_model=request.model,
                     prompt=prompt,
@@ -553,7 +556,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     # unconditionally here (cheap, side-effect-free) to match Google's
                     # behavior and keep the rest identical for the other providers.
                     fallback_model_config = get_model_config(request.provider, request.model)["model_kwargs"]
-                    async for text in stream_provider_response(
+                    async for text in stream_chat(
                         provider=request.provider,
                         requested_model=request.model,
                         prompt=simplified_prompt,

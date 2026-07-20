@@ -5,11 +5,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat
+from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
 from api.chat_models import ChatCompletionRequest, ChatMessage  # noqa: F401 (ChatMessage re-exported for callers)
 from api.config import get_model_config, configs, OPENROUTER_API_KEY, OPENAI_API_KEY, LITELLM_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 from api.data_pipeline import count_tokens, get_file_content
-from api.provider_streaming import stream_provider_response
 from api.rag import RAG
 from api import search_tool
 from api import zim_reader
@@ -460,7 +459,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                         tool_labels=search_tool.TOOL_LABELS,
                     )
                 else:
-                    stream = stream_provider_response(
+                    stream = stream_chat(
                         provider=request.provider,
                         requested_model=request.model,
                         prompt=prompt,
@@ -504,7 +503,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                         # unconditionally here (cheap, side-effect-free) to match Google's
                         # behavior and keep the rest identical for the other providers.
                         fallback_model_config = get_model_config(request.provider, request.model)["model_kwargs"]
-                        async for text in stream_provider_response(
+                        async for text in stream_chat(
                             provider=request.provider,
                             requested_model=request.model,
                             prompt=simplified_prompt,
