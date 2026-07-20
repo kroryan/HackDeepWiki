@@ -1196,6 +1196,20 @@ class ZimImportRequest(BaseModel):
     path: str = Field(..., description="Absolute filesystem path to a .zim file")
 
 
+def _register_zim_path(path: str) -> zim_library.ZimEntry:
+    """Validate `path` is a real .zim file and register it. Raises
+    HTTPException on failure; used by both /import (one explicit path) and
+    /rescan (every new file already sitting in the drop folder)."""
+    archive = zim_reader.open_archive(path)
+    metadata = zim_reader.get_metadata(archive)
+    return zim_library.register(
+        path=path,
+        title=metadata["title"],
+        description=metadata["description"],
+        article_count=metadata["articleCount"],
+    )
+
+
 @app.post("/api/zim/import")
 async def import_zim(request: ZimImportRequest):
     """Register a local .zim file as a browsable/chattable project.
@@ -1211,19 +1225,41 @@ async def import_zim(request: ZimImportRequest):
         raise HTTPException(status_code=400, detail=f"File not found: {path}")
 
     try:
-        archive = zim_reader.open_archive(path)
-        metadata = zim_reader.get_metadata(archive)
+        return _register_zim_path(path)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to open ZIM file {path}: {e}")
         raise HTTPException(status_code=400, detail=f"Not a valid .zim file: {e}")
 
-    entry = zim_library.register(
-        path=path,
-        title=metadata["title"],
-        description=metadata["description"],
-        article_count=metadata["articleCount"],
-    )
-    return entry
+
+@app.get("/api/zim/drop_dir")
+async def get_zim_drop_dir():
+    """Return the folder the user can drop .zim files into directly (useful
+    for multi-gigabyte archives where typing/pasting a path is friction) --
+    shown in the UI so the user knows where to put files before hitting
+    Rescan."""
+    return {"path": zim_library.ZIM_DROP_DIR}
+
+
+@app.post("/api/zim/rescan")
+async def rescan_zim_drop_dir():
+    """Register every .zim file sitting in the drop folder that isn't
+    already in the library. Lets a user drop a huge file into that folder
+    with a file manager (or `cp`/`mv`) and pick it up here without typing an
+    absolute path."""
+    already_registered = zim_library.registered_paths()
+    added: list[zim_library.ZimEntry] = []
+    errors: list[dict] = []
+    for path in zim_library.list_drop_dir_zim_files():
+        if path in already_registered:
+            continue
+        try:
+            added.append(_register_zim_path(path))
+        except Exception as e:
+            logger.error(f"Failed to auto-register dropped ZIM file {path}: {e}")
+            errors.append({"path": path, "error": str(e)})
+    return {"added": added, "errors": errors}
 
 
 def _get_zim_entry_or_404(zim_id: str) -> zim_library.ZimEntry:

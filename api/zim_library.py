@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 ZIM_LIBRARY_DIR = os.path.join(get_data_root(), "zim_library")
 os.makedirs(ZIM_LIBRARY_DIR, exist_ok=True)
 
+# A folder the user can drop large .zim files into directly (via file manager
+# or `cp`/`mv`) instead of typing an absolute path -- important for
+# multi-gigabyte archives where copy-pasting a path is the only realistic
+# option anyway, but browsing to confirm it is still friction. "Rescan" scans
+# this folder and auto-registers anything not already in the library.
+ZIM_DROP_DIR = os.path.join(get_data_root(), "zim_drop")
+os.makedirs(ZIM_DROP_DIR, exist_ok=True)
+
 
 class ZimEntry(TypedDict):
     id: str
@@ -87,3 +95,19 @@ def unregister(entry_id: str) -> bool:
         return False
     os.remove(p)
     return True
+
+
+def registered_paths() -> set[str]:
+    return {os.path.abspath(e["path"]) for e in list_all()}
+
+
+def list_drop_dir_zim_files() -> list[str]:
+    """Absolute paths of every .zim file sitting directly in ZIM_DROP_DIR."""
+    try:
+        return [
+            os.path.abspath(os.path.join(ZIM_DROP_DIR, fn))
+            for fn in os.listdir(ZIM_DROP_DIR)
+            if fn.lower().endswith(".zim")
+        ]
+    except OSError:
+        return []

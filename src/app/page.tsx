@@ -164,6 +164,17 @@ export default function Home() {
   const [zimPath, setZimPath] = useState('');
   const [zimError, setZimError] = useState<string | null>(null);
   const [isZimImporting, setIsZimImporting] = useState(false);
+  const [zimDropDir, setZimDropDir] = useState<string | null>(null);
+  const [isRescanningZim, setIsRescanningZim] = useState(false);
+  const [rescanMessage, setRescanMessage] = useState<string | null>(null);
+  const [projectsListKey, setProjectsListKey] = useState(0);
+
+  useEffect(() => {
+    fetch('/api/zim/drop_dir')
+      .then((res) => res.json())
+      .then((data) => setZimDropDir(data.path || null))
+      .catch(() => setZimDropDir(null));
+  }, []);
 
   const handleImportZim = async () => {
     const path = zimPath.trim();
@@ -190,6 +201,37 @@ export default function Home() {
       setZimError(e instanceof Error ? e.message : 'Failed to import .zim file');
     } finally {
       setIsZimImporting(false);
+    }
+  };
+
+  // Picks up any .zim file the user dropped directly into the drop folder
+  // (via file manager / cp / mv) -- avoids typing a path for huge archives.
+  const handleRescanZim = async () => {
+    setIsRescanningZim(true);
+    setRescanMessage(null);
+    try {
+      const response = await fetch('/api/zim/rescan', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.error || 'Failed to rescan');
+      }
+      const addedCount = Array.isArray(data.added) ? data.added.length : 0;
+      const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+      if (addedCount === 0 && errorCount === 0) {
+        setRescanMessage('No new .zim files found.');
+      } else {
+        setRescanMessage(
+          `${addedCount} archive(s) added${errorCount ? `, ${errorCount} failed` : ''}.`
+        );
+      }
+      // ProcessedProjects fetches once on mount with no external refetch
+      // hook -- bump a key to remount it so newly-registered archives show
+      // up immediately without a manual page reload.
+      setProjectsListKey((k) => k + 1);
+    } catch (e: unknown) {
+      setRescanMessage(e instanceof Error ? e.message : 'Failed to rescan');
+    } finally {
+      setIsRescanningZim(false);
     }
   };
 
@@ -492,7 +534,7 @@ export default function Home() {
             </div>
           </form>
 
-          <div className="flex justify-center w-full max-w-3xl mt-3">
+          <div className="flex justify-center items-center gap-3 w-full max-w-3xl mt-3">
             <button
               type="button"
               onClick={() => setIsZimModalOpen(true)}
@@ -500,7 +542,20 @@ export default function Home() {
             >
               {t('common.importZim') !== 'common.importZim' ? t('common.importZim') : 'Import .zim archive'}
             </button>
+            <span className="text-[var(--muted)] text-xs">•</span>
+            <button
+              type="button"
+              onClick={handleRescanZim}
+              disabled={isRescanningZim}
+              className="text-sm text-[var(--muted)] hover:text-[var(--accent-primary)] underline underline-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Scan the .zim drop folder for new files"
+            >
+              {isRescanningZim ? 'Rescanning…' : 'Rescan .zim folder'}
+            </button>
           </div>
+          {rescanMessage && (
+            <p className="text-center text-xs text-[var(--muted)] mt-1">{rescanMessage}</p>
+          )}
 
           {isZimModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -525,6 +580,15 @@ export default function Home() {
                 />
                 {zimError && (
                   <div className="text-[var(--highlight)] text-xs mb-2">{zimError}</div>
+                )}
+                {zimDropDir && (
+                  <div className="mt-2 mb-2 p-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]">
+                    <p className="text-xs text-[var(--muted)]">
+                      For large files, drop the .zim directly into this folder instead, then use
+                      &quot;Rescan .zim folder&quot; below the form:
+                    </p>
+                    <code className="text-xs text-[var(--accent-primary)] break-all">{zimDropDir}</code>
+                  </div>
                 )}
                 <div className="flex justify-end gap-2 mt-4">
                   <button
@@ -617,6 +681,7 @@ export default function Home() {
 
               {/* Show processed projects */}
               <ProcessedProjects
+                key={projectsListKey}
                 showHeader={false}
                 maxItems={6}
                 messages={messages}
