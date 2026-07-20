@@ -18,6 +18,7 @@ from api.prompts import (
     DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
     DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT,
     SIMPLE_CHAT_SYSTEM_PROMPT,
+    SIMPLE_CHAT_SYSTEM_PROMPT_ZIM,
     TOOL_CALLING_INSTRUCTIONS,
 )
 
@@ -183,6 +184,11 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         # Get the query from the last message
         query = last_message.content
 
+        # Pages actually consulted while answering (initial context +
+        # anything looked up via a SEARCH_WIKI tool call), shown as a
+        # distinct footer after the answer -- see search_tool.format_sources_footer.
+        collected_refs: list = []
+
         # Agent tool-calling (SEARCH_WIKI: <query> mid-answer, see
         # api/agent_loop.py) is opt-out via the request flag and an env var
         # killswitch, and never runs for Deep Research. Shared with
@@ -194,6 +200,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             zim_path=request.repo_url if is_zim else None,
             request_rag=request_rag,
             language=request.language,
+            refs_sink=collected_refs,
         )
 
         # Only retrieve documents if input is not too large
@@ -208,7 +215,8 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             # when there's no "current page" anchor.
             try:
                 context_text = search_tool.build_zim_context(
-                    request.repo_url, query, request.current_page_id, limit=5
+                    request.repo_url, query, request.current_page_id, limit=5,
+                    refs_sink=collected_refs,
                 )
             except Exception as e:
                 logger.error(f"Error building ZIM context: {str(e)}")
@@ -245,6 +253,10 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                             if file_path not in docs_by_file:
                                 docs_by_file[file_path] = []
                             docs_by_file[file_path].append(doc)
+
+                        collected_refs.extend(
+                            {"title": file_path, "ref": file_path} for file_path in docs_by_file
+                        )
 
                         # Format context text with file path grouping
                         context_parts = []
@@ -318,7 +330,8 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     language_name=language_name
                 )
         else:
-            system_prompt = SIMPLE_CHAT_SYSTEM_PROMPT.format(
+            template = SIMPLE_CHAT_SYSTEM_PROMPT_ZIM if is_zim else SIMPLE_CHAT_SYSTEM_PROMPT
+            system_prompt = template.format(
                 subject=subject,
                 repo_url=repo_url,
                 repo_name=repo_name,
@@ -418,6 +431,11 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     )
                 async for text in stream:
                     yield text
+                footer = search_tool.format_sources_footer(
+                    collected_refs, is_zim, request.repo_url if is_zim else None
+                )
+                if footer:
+                    yield footer
 
             except Exception as e_outer:
                 logger.error(f"Error in streaming response: {str(e_outer)}")

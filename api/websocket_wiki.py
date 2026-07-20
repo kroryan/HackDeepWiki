@@ -194,6 +194,11 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Get the query from the last message
         query = last_message.content
 
+        # Pages actually consulted while answering (initial context +
+        # anything looked up via a SEARCH_WIKI tool call), shown as a
+        # distinct footer after the answer -- see search_tool.format_sources_footer.
+        collected_refs: list = []
+
         # Agent tool-calling (SEARCH_WIKI: <query> mid-answer, see
         # api/agent_loop.py) is opt-out via the request flag and an env var
         # killswitch, and never runs for Deep Research -- that flow already
@@ -206,6 +211,7 @@ async def handle_websocket_chat(websocket: WebSocket):
             zim_path=request.repo_url if is_zim else None,
             request_rag=request_rag,
             language=request.language,
+            refs_sink=collected_refs,
         )
 
         # Only retrieve documents if input is not too large
@@ -220,7 +226,8 @@ async def handle_websocket_chat(websocket: WebSocket):
             # when there's no "current page" anchor.
             try:
                 context_text = search_tool.build_zim_context(
-                    request.repo_url, query, request.current_page_id, limit=5
+                    request.repo_url, query, request.current_page_id, limit=5,
+                    refs_sink=collected_refs,
                 )
             except Exception as e:
                 logger.error(f"Error building ZIM context: {str(e)}")
@@ -258,6 +265,10 @@ async def handle_websocket_chat(websocket: WebSocket):
                             if file_path not in docs_by_file:
                                 docs_by_file[file_path] = []
                             docs_by_file[file_path].append(doc)
+
+                        collected_refs.extend(
+                            {"title": file_path, "ref": file_path} for file_path in docs_by_file
+                        )
 
                         # Format context text with file path grouping
                         context_parts = []
@@ -400,48 +411,34 @@ IMPORTANT:You MUST respond in {language_name} language.
 - Use markdown formatting to improve readability
 - Cite specific files and code sections when relevant
 </style>"""
-        else:
+        elif is_zim:
             system_prompt = f"""<role>
-You are an expert analyst examining the {subject_kind}: {repo_url} ({repo_name}).
-You provide direct, concise, and accurate information based on the provided context.
-You NEVER start responses with markdown headers or code fences.
-IMPORTANT:You MUST respond in {language_name} language.
+You are a helpful, knowledgeable conversational assistant with access to the offline wiki archive "{repo_name}". This archive can cover any topic at all (history, reference material, documentation, etc.) -- you're having a real conversation about its content, not performing a narrow lookup task.
 </role>
 
 <guidelines>
-- Answer the user's question directly without ANY preamble or filler phrases
-- DO NOT include any rationale, explanation, or extra comments.
-- Strictly base answers ONLY on existing code or documents
-- DO NOT speculate or invent citations.
-- DO NOT start with preambles like "Okay, here's a breakdown" or "Here's an explanation"
-- DO NOT start with markdown headers like "## Analysis of..." or any file path references
-- DO NOT start with ```markdown code fences
-- DO NOT end your response with ``` closing fences
-- DO NOT start by repeating or acknowledging the question
-- JUST START with the direct answer to the question
+- Detect the language the user is writing in and respond in THAT language for this reply, even if it differs from the archive's own language or from {language_name} -- match the user, not a fixed setting.
+- Have a natural conversation: answer greetings, meta-questions ("what is this?", "what topics does this cover?"), and follow-ups directly, using the provided context plus your own general knowledge and reasoning -- you are a chat assistant, not a rigid lookup automaton.
+- Ground specific facts in the provided context when it's relevant, but if it doesn't fully cover the question, say what you do know and reason about the rest using your own general knowledge rather than refusing to answer.
+- Never respond with only "I cannot determine this" or pile on hedges and caveats -- give your best helpful answer.
+- Answer directly without unnecessary preamble, filler phrases, or repeating the question back.
+- DO NOT start with markdown headers or ```markdown code fences.
+- Use markdown formatting within your answer (headings, lists, code blocks) where it actually helps.
+</guidelines>"""
+        else:
+            system_prompt = f"""<role>
+You are a helpful, knowledgeable coding assistant embedded in the {subject_kind}: {repo_url} ({repo_name}). You have access to the project's source code and documentation as context, and you're having a real conversation with someone working on or exploring this project -- not just answering isolated lookup queries.
+</role>
 
-<example_of_what_not_to_do>
-```markdown
-## Analysis of `adalflow/adalflow/datasets/gsm8k.py`
-
-This file contains...
-```
-</example_of_what_not_to_do>
-
-- Format your response with proper markdown including headings, lists, and code blocks WITHIN your answer
-- For code analysis, organize your response with clear sections
-- Think step by step and structure your answer logically
-- Start with the most relevant information that directly addresses the user's query
-- Be precise and technical when discussing code
-- Your response language should be in the same language as the user's query
-</guidelines>
-
-<style>
-- Use concise, direct language
-- Prioritize accuracy over verbosity
-- When showing code, include line numbers and file paths when relevant
-- Use markdown formatting to improve readability
-</style>"""
+<guidelines>
+- Detect the language the user is writing in and respond in THAT language for this reply, even if it differs from {language_name} -- match the user, not a fixed setting.
+- Have a natural conversation: answer greetings, meta-questions ("what is this project?", "what does this repo do?"), and follow-ups directly, using the provided context plus your own reasoning -- you are a chat assistant, not a rigid lookup automaton.
+- Ground specific technical claims (how code works, what a file does) in the provided context and cite files/functions when relevant.
+- If the context doesn't fully cover something, say what you do know and reason about the rest -- never respond with only "I cannot determine this" or refuse to engage.
+- Answer directly without unnecessary preamble, filler phrases, or repeating the question back.
+- DO NOT start with markdown headers or ```markdown code fences.
+- Use markdown formatting within your answer (headings, lists, code blocks) where it actually helps.
+</guidelines>"""
 
         # Fetch file content if provided
         file_content = ""
@@ -574,6 +571,11 @@ This file contains...
                 )
             async for text in response_stream:
                 await websocket.send_text(text)
+            footer = search_tool.format_sources_footer(
+                collected_refs, is_zim, request.repo_url if is_zim else None
+            )
+            if footer:
+                await websocket.send_text(footer)
             await websocket.close()
 
         except Exception as e_outer:
