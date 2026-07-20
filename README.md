@@ -86,3 +86,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=kroryan/freedeepwiki&type=Date)](https://star-history.com/#kroryan/freedeepwiki&Date)
+
+## 🙏 Credits
+
+This project is a fork of [deepwiki-open](https://github.com/AsyncFuncAI/deepwiki-open) by [AsyncFuncAI](https://github.com/AsyncFuncAI). All credit for the original codebase goes to them.
