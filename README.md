@@ -1,4 +1,11 @@
 # FreeDeepWiki
+<img width="1344" height="759" alt="image" src="https://github.com/user-attachments/assets/b88d40f8-78f9-413e-9327-a10e2610f0cf" />
+<img width="662" height="822" alt="image" src="https://github.com/user-attachments/assets/8c28d9d9-92ab-4877-afbe-56c40df03294" />
+<img width="1907" height="780" alt="image" src="https://github.com/user-attachments/assets/3a454f91-39b7-4a25-a4b6-2c49cc3480fc" />
+
+
+
+
 
 **FreeDeepWiki** turns any Git repository into an interactive, AI-generated wiki. Point it at a GitHub, GitLab, or Bitbucket repo (or a local folder) and it will:
 
