@@ -247,7 +247,12 @@ IMPORTANT FORMATTING RULES:
             elif self.provider in ("litellm", "claude"):
                 client_kwargs["api_key"] = self.api_key
 
-        # Set up the main generator
+        # Set up the main generator. adalflow's Generator always initializes its
+        # sqlite response cache (even with use_cache=False), so point it at our
+        # guaranteed-writable data root — the upstream default of ~/.adalflow
+        # breaks with "Permission denied"/"readonly database" when that dir is
+        # root-owned from an earlier sudo/Docker run.
+        from api.data_root import get_data_root
         self.generator = adal.Generator(
             template=RAG_TEMPLATE,
             prompt_kwargs={
@@ -259,6 +264,8 @@ IMPORTANT FORMATTING RULES:
             model_client=model_client_class(**client_kwargs),
             model_kwargs=generator_config["model_kwargs"],
             output_processors=data_parser,
+            cache_path=get_data_root(),
+            use_cache=False,
         )
 
 

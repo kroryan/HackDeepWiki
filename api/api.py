@@ -33,9 +33,8 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# Helper function to get adalflow root path
-def get_adalflow_default_root_path():
-    return os.path.expanduser(os.path.join("~", ".adalflow"))
+# Helper function to get the (guaranteed-writable) adalflow root path
+from api.data_root import get_data_root as get_adalflow_default_root_path
 
 # --- Pydantic Models ---
 class WikiPage(BaseModel):
@@ -262,8 +261,31 @@ async def probe_models(request: ModelProbeRequest):
     (Novita, Together, Groq, vLLM, etc.)
     """
     import httpx
+    from urllib.parse import urlparse
 
     endpoint = request.endpoint.rstrip("/")
+
+    def _is_local_host(url: str) -> bool:
+        host = (urlparse(url).hostname or "").lower()
+        return (
+            host in ("localhost", "0.0.0.0")
+            or host.startswith("127.")
+            or host.startswith("192.168.")
+            or host.startswith("10.")
+        )
+
+    # Normalize the scheme. Users often paste "localhost:11434" (no scheme) or
+    # "https://localhost:11434"; plain-HTTP servers like Ollama then fail with
+    # "[SSL: WRONG_VERSION_NUMBER]". Prefer http:// for local hosts and keep an
+    # http:// fallback candidate when https was requested against one.
+    if not endpoint.startswith(("http://", "https://")):
+        scheme = "http" if _is_local_host(f"http://{endpoint}") else "https"
+        endpoint = f"{scheme}://{endpoint}"
+
+    endpoint_candidates = [endpoint]
+    if endpoint.startswith("https://") and _is_local_host(endpoint):
+        endpoint_candidates.append("http://" + endpoint[len("https://"):])
+
     headers = {"Accept": "application/json"}
     if request.api_key:
         headers["Authorization"] = f"Bearer {request.api_key}"
@@ -271,14 +293,23 @@ async def probe_models(request: ModelProbeRequest):
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             if request.provider_type == "ollama":
-                url = f"{endpoint}/api/tags"
-                resp = await client.get(url, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                models = [
-                    {"id": m["name"], "name": m["name"]}
-                    for m in data.get("models", [])
-                ]
+                models = []
+                last_error = None
+                for base in endpoint_candidates:
+                    try:
+                        resp = await client.get(f"{base}/api/tags", headers=headers)
+                        resp.raise_for_status()
+                        data = resp.json()
+                        models = [
+                            {"id": m["name"], "name": m["name"]}
+                            for m in data.get("models", [])
+                        ]
+                        break
+                    except Exception as url_err:
+                        last_error = url_err
+                        continue
+                if not models and last_error:
+                    raise last_error
             else:
                 # Try multiple URL patterns for OpenAI-compatible endpoints
                 # Different providers use different URL structures:
@@ -287,10 +318,10 @@ async def probe_models(request: ModelProbeRequest):
                 # - Together: https://api.together.xyz/v1/models
                 # - vLLM: http://localhost:8000/v1/models
                 models = []
-                urls_to_try = [
-                    f"{endpoint}/models",        # If endpoint already includes /v1 or /v3/openai
-                    f"{endpoint}/v1/models",     # Standard OpenAI format
-                ]
+                urls_to_try = []
+                for base in endpoint_candidates:
+                    urls_to_try.append(f"{base}/models")     # If endpoint already includes /v1 or /v3/openai
+                    urls_to_try.append(f"{base}/v1/models")  # Standard OpenAI format
                 
                 last_error = None
                 for url in urls_to_try:
