@@ -32,7 +32,10 @@ boto3 = ">=1.34.0"
 websockets = ">=11.0.3"
 azure-identity = ">=1.12.0"
 azure-core = ">=1.24.0"
-libzim = ">=3.12.0"
+# Upper-bounded to match libzim's own supported Python range (<3.15); without
+# this poetry's solver fails outright since the project's own `python = "^3.11"`
+# is otherwise unbounded above 3.15.
+libzim = { version = ">=3.12.0", python = ">=3.11,<3.15" }
 
 
 [build-system]

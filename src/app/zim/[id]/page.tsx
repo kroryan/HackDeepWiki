@@ -130,8 +130,11 @@ export default function ZimReaderPage() {
           </div>
         </div>
 
-        {/* Reader panel */}
-        <div className="flex-1 min-h-0 bg-white">
+        {/* Reader panel container follows the app theme; the iframe's own
+            document (third-party ZIM content with its own CSS) cannot be
+            re-themed from here without risky script injection into
+            sandboxed, untrusted HTML -- only the surrounding chrome does. */}
+        <div className="flex-1 min-h-0 bg-[var(--background)]">
           {currentPath ? (
             <iframe
               key={currentPath}

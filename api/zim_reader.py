@@ -52,6 +52,20 @@ def close_archive(path: str) -> None:
         _archive_cache.pop(path, None)
 
 
+def _resolve_main_entry_path(archive: Archive) -> Optional[str]:
+    """archive.main_entry is itself a redirect pseudo-entry: its own `.path`
+    (e.g. "mainPage") is NOT a real, independently-resolvable path in the
+    archive namespace -- calling get_entry_by_path() on it raises "Cannot
+    find entry". The real, browsable path is only reachable by following the
+    redirect once via get_redirect_entry()."""
+    if not archive.has_main_entry:
+        return None
+    main_entry = archive.main_entry
+    if main_entry.is_redirect:
+        return main_entry.get_redirect_entry().path
+    return main_entry.path
+
+
 def get_metadata(archive: Archive) -> dict:
     def _meta(key: str) -> Optional[str]:
         if key not in archive.metadata_keys:
@@ -68,7 +82,7 @@ def get_metadata(archive: Archive) -> dict:
         "creator": _meta("Creator") or "",
         "articleCount": archive.article_count,
         "hasFulltextIndex": archive.has_fulltext_index,
-        "mainEntryPath": archive.main_entry.path if archive.has_main_entry else None,
+        "mainEntryPath": _resolve_main_entry_path(archive),
     }
 
 

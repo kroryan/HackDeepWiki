@@ -60,7 +60,8 @@ packages_to_collect = [
     'numpy',
     'openai',
     'ollama',
-    'faiss'
+    'faiss',
+    'libzim'
 ]
 
 hidden_imports = []
