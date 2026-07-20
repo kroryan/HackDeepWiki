@@ -80,3 +80,4 @@ certs/
 /appimagetool*
 
 /.venv311/
+DATABASE/

@@ -496,7 +496,53 @@ This file contains...
                 model_type=ModelType.LLM
             )
         elif request.provider in ("openai", "openai_custom"):
-            logger.info(f"Using Openai protocol with model: {request.model}")
+            # Log the exact parameters received from the frontend (api_key masked) so that
+            # misconfigured custom-provider requests (missing endpoint/model/key) can be
+            # diagnosed from the server log instead of producing a cryptic downstream error.
+            _key_present = bool(request.api_key)
+            logger.info(
+                f"Using Openai protocol: provider={request.provider!r} model={request.model!r} "
+                f"endpoint={request.api_endpoint!r} api_key_set={_key_present}"
+            )
+
+            # For custom OpenAI-compatible providers (Novita, Together, Groq, vLLM, ...) the
+            # endpoint, model and API key are all mandatory. If the endpoint is missing,
+            # OpenAIClient silently falls back to https://api.openai.com/v1 and sends the
+            # provider's key to OpenAI, producing a confusing 401 "Incorrect API key". If the
+            # model is missing/empty, the provider returns MODEL_NOT_FOUND. Detect both early
+            # and surface a clear, actionable error to the client.
+            if request.provider == "openai_custom":
+                if not request.api_endpoint:
+                    error_msg = (
+                        "\nError with Openai API: No API endpoint (base URL) was provided for the "
+                        "custom provider. The request would fall back to OpenAI's endpoint and fail. "
+                        "Please open Settings, set the API Endpoint URL for this provider, click Reload "
+                        f"to fetch models, and select one. (received model={request.model!r})\n"
+                    )
+                    logger.error("openai_custom request rejected: missing api_endpoint")
+                    await websocket.send_text(error_msg)
+                    await websocket.close()
+                    return
+                if not request.model:
+                    error_msg = (
+                        "\nError with Openai API: No model was selected for the custom provider "
+                        f"(endpoint={request.api_endpoint!r}). Please open Settings, click Reload to "
+                        "fetch the available models, and select a model from the list.\n"
+                    )
+                    logger.error("openai_custom request rejected: missing model")
+                    await websocket.send_text(error_msg)
+                    await websocket.close()
+                    return
+                if not request.api_key:
+                    error_msg = (
+                        "\nError with Openai API: No API key was provided for the custom provider "
+                        f"endpoint {request.api_endpoint!r}. Please open Settings and set the API key "
+                        "for this provider.\n"
+                    )
+                    logger.error("openai_custom request rejected: missing api_key")
+                    await websocket.send_text(error_msg)
+                    await websocket.close()
+                    return
 
             # Check if an API key is set for Openai
             if not OPENAI_API_KEY and not request.api_key:
@@ -704,7 +750,15 @@ This file contains...
                     await websocket.close()
                 except Exception as e_openai:
                     logger.error(f"Error with Openai API: {str(e_openai)}")
-                    error_msg = f"\nError with Openai API: {str(e_openai)}\n\nPlease check that you have set the OPENAI_API_KEY environment variable with a valid API key."
+                    # Include the endpoint and model so the frontend can surface a self-
+                    # diagnosing error (e.g. reveals when the endpoint fell back to OpenAI
+                    # because api_endpoint was missing, or which model was not found).
+                    error_msg = (
+                        f"\nError with Openai API: {str(e_openai)}"
+                        f"\n[endpoint={request.api_endpoint or '(default https://api.openai.com/v1)'}"
+                        f" model={request.model!r}]\n"
+                        "Please check your provider settings (API endpoint URL, API key, and selected model).\n"
+                    )
                     await websocket.send_text(error_msg)
                     # Close the WebSocket connection after sending the error message
                     await websocket.close()

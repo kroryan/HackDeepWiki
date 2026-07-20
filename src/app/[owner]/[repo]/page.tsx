@@ -984,17 +984,27 @@ IMPORTANT:
        }
 
        // Custom OpenAI-compatible provider (Novita, Together, Groq, vLLM, ...) returned an
-       // error. The most common cause is MODEL_NOT_FOUND — e.g. a model belonging to another
-       // provider (an Ollama model such as "gpt-oss:120b-cloud") was sent to the endpoint, or
-       // the selected model is not served by the configured base URL. Surface a clear,
-       // actionable error instead of falling through to "No valid XML found in response".
+       // error. Surface the backend's detailed message (which includes the endpoint + model +
+       // cause) so a misconfigured provider can be diagnosed at a glance — e.g. it reveals when
+       // the endpoint fell back to https://api.openai.com/v1 because no API endpoint URL was
+       // sent, or which model was not found. This avoids falling through to "No valid XML".
        if (responseText.includes('Error with Openai API') || responseText.includes('MODEL_NOT_FOUND') || (responseText.includes('model') && responseText.includes('not found') && responseText.includes('Error'))) {
-         const modelMatch = responseText.match(/model[:\s]+([^\s,'}]+)\s+not found/i);
-         const modelName = modelMatch ? modelMatch[1] : '';
+         const endpointMatch = responseText.match(/\[endpoint=([^\]]*?)\s+model=([^\]]*?)\]/);
+         const endpoint = endpointMatch ? endpointMatch[1].trim() : '';
+         const modelStr = endpointMatch ? endpointMatch[2].trim() : '';
+         const causeMatch = responseText.match(/Error with Openai API:\s*([\s\S]*?)(?:\n\s*\[|\nPlease|$)/);
+         let cause = causeMatch ? causeMatch[1].trim() : '';
+         if (!cause) {
+           const notFoundMatch = responseText.match(/model[:\s]+([^\s,'}]+)\s+not found/i);
+           cause = notFoundMatch ? `model "${notFoundMatch[1]}" not found` : 'provider endpoint error';
+         }
+         const detail = [
+           cause,
+           endpoint ? `endpoint=${endpoint}` : '',
+           modelStr ? `model=${modelStr}` : '',
+         ].filter(Boolean).join(' | ');
          throw new Error(
-           modelName
-             ? `The model "${modelName}" was not found at the configured provider endpoint. Open Settings, click Reload to fetch the available models, and select a model that is valid for this provider.`
-             : `The configured provider endpoint returned an error for the selected model. Open Settings, click Reload to fetch the available models, and select a valid model for this provider.`
+           `The configured provider endpoint returned an error for the selected model.${detail ? ` (${detail})` : ''} Open Settings, verify the API Endpoint URL, API key, and selected model, click Reload to fetch the available models, and select a valid model for this provider.`
          );
        }
 

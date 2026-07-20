@@ -136,14 +136,29 @@ mermaid.initialize({
       stroke-linejoin: round;
     }
 
-    /* Force text elements to be properly colored */
+    /* Force text elements to be properly colored.
+       With htmlLabels enabled, node/edge labels are rendered as HTML divs inside
+       foreignObject, so they use CSS color (inherited from the page), not SVG fill.
+       On light node fills (#f8f4e6) the inherited page foreground (often white/light)
+       makes the label text invisible. Set both fill (for SVG text) and color (for
+       HTML labels) with !important so labels are always legible on the node fill. */
     text[text-anchor][dominant-baseline],
     text[text-anchor][alignment-baseline],
     .nodeLabel,
     .edgeLabel,
     .label,
+    .label foreignObject div,
+    .label foreignObject span,
     text {
-      fill: #777 !important;
+      fill: #2b2b2b !important;
+      color: #2b2b2b !important;
+    }
+    /* Edge labels sit on the transparent background, keep them dark too */
+    .edgeLabel foreignObject div,
+    .edgeLabel foreignObject span,
+    .edgeLabel span {
+      color: #2b2b2b !important;
+      background-color: transparent !important;
     }
 
     [data-theme="dark"] text[text-anchor][dominant-baseline],
@@ -151,8 +166,16 @@ mermaid.initialize({
     [data-theme="dark"] .nodeLabel,
     [data-theme="dark"] .edgeLabel,
     [data-theme="dark"] .label,
+    [data-theme="dark"] .label foreignObject div,
+    [data-theme="dark"] .label foreignObject span,
     [data-theme="dark"] text {
       fill: #f0f0f0 !important;
+      color: #f0f0f0 !important;
+    }
+    [data-theme="dark"] .edgeLabel foreignObject div,
+    [data-theme="dark"] .edgeLabel foreignObject span,
+    [data-theme="dark"] .edgeLabel span {
+      color: #f0f0f0 !important;
     }
 
     /* Add clickable element styles with subtle transitions */

@@ -15,6 +15,37 @@ BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.absp
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+def get_portable_base_dir() -> str:
+    """Return the directory the user launched the app from — the folder that contains
+    the .AppImage / .exe — so a portable ``DATABASE`` folder can live next to the
+    executable and travel with it when the whole folder is copied/zipped.
+
+    Resolution order:
+      1. AppImage: the ``APPIMAGE`` env var holds the absolute path of the .AppImage
+         file the user actually ran. ``sys.executable`` inside an AppImage points into
+         the read-only squashfs mount (``/tmp/.mount_...``), which we must NOT use.
+      2. Frozen PyInstaller build (Windows .exe / onefile): ``sys.executable`` is the
+         launcher executable itself, so its directory is the install folder.
+      3. Development mode: the project root (parent of this scripts/ dir).
+    """
+    appimage = os.environ.get("APPIMAGE")
+    if appimage and os.path.isfile(appimage):
+        return os.path.dirname(os.path.abspath(appimage))
+    if getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _is_writable_dir(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write_probe")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
 def find_free_port(start_port):
     port = start_port
     while True:
@@ -76,17 +107,44 @@ def start_node_server(node_bin, frontend_port, backend_port):
 
 def setup_persistent_config_and_logs(args):
     home_dir = os.path.expanduser("~")
-    freedeepwiki_dir = os.path.join(home_dir, ".freedeepwiki")
-    config_dir = os.path.join(freedeepwiki_dir, "config")
-    logs_dir = os.path.join(freedeepwiki_dir, "logs")
-    
-    os.makedirs(config_dir, exist_ok=True)
-    os.makedirs(logs_dir, exist_ok=True)
-    
+
+    # Portable DATABASE folder: live next to the .AppImage / .exe so the entire
+    # install (executable + DATABASE) is self-contained and can be zipped/moved as
+    # one unit. Holds config, logs, wiki cache, cloned repos, embeddings, and
+    # adalflow's internal caches/dbs. Falls back to ~/.freedeepwiki if the folder
+    # next to the executable is not writable (e.g. read-only location).
+    database_dir = os.path.join(get_portable_base_dir(), "DATABASE")
+    use_portable = _is_writable_dir(database_dir)
+    if use_portable:
+        config_dir = os.path.join(database_dir, "config")
+        logs_dir = os.path.join(database_dir, "logs")
+        os.makedirs(config_dir, exist_ok=True)
+        os.makedirs(logs_dir, exist_ok=True)
+        # Point the app's data root (wikicache/repos/faiss) at DATABASE. The app's
+        # get_data_root() honors FREEDEEPWIKI_DATA_DIR first and verifies writability.
+        os.environ["FREEDEEPWIKI_DATA_DIR"] = database_dir
+        # Migrate wikis produced by older (non-portable) builds into DATABASE so they
+        # are still detected. adalflow's hardcoded ~/.adalflow root is redirected to
+        # DATABASE by api.data_root at import time, so no patch is needed here.
+        try:
+            from api.data_root import migrate_legacy_wikicache
+            migrate_legacy_wikicache(database_dir)
+        except Exception as e:
+            print(f"Warning: legacy wiki cache migration skipped: {e}")
+        print(f"Portable DATABASE directory: {database_dir}")
+    else:
+        freedeepwiki_dir = os.path.join(home_dir, ".freedeepwiki")
+        config_dir = os.path.join(freedeepwiki_dir, "config")
+        logs_dir = os.path.join(freedeepwiki_dir, "logs")
+        os.makedirs(config_dir, exist_ok=True)
+        os.makedirs(logs_dir, exist_ok=True)
+        print(f"Warning: portable DATABASE dir '{database_dir}' is not writable; "
+              f"falling back to {config_dir}")
+
     # Set config environment variables
     os.environ["FREEDEPWIKI_CONFIG_DIR"] = config_dir
     os.environ["LOG_FILE_PATH"] = os.path.join(logs_dir, "application.log")
-    
+
     # Set TIKTOKEN_CACHE_DIR to the bundled cache if it exists in BASE_DIR
     bundled_tiktoken_cache = os.path.join(BASE_DIR, "tiktoken_cache")
     if os.path.exists(bundled_tiktoken_cache):

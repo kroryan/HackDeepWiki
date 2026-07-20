@@ -598,6 +598,38 @@ async def read_wiki_cache(
         except Exception as e:
             logger.error(f"Error reading wiki cache from {cache_path}: {e}")
             continue
+
+    # Fallback: no exact variant (page_count/comprehensive) match was found, but a wiki for
+    # this owner/repo/lang/type may still exist under a different variant. Re-entering a
+    # previously generated wiki without the exact `pages`/`comprehensive` query params would
+    # otherwise miss the cache and silently regenerate (surfacing as "No valid XML found in
+    # response" when the regeneration fails). Return the most recently modified matching
+    # cache so the existing wiki is restored instead of being regenerated from scratch.
+    try:
+        prefix = f"freedeepwiki_cache_{repo_type}_{owner}_{repo}_{language}"
+        candidates = [
+            os.path.join(WIKI_CACHE_DIR, fn)
+            for fn in os.listdir(WIKI_CACHE_DIR)
+            if fn.startswith(prefix) and fn.endswith(".json")
+        ]
+        if candidates:
+            candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            for cache_path in candidates:
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        cached = WikiCacheData(**data)
+                        logger.info(
+                            "No exact cache variant match; falling back to %s",
+                            os.path.basename(cache_path),
+                        )
+                        return cached
+                except Exception as e:
+                    logger.error(f"Error reading fallback cache {cache_path}: {e}")
+                    continue
+    except Exception as e:
+        logger.error(f"Error scanning wiki cache dir for fallback: {e}")
+
     return None
 
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
