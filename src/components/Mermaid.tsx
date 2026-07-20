@@ -194,6 +194,54 @@ mermaid.initialize({
   fontSize: 12,
 });
 
+/**
+ * Force every Mermaid diagram to render as black text on white fills, no matter
+ * the page/app/OS theme or the mermaid version.
+ *
+ * Mermaid draws node/edge labels as HTML inside <foreignObject>; those elements
+ * inherit `color` from the page, so on a dark-themed page the labels pick up a
+ * light foreground and become invisible on light node fills. Rather than rely on
+ * CSS specificity or themeCSS (both unreliable across diagram types), we walk the
+ * rendered SVG and set inline styles directly on the DOM elements. Inline styles
+ * set via JS have the highest priority — only a CSS `!important` rule can beat
+ * them, and mermaid does not emit `!important` inline — so this is guaranteed to
+ * produce legible black-on-white labels in every case.
+ */
+function forceMermaidReadable(root: HTMLElement | null) {
+  if (!root) return;
+  const svg = root.querySelector('svg');
+  if (!svg) return;
+
+  // 1. Every SVG <text> element (sequence diagrams, actor names, state labels,
+  //    axis text, etc.) -> black fill.
+  svg.querySelectorAll('text').forEach((t) => {
+    t.setAttribute('fill', '#000000');
+    (t as SVGTextElement).style.fill = '#000000';
+  });
+
+  // 2. Node and cluster shape fills -> white so black labels are legible on them.
+  svg
+    .querySelectorAll(
+      '.node rect, .node circle, .node ellipse, .node polygon, .node path, .cluster rect',
+    )
+    .forEach((el) => {
+      el.setAttribute('fill', '#ffffff');
+      (el as SVGGraphicsElement).style.fill = '#ffffff';
+    });
+
+  // 3. HTML labels inside <foreignObject> (flowchart/class/state htmlLabels) ->
+  //    black text, transparent background, on every descendant so nothing inherits
+  //    a light page foreground.
+  svg.querySelectorAll('foreignObject').forEach((fo) => {
+    (fo as SVGElement).style.color = '#000000';
+    fo.querySelectorAll('*').forEach((child) => {
+      const c = child as HTMLElement;
+      c.style.color = '#000000';
+      c.style.backgroundColor = 'transparent';
+    });
+  });
+}
+
 interface MermaidProps {
   chart: string;
   className?: string;
@@ -240,6 +288,9 @@ const FullScreenModal: React.FC<{
     const timer = setTimeout(async () => {
       const svgElement = contentRef.current?.querySelector('svg');
       if (!svgElement || disposed) return;
+      // Force black-on-white labels in the fullscreen view too (scoped to the
+      // modal's SVG container — same bulletproof inline-style pass).
+      forceMermaidReadable(contentRef.current);
       svgElement.style.maxWidth = 'none';
       svgElement.style.width = '100%';
       svgElement.style.height = '100%';
@@ -368,11 +419,6 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-${Math.random().toString(36).substring(2, 9)}`);
-  const isDarkModeRef = useRef(
-    typeof window !== 'undefined' &&
-    window.matchMedia &&
-    window.matchMedia('(prefers-color-scheme: dark)').matches
-  );
 
   // Initialize pan-zoom functionality when SVG is rendered
   useEffect(() => {
@@ -433,9 +479,28 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         if (!isMounted) return;
 
         let processedSvg = renderedSvg;
-        if (isDarkModeRef.current) {
-          processedSvg = processedSvg.replace('<svg ', '<svg data-theme="dark" ');
-        }
+        // Force readable labels regardless of app/OS theme.
+        //
+        // Mermaid renders node/edge labels as HTML inside <foreignObject>. Those
+        // elements inherit `color` from the page, so on a dark-themed page
+        // (next-themes sets <html class="dark">) the labels inherit a light
+        // foreground and become invisible on the light cream node fills. Mermaid's
+        // own themeCSS targets specific label classes, but that is unreliable
+        // across diagram types and mermaid versions, and it depends on a
+        // data-theme attribute we used to derive from the OS prefers-color-scheme
+        // (which does not match the app theme). Instead, inject a high-specificity
+        // <style> directly into the SVG that forces dark text on every
+        // foreignObject descendant and a dark fill on every <text>, plus light
+        // node fills — unconditionally. Diagrams are therefore always
+        // black-on-cream and legible no matter the page theme.
+        const fdwStyle = `<style>
+[data-fdw-mermaid] foreignObject, [data-fdw-mermaid] foreignObject * { color: #1a1a1a !important; background-color: transparent !important; }
+[data-fdw-mermaid] text { fill: #1a1a1a !important; color: #1a1a1a !important; }
+[data-fdw-mermaid] .node rect, [data-fdw-mermaid] .node circle, [data-fdw-mermaid] .node ellipse, [data-fdw-mermaid] .node polygon, [data-fdw-mermaid] .cluster rect { fill: #f8f4e6 !important; stroke: #b9a89f !important; }
+[data-fdw-mermaid] .edgePath .path { stroke: #7a5ca8 !important; stroke-width: 1.5px !important; }
+</style>`;
+        processedSvg = processedSvg.replace('<svg ', '<svg data-fdw-mermaid="1" ');
+        processedSvg = processedSvg.replace(/^(<svg[^>]*>)/, `$1${fdwStyle}`);
 
         setSvg(processedSvg);
 
@@ -461,6 +526,21 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
       isMounted = false;
     };
   }, [chart]);
+
+  // After the SVG string is committed to the DOM, force every label/shape to
+  // black-on-white via inline styles. This runs on every svg change (including
+  // the initial render) and is the bulletproof guarantee that diagrams are
+  // legible regardless of page/app/OS theme or mermaid version. Scoped to this
+  // component's container only — wiki prose (rendered elsewhere) is untouched.
+  useEffect(() => {
+    if (!svg) return;
+    const apply = () => forceMermaidReadable(containerRef.current);
+    // DOM is updated synchronously after setSvg, but run on next tick too in
+    // case dangerouslySetInnerHTML hasn't flushed yet.
+    apply();
+    const id = window.setTimeout(apply, 0);
+    return () => window.clearTimeout(id);
+  }, [svg]);
 
   const handleDiagramClick = () => {
     if (!error && svg) {
