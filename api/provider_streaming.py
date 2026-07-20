@@ -54,7 +54,21 @@ async def stream_provider_response(
     request-shape between websocket_wiki.py / simple_chat.py).
     """
     if provider == "ollama":
-        prompt = prompt + " /no_think"
+        # This branch used to unconditionally append a trailing "/no_think"
+        # to the prompt -- a Qwen3-specific convention for disabling that
+        # model family's reasoning mode for one turn. Ollama serves
+        # arbitrary models under arbitrary names (impossible to enumerate
+        # or pattern-match reliably), and appending text one specific
+        # model family understands as a command to every other model is
+        # exactly the kind of per-model special-casing that breaks
+        # unrelated ones: confirmed live with an NVIDIA nemotron-3-super
+        # cloud model, which produced only "thinking" output and zero
+        # actual content with the suffix present, every time, and a normal
+        # complete answer with it removed. The leading "/no_think
+        # {system_prompt}" prefix already added by every caller (see
+        # websocket_wiki.py / simple_chat.py) applies uniformly to every
+        # provider including this one, so nothing model-specific is lost
+        # by dropping the extra suffix here.
         model = OllamaClient()
         model_kwargs = {
             "model": model_config_kwargs.get("model", requested_model),
@@ -71,21 +85,27 @@ async def stream_provider_response(
         # No internal try/except: errors propagate to the caller's outer
         # token-limit-retry fallback, matching original behavior.
         response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
+        got_content = False
+        thinking_parts: list[str] = []
         async for chunk in response:
             text = None
+            thinking = None
             if isinstance(chunk, dict):
-                text = (
-                    chunk.get("message", {}).get("content")
-                    if isinstance(chunk.get("message"), dict)
-                    else chunk.get("message")
-                )
+                message = chunk.get("message")
+                if isinstance(message, dict):
+                    text = message.get("content")
+                    thinking = message.get("thinking")
+                else:
+                    text = message
             else:
                 message = getattr(chunk, "message", None)
                 if message is not None:
                     if isinstance(message, dict):
                         text = message.get("content")
+                        thinking = message.get("thinking")
                     else:
                         text = getattr(message, "content", None)
+                        thinking = getattr(message, "thinking", None)
 
             if not text:
                 text = getattr(chunk, "response", None) or getattr(chunk, "text", None)
@@ -95,14 +115,32 @@ async def stream_provider_response(
                 if isinstance(message, dict):
                     text = message.get("content")
 
+            if isinstance(thinking, str) and thinking:
+                thinking_parts.append(thinking)
+
             if (
                 isinstance(text, str)
                 and text
                 and not text.startswith("model=")
                 and not text.startswith("created_at=")
             ):
+                got_content = True
                 clean_text = text.replace("<think>", "").replace("</think>", "")
                 yield clean_text
+
+        if not got_content and thinking_parts:
+            # Reasoning-capable models (seen with an NVIDIA nemotron-3-super
+            # cloud model, but this is a general shape any Ollama "thinking"
+            # model can produce, not something to special-case by name) can
+            # spend an entire turn's budget on internal reasoning and never
+            # emit a final `content` message -- silently returning nothing
+            # would be worse than surfacing what the model actually reasoned
+            # through, so fall back to that instead of a blank response.
+            logger.warning(
+                "Ollama model produced only reasoning/thinking output, no final "
+                "content -- falling back to the reasoning text"
+            )
+            yield "".join(thinking_parts)
         return
 
     if provider == "openrouter":
