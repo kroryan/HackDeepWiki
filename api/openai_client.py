@@ -397,6 +397,21 @@ class OpenAIClient(ModelClient):
             log.error(f"Error parsing image generation response: {e}")
             return GeneratorOutput(data=None, error=str(e), raw_response=str(response))
 
+    def _strip_sampling_params(self, api_kwargs: Dict) -> Optional[Dict]:
+        """Return a copy of ``api_kwargs`` without ``temperature``/``top_p``.
+
+        Some OpenAI-compatible providers (Novita, and others) reject
+        ``temperature`` and ``top_p`` on reasoning models
+        (``moonshotai/kimi-k3``, ``gpt-oss-20b``, ...) with a 400
+        ``invalid request error``. Stripping them lets the provider apply its
+        own defaults. Returns ``None`` if there was nothing to strip, so the
+        caller can tell that a retry would be pointless and re-raise instead.
+        """
+        stripped = {k: v for k, v in api_kwargs.items() if k not in ("temperature", "top_p")}
+        if len(stripped) == len(api_kwargs):
+            return None
+        return stripped
+
     @backoff.on_exception(
         backoff.expo,
         (
@@ -404,7 +419,6 @@ class OpenAIClient(ModelClient):
             InternalServerError,
             RateLimitError,
             UnprocessableEntityError,
-            BadRequestError,
         ),
         max_time=5,
     )
@@ -420,7 +434,18 @@ class OpenAIClient(ModelClient):
             if "stream" in api_kwargs and api_kwargs.get("stream", False):
                 log.debug("streaming call")
                 self.chat_completion_parser = handle_streaming_response
-                return self.sync_client.chat.completions.create(**api_kwargs)
+                try:
+                    return self.sync_client.chat.completions.create(**api_kwargs)
+                except BadRequestError:
+                    stripped = self._strip_sampling_params(api_kwargs)
+                    if stripped is None:
+                        raise
+                    log.warning(
+                        "chat.completions.create returned 400; retrying without "
+                        "temperature/top_p (reasoning models reject these). "
+                        f"model={api_kwargs.get('model')!r}"
+                    )
+                    return self.sync_client.chat.completions.create(**stripped)
             else:
                 log.debug("non-streaming call converted to streaming")
                 # Make a copy of api_kwargs to avoid modifying the original
@@ -481,7 +506,6 @@ class OpenAIClient(ModelClient):
             InternalServerError,
             RateLimitError,
             UnprocessableEntityError,
-            BadRequestError,
         ),
         max_time=5,
     )
@@ -498,7 +522,23 @@ class OpenAIClient(ModelClient):
         if model_type == ModelType.EMBEDDER:
             return await self.async_client.embeddings.create(**api_kwargs)
         elif model_type == ModelType.LLM:
-            return await self.async_client.chat.completions.create(**api_kwargs)
+            try:
+                return await self.async_client.chat.completions.create(**api_kwargs)
+            except BadRequestError:
+                # Some OpenAI-compatible providers (Novita, ...) reject
+                # temperature/top_p on reasoning models (kimi-k3, gpt-oss-20b)
+                # with a 400 "invalid request error". Retry once without them so
+                # the provider uses its own defaults. Only retry if we actually
+                # had sampling params to strip; otherwise re-raise unchanged.
+                stripped = self._strip_sampling_params(api_kwargs)
+                if stripped is None:
+                    raise
+                log.warning(
+                    "async chat.completions.create returned 400; retrying without "
+                    "temperature/top_p (reasoning models reject these). "
+                    f"model={api_kwargs.get('model')!r}"
+                )
+                return await self.async_client.chat.completions.create(**stripped)
         elif model_type == ModelType.IMAGE_GENERATION:
             # Determine which image API to call based on the presence of image/mask
             if "image" in api_kwargs:
