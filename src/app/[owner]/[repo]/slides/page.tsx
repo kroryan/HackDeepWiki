@@ -9,6 +9,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
 import { WEBSOCKET_CONNECT_TIMEOUT_MS } from '@/utils/timeouts';
+import { StreamParser } from '@/utils/streamParser';
 
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
@@ -255,6 +256,8 @@ export default function SlidesPage() {
       const planRequestBody: Record<string, unknown> = {
         repo_url: repoUrl,
         type: repoInfo.type,
+        // One-shot generation, not a chat -- see ../page.tsx for why.
+        enable_tool_calling: false,
         messages: [{
           role: 'user',
           content: `Create an engaging outline for a high-quality marketing slide presentation about the ${owner}/${repo} repository.
@@ -320,8 +323,9 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
             // Don't resolve here, wait for the complete response
           };
 
+          const planStreamParser = new StreamParser();
           ws.onmessage = (event) => {
-            const chunk = event.data;
+            const chunk = planStreamParser.feed(event.data).text;
             planContent += chunk;
           };
 
@@ -362,6 +366,7 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
         planContent = '';
         const planReader = planResponse.body?.getReader();
         const planDecoder = new TextDecoder();
+        const planStreamParserHttp = new StreamParser();
 
         if (!planReader) {
           throw new Error('Failed to get plan response reader');
@@ -371,11 +376,11 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
           while (true) {
             const { done, value } = await planReader.read();
             if (done) break;
-            const chunk = planDecoder.decode(value, { stream: true });
+            const chunk = planStreamParserHttp.feed(planDecoder.decode(value, { stream: true })).text;
             planContent += chunk;
           }
           // Ensure final decoding
-          const finalChunk = planDecoder.decode();
+          const finalChunk = planStreamParserHttp.feed(planDecoder.decode()).text;
           planContent += finalChunk;
         } catch (readError) {
           console.error('Error reading plan stream:', readError);
@@ -464,6 +469,8 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
         const slideRequestBody: Record<string, unknown> = {
           repo_url: repoUrl,
           type: repoInfo.type,
+          // One-shot generation, not a chat -- see ../page.tsx for why.
+          enable_tool_calling: false,
           messages: [{
             role: 'user',
             content: `Create a single HTML slide about the ${owner}/${repo} repository with the title "${slideTitle}".
@@ -597,8 +604,9 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
               // Don't resolve here, wait for the complete response
             };
 
+            const slideStreamParser = new StreamParser();
             ws.onmessage = (event) => {
-              const chunk = event.data;
+              const chunk = slideStreamParser.feed(event.data).text;
               slideContent += chunk;
             };
 
@@ -639,6 +647,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
           slideContent = '';
           const slideReader = slideResponse.body?.getReader();
           const slideDecoder = new TextDecoder();
+          const slideStreamParserHttp = new StreamParser();
 
           if (!slideReader) {
             throw new Error(`Failed to get reader for slide ${slideCounter}`);
@@ -648,11 +657,11 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
             while (true) {
               const { done, value } = await slideReader.read();
               if (done) break;
-              const chunk = slideDecoder.decode(value, { stream: true });
+              const chunk = slideStreamParserHttp.feed(slideDecoder.decode(value, { stream: true })).text;
               slideContent += chunk;
             }
             // Ensure final decoding
-            const finalChunk = slideDecoder.decode();
+            const finalChunk = slideStreamParserHttp.feed(slideDecoder.decode()).text;
             slideContent += finalChunk;
           } catch (readError) {
             console.error(`Error reading slide ${slideCounter} stream:`, readError);

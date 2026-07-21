@@ -13,6 +13,7 @@ import getRepoUrl from '@/utils/getRepoUrl';
 import { WEBSOCKET_CONNECT_TIMEOUT_MS } from '@/utils/timeouts';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import { normalizeWikiPageCount } from '@/utils/wikiPageCount';
+import { StreamParser } from '@/utils/streamParser';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -581,6 +582,11 @@ Remember:
         const requestBody: Record<string, any> = {
           repo_url: repoUrl,
           type: effectiveRepoInfo.type,
+          // One-shot page generation, not a chat -- the agent tool-calling
+          // loop (and its out-of-band process-event frames) has no business
+          // here and previously leaked raw FDW control frames straight into
+          // saved wiki content when this wasn't set.
+          enable_tool_calling: false,
           retrieval_query: [
             page.title,
             page.content,
@@ -638,10 +644,14 @@ Remember:
           });
 
           // Create a promise that resolves when the WebSocket response is complete
+          const pageStreamParser = new StreamParser();
           await new Promise<void>((resolve, reject) => {
-            // Handle incoming messages
+            // Handle incoming messages. Even with enable_tool_calling: false
+            // above, a reasoning model's thinking tokens can still arrive
+            // wrapped as out-of-band process frames -- strip them here too
+            // so they never end up saved as page content.
             ws.onmessage = (event) => {
-              content += event.data;
+              content += pageStreamParser.feed(event.data).text;
             };
 
             // Handle WebSocket close
@@ -678,6 +688,7 @@ Remember:
           content = '';
           const reader = response.body?.getReader();
           const decoder = new TextDecoder();
+          const pageStreamParserHttp = new StreamParser();
 
           if (!reader) {
             throw new Error('Failed to get response reader');
@@ -687,10 +698,10 @@ Remember:
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              content += decoder.decode(value, { stream: true });
+              content += pageStreamParserHttp.feed(decoder.decode(value, { stream: true })).text;
             }
             // Ensure final decoding
-            content += decoder.decode();
+            content += pageStreamParserHttp.feed(decoder.decode()).text;
           } catch (readError) {
             console.error('Error reading stream:', readError);
             throw new Error('Error processing response stream');
@@ -767,6 +778,9 @@ Remember:
       const requestBody: Record<string, any> = {
         repo_url: repoUrl,
         type: effectiveRepoInfo.type,
+        // One-shot structure determination, not a chat -- same reasoning as
+        // the page-generation request body above.
+        enable_tool_calling: false,
         retrieval_query: `Plan a ${isComprehensiveView ? 'comprehensive' : 'concise'} ${pageCount}-page technical wiki for ${owner}/${repo}. Focus on architecture, features, data flow, deployment, and the files named in the repository tree.`,
         messages: [{
           role: 'user',
@@ -940,10 +954,13 @@ IMPORTANT:
         });
 
         // Create a promise that resolves when the WebSocket response is complete
+        const structureStreamParser = new StreamParser();
         await new Promise<void>((resolve, reject) => {
-          // Handle incoming messages
+          // Handle incoming messages (see the page-generation WS handler
+          // above for why this still needs frame-stripping even with
+          // enable_tool_calling: false).
           ws.onmessage = (event) => {
-            responseText += event.data;
+            responseText += structureStreamParser.feed(event.data).text;
           };
 
           // Handle WebSocket close
@@ -978,6 +995,7 @@ IMPORTANT:
         responseText = '';
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
+        const structureStreamParserHttp = new StreamParser();
 
         if (!reader) {
           throw new Error('Failed to get response reader');
@@ -986,7 +1004,7 @@ IMPORTANT:
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          responseText += decoder.decode(value, { stream: true });
+          responseText += structureStreamParserHttp.feed(decoder.decode(value, { stream: true })).text;
         }
       }
 

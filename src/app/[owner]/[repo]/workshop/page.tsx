@@ -10,6 +10,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
 import { WEBSOCKET_CONNECT_TIMEOUT_MS } from '@/utils/timeouts';
+import { StreamParser } from '@/utils/streamParser';
 
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
@@ -245,6 +246,10 @@ export default function WorkshopPage() {
       const requestBody: Record<string, unknown> = {
         repo_url: repoUrl,
         type: repoInfo.type,
+        // One-shot generation, not a chat -- see the equivalent request
+        // bodies in ../page.tsx for why this matters (agent tool-calling
+        // otherwise leaks raw process-event frames into saved content).
+        enable_tool_calling: false,
         messages: [{
           role: 'user',
           content: `Create a comprehensive workshop for learning how to use and contribute to the ${owner}/${repo} repository.
@@ -378,13 +383,17 @@ Make the workshop content in ${language === 'en' ? 'English' :
         });
 
         // Create a promise that resolves when the WebSocket response is complete
+        const workshopStreamParser = new StreamParser();
         await new Promise<void>((resolve, reject) => {
           // Use a local variable to accumulate content
           let accumulatedContent = '';
 
-          // Handle incoming messages
+          // Handle incoming messages. Strip out-of-band process-event
+          // frames (see StreamParser) so they never leak into saved
+          // workshop content, even though enable_tool_calling: false above
+          // should keep the agent loop from emitting them in the first place.
           ws.onmessage = (event) => {
-            const chunk = event.data;
+            const chunk = workshopStreamParser.feed(event.data).text;
             content += chunk;
             accumulatedContent += chunk;
 
@@ -425,6 +434,7 @@ Make the workshop content in ${language === 'en' ? 'English' :
         content = '';
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
+        const workshopStreamParserHttp = new StreamParser();
 
         if (!reader) {
           throw new Error('Failed to get response reader');
@@ -437,7 +447,7 @@ Make the workshop content in ${language === 'en' ? 'English' :
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
+            const chunk = workshopStreamParserHttp.feed(decoder.decode(value, { stream: true })).text;
             content += chunk;
             accumulatedContent += chunk;
 
@@ -445,7 +455,7 @@ Make the workshop content in ${language === 'en' ? 'English' :
             setWorkshopContent(accumulatedContent);
           }
           // Ensure final decoding
-          const finalChunk = decoder.decode();
+          const finalChunk = workshopStreamParserHttp.feed(decoder.decode()).text;
           content += finalChunk;
           accumulatedContent += finalChunk;
           setWorkshopContent(accumulatedContent);
