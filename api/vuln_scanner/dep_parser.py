@@ -92,9 +92,10 @@ _SERVER_HINTS: Set[str] = {
     "grpc", "grpc-tools",
 }
 
-# Path substrings that hint at client vs server placement.
+# Directory segment names that hint at client vs server placement (matched as
+# whole path segments, e.g. ".../frontend/package.json" -> segment "frontend").
 _CLIENT_PATH_HINTS = ("client", "frontend", "web", "ui", "browser", "static",
-                      "public", "components", "pages", "views", "app/", "/app/")
+                      "public", "components", "pages", "views", "app")
 _SERVER_PATH_HINTS = ("server", "backend", "api", "services", "lambda",
                       "functions", "workers", "daemon")
 
@@ -120,6 +121,23 @@ def _strip_semver_ops(version: str) -> str:
     return v
 
 
+def _path_segments(source_files: List[str]) -> Set[str]:
+    """Split each source file's directory path into lowercase segments (and
+    the bare filename stem), so hint matching is exact-segment rather than
+    substring -- a manifest literally named ``requirements.txt`` or
+    ``build.gradle`` must never match the "ui" client hint just because "ui"
+    happens to appear inside the filename."""
+    segments: Set[str] = set()
+    for src in source_files:
+        norm = src.lower().replace("\\", "/")
+        parts = [p for p in norm.split("/") if p]
+        # Only directory components carry a path signal; drop the filename
+        # itself (the manifest's own name, e.g. "requirements.txt", is not a
+        # client/server hint).
+        segments.update(parts[:-1])
+    return segments
+
+
 def _infer_category(name: str, ecosystem: str, source_files: List[str],
                     dev: bool) -> str:
     """Best-effort client/server/dependency classification."""
@@ -127,11 +145,15 @@ def _infer_category(name: str, ecosystem: str, source_files: List[str],
     # npm scoped: @scope/pkg -> check both whole and pkg
     tail = n.split("/")[-1]
 
-    # Path hints take precedence (strong signal)
-    joined = " ".join(source_files).lower().replace("\\", "/")
-    if any(h in joined for h in _CLIENT_PATH_HINTS):
+    # Path hints take precedence (strong signal) -- matched against whole
+    # directory segments only (e.g. ".../frontend/package.json" -> "frontend"),
+    # never as a substring of the manifest filename itself.
+    segments = _path_segments(source_files)
+    client_path_hints = {h.rstrip("/") for h in _CLIENT_PATH_HINTS}
+    server_path_hints = {h.rstrip("/") for h in _SERVER_PATH_HINTS}
+    if segments & client_path_hints:
         return "client"
-    if any(h in joined for h in _SERVER_PATH_HINTS):
+    if segments & server_path_hints:
         return "server"
 
     # Known framework hints
@@ -720,6 +742,7 @@ def parse_dependencies(
 
     # key (ecosystem, name) -> (Dependency, priority)
     merged: Dict[Tuple[str, str], Tuple[Dependency, int]] = {}
+    manifests_parsed = 0
 
     def _record(name: str, version: str, ecosystem: str, dev: bool,
                 source_file: str, priority: int) -> None:
@@ -772,6 +795,7 @@ def parse_dependencies(
             except Exception as exc:  # never let one bad file abort the scan
                 logger.debug("parser %s failed on %s: %s", lname, rel, exc)
                 continue
+            manifests_parsed += 1
             for name, version, dev in entries:
                 _record(name, version, ecosystem, dev, rel, priority)
 
@@ -782,7 +806,7 @@ def parse_dependencies(
         deps.append(dep)
 
     logger.info("Parsed %d unique dependencies across %d manifests in %s",
-                len(deps), repo_dir, repo_dir)
+                len(deps), manifests_parsed, repo_dir)
     return deps
 
 

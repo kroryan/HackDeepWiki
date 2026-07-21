@@ -101,6 +101,27 @@ def _version_key(v: str) -> Tuple:
 # OSV record -> CVEFinding
 # ---------------------------------------------------------------------------
 
+# Advisory sources spell severity labels inconsistently (GHSA uses
+# "MODERATE" where our scale uses "MEDIUM"; some ecosystems use lowercase or
+# "IMPORTANT"/"MINOR"). Normalise the ones actually seen in the wild instead
+# of silently discarding them as UNKNOWN.
+_SEVERITY_LABEL_ALIASES = {
+    "MODERATE": "MEDIUM",
+    "IMPORTANT": "HIGH",
+    "MINOR": "LOW",
+    "NEGLIGIBLE": "LOW",
+    "NONE": "UNKNOWN",
+}
+
+
+def _normalise_severity_label(label: str) -> str:
+    label = label.strip().upper()
+    label = _SEVERITY_LABEL_ALIASES.get(label, label)
+    if label not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        return "UNKNOWN"
+    return label
+
+
 def _extract_severity(record: dict) -> Tuple[str, Optional[float]]:
     """Return (severity_label, cvss_score). OSV stores severity in a few places;
     we check them in order of reliability."""
@@ -128,23 +149,21 @@ def _extract_severity(record: dict) -> Tuple[str, Optional[float]]:
             score = float(cvss["score"])
 
     label = "UNKNOWN"
-    # 3. database_specific.severity label (GHSA: "CRITICAL"/"HIGH"/...)
+    # 3. database_specific.severity label (GHSA: "CRITICAL"/"HIGH"/"MODERATE"/...)
     db = record.get("database_specific") or {}
     if isinstance(db, dict) and db.get("severity"):
-        label = str(db["severity"]).upper()
+        label = _normalise_severity_label(str(db["severity"]))
     # 4. affected[].ecosystem_specific.severity (some ecosystems)
     if label == "UNKNOWN":
         for aff in (record.get("affected") or []):
             eco = (aff or {}).get("ecosystem_specific") or {}
             if isinstance(eco, dict) and eco.get("severity"):
-                label = str(eco["severity"]).upper()
-                break
+                label = _normalise_severity_label(str(eco["severity"]))
+                if label != "UNKNOWN":
+                    break
     # 5. derive from numeric score
-    if (label == "UNKNOWN" or label not in ("CRITICAL", "HIGH", "MEDIUM", "LOW")) and score is not None:
+    if label == "UNKNOWN" and score is not None:
         label = severity_from_score(score)
-    elif label not in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"):
-        # normalise odd labels
-        label = "UNKNOWN"
     return label, score
 
 
@@ -259,6 +278,85 @@ def _record_to_finding(record: dict, dep: Dependency) -> CVEFinding:
     )
 
 
+def _canonical_id_map(records: Dict[str, dict]) -> Dict[str, str]:
+    """Group vuln ids into alias-equivalence classes and pick one canonical id
+    per class, so the same real-world vulnerability reported by OSV under
+    multiple ids (e.g. a PyPA ``PYSEC-*`` advisory and its GitHub ``GHSA-*``
+    alias -- OSV returns both as separate matches from querybatch) collapses
+    into a single finding instead of being counted/shown twice.
+
+    Preference order for the canonical id: CVE-* (most widely recognized) >
+    GHSA-* (richest metadata) > whatever else was matched first.
+    """
+    # Union-find over ids present in `records`, linked via their `aliases`.
+    parent: Dict[str, str] = {vid: vid for vid in records}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for vid, rec in records.items():
+        for alias in (rec.get("aliases") or []):
+            if alias in records:
+                union(vid, alias)
+
+    groups: Dict[str, List[str]] = {}
+    for vid in records:
+        groups.setdefault(find(vid), []).append(vid)
+
+    def _rank(vid: str) -> int:
+        if vid.startswith("CVE-"):
+            return 0
+        if vid.startswith("GHSA-"):
+            return 1
+        return 2
+
+    canonical: Dict[str, str] = {}
+    for members in groups.values():
+        winner = sorted(members, key=lambda v: (_rank(v), v))[0]
+        for vid in members:
+            canonical[vid] = winner
+    return canonical
+
+
+def _backfill_severity_from_aliases(records: Dict[str, dict]) -> None:
+    """Many advisory-database records (notably PyPA's PYSEC-* -- the primary
+    source OSV returns for PyPI packages) carry no severity data at all, even
+    though a GHSA/CVE alias for the exact same vulnerability does. Without
+    this, most Python findings would misleadingly show as UNKNOWN severity.
+
+    Mutates ``records`` in place: for any record with no usable severity, if
+    one of its aliases is *also* in ``records`` (deduped in the same batch)
+    and has a severity, copy it over. This never invents data -- it only
+    reuses severity OSV itself already published under the sibling id.
+    """
+    def _has_severity(rec: dict) -> bool:
+        label, score = _extract_severity(rec)
+        return label != "UNKNOWN" or score is not None
+
+    for vid, rec in records.items():
+        if _has_severity(rec):
+            continue
+        for alias in (rec.get("aliases") or []):
+            sibling = records.get(alias)
+            if sibling and _has_severity(sibling):
+                sib_label, sib_score = _extract_severity(sibling)
+                # Graft the sibling's severity fields onto a copy so
+                # _extract_severity's normal precedence picks them up.
+                rec["database_specific"] = dict(rec.get("database_specific") or {})
+                rec["database_specific"]["severity"] = sib_label
+                if sib_score is not None and not rec.get("severity"):
+                    rec["severity"] = [{"type": "CVSS_V3", "score": sib_score}]
+                break
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -316,15 +414,32 @@ def query_vulnerabilities(deps: List[Dependency],
         if rec and rec.get("id"):
             records[vid] = rec
 
-    # 3. Build findings (one per (dep, vuln) that OSV confirmed)
+    # OSV often returns the SAME real-world vulnerability under two ids for
+    # one match (e.g. PyPA's PYSEC-* and its GHSA-* alias) -- collapse those
+    # into one canonical id so it isn't counted/shown twice, and backfill
+    # severity across aliases (PYSEC records frequently carry none, while
+    # their GHSA sibling does).
+    _backfill_severity_from_aliases(records)
+    canonical = _canonical_id_map(records)
+
+    # 3. Build findings (one per (dep, canonical vuln) that OSV confirmed)
     findings: List[CVEFinding] = []
     for i, dep in enumerate(deps):
+        seen_canonical: Set[str] = set()
         for vid in dep_to_ids[i]:
             rec = records.get(vid)
             if not rec:
                 continue
+            canon_id = canonical.get(vid, vid)
+            if canon_id in seen_canonical:
+                continue
+            seen_canonical.add(canon_id)
+            # Use the canonical record itself (richer/preferred source) when
+            # it was also matched for this dep; otherwise fall back to the
+            # record we actually have.
+            canon_rec = records.get(canon_id, rec)
             try:
-                findings.append(_record_to_finding(rec, dep))
+                findings.append(_record_to_finding(canon_rec, dep))
             except Exception as exc:  # never let one record break the scan
                 logger.debug("Failed to map OSV record %s: %s", vid, exc)
 
