@@ -2245,13 +2245,18 @@ IMPORTANT:
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(`${wsBaseUrl}/ws/web_vuln_scan`);
         let settled = false;
+        // The Docker toolkit runs its tools in parallel, but the slowest of
+        // them (nikto, or dalfox against a page with many query-param URLs)
+        // can still take several minutes on its own, plus wpscan
+        // afterward if WordPress is detected -- 10 minutes cut this off
+        // mid-scan in practice. 20 minutes gives real headroom.
         const timeout = setTimeout(() => {
           if (!settled) {
             settled = true;
             try { ws.close(); } catch {}
             reject(new Error('Website vuln scan timed out.'));
           }
-        }, 10 * 60 * 1000);
+        }, 20 * 60 * 1000);
 
         ws.onopen = () => {
           ws.send(JSON.stringify(payload));
@@ -3371,10 +3376,10 @@ IMPORTANT:
               </div>
 
               {/* 🔐 Security Analysis entry — swap the content panel for the
-                  vulnerability section. Shown when the user opted into a scan
-                  for this generation, or when a previous scan's report is
-                  available from cache. */}
-              {(vulnScanRequested || vulnReport) && (
+                  vulnerability section. Always visible (for non-website repos)
+                  so the user can trigger a scan on demand even if none has run
+                  yet or a previous run never produced a cached report. */}
+              {effectiveRepoInfo.type !== 'website' && (
                 <div className="mb-5">
                   <button
                     onClick={() => setViewMode('security')}
@@ -3395,13 +3400,13 @@ IMPORTANT:
                       <span className="ml-auto text-[var(--muted)] animate-pulse">scanning…</span>
                     )}
                   </button>
-                  {viewMode === 'security' && vulnScanRequested && vulnStatus !== 'running' && (
+                  {viewMode === 'security' && vulnStatus !== 'running' && (
                     <button
                       onClick={() => runVulnScan()}
                       className="mt-2 flex items-center w-full text-[11px] px-3 py-1.5 bg-[var(--background)] text-[var(--muted)] rounded-md border border-[var(--border-color)] hover:text-[var(--foreground)] transition-colors"
                     >
                       <FaSync className="mr-2" />
-                      Re-run scan
+                      {vulnReport ? 'Re-run scan' : 'Run scan'}
                     </button>
                   )}
                 </div>

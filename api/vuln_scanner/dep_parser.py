@@ -856,9 +856,9 @@ def find_usage_files(repo_dir: str, deps: List[Dependency],
     result: Dict[str, List[str]] = {f"{d.ecosystem}:{d.name}": [] for d in deps}
 
     # Pre-build per-ecosystem search tokens
-    tokens: Dict[str, List[Tuple[str, "re.Pattern", Set[str]]]] = {}
+    tokens: Dict[str, List[Dependency]] = {}
     for d in deps:
-        tokens.setdefault(d.ecosystem, []).append((d.name, d))
+        tokens.setdefault(d.ecosystem, []).append(d)
     if not tokens:
         return result
 

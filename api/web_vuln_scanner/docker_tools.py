@@ -245,31 +245,74 @@ def run_nmap(hostname: str) -> List[WebFinding]:
 # whatweb: technology fingerprinting
 # ---------------------------------------------------------------------------
 
+def _extract_json_object(text: str) -> Optional[dict]:
+    """Extracts the first balanced ``{...}`` JSON object from ``text``,
+    ignoring anything before/after/interleaved that isn't part of it (string
+    literals are tracked so a literal ``{``/``}`` inside a JSON string value
+    doesn't throw off the brace count)."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 def run_whatweb(url: str) -> List[str]:
-    """Returns detected technology strings (name or name/version)."""
-    out = _run_tool(["whatweb", "-a", "3", "--log-json=-", url], timeout=60)
+    """Returns detected technology strings (name or name/version).
+
+    ``--log-json=-`` does NOT write a clean ``[record]`` array to stdout --
+    captured empirically: it writes ``[``, then the JSON record, then
+    whatweb's normal ANSI-colored human-readable summary line for that same
+    target *interleaved before* the closing ``]`` (i.e. the array's own
+    closing bracket comes after the colored text, not the record). Neither a
+    per-line parse nor a "cut at the first ESC byte" parse produces valid
+    JSON from that. Since we only ever scan one URL per call, just extract
+    the single balanced JSON object out of the noise instead of trying to
+    parse the surrounding array.
+    """
+    # -a 3 (aggressive) mode measured at ~50s against a real WordPress site --
+    # 60s left almost no margin and intermittently timed out (silently
+    # returning no technologies, since _run_tool swallows TimeoutExpired).
+    out = _run_tool(["whatweb", "-a", "3", "--log-json=-", url], timeout=100)
     if not out:
         return []
+    rec = _extract_json_object(out)
+    if not isinstance(rec, dict):
+        return []
     technologies: List[str] = []
-    for line in out.strip().splitlines():
-        line = line.strip()
-        if not line or not line.startswith("["):
+    plugins = rec.get("plugins", {}) if isinstance(rec, dict) else {}
+    for name, info in plugins.items():
+        if name in ("Title", "HTML5", "UncommonHeaders", "Cookies", "IP", "Country"):
             continue
-        try:
-            records = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        for rec in records if isinstance(records, list) else [records]:
-            plugins = rec.get("plugins", {}) if isinstance(rec, dict) else {}
-            for name, info in plugins.items():
-                if name in ("Title", "HTML5", "UncommonHeaders", "Cookies", "IP", "Country"):
-                    continue
-                version = None
-                if isinstance(info, dict):
-                    versions = info.get("version")
-                    if isinstance(versions, list) and versions:
-                        version = versions[0]
-                technologies.append(f"{name}/{version}" if version else name)
+        version = None
+        if isinstance(info, dict):
+            versions = info.get("version")
+            if isinstance(versions, list) and versions:
+                version = versions[0]
+        technologies.append(f"{name}/{version}" if version else name)
     return technologies
 
 
@@ -306,22 +349,28 @@ def run_httpx(url: str) -> "tuple[List[WebFinding], List[str]]":
 
         tls = rec.get("tls")
         if isinstance(tls, dict):
+            # -tls-probe follows the cert's SAN entries and probes each one
+            # (verified empirically: a single `-u` call against a domain
+            # with a "www." SAN returned multiple JSON records, one per
+            # probed host) -- key findings by host so repeated probes of the
+            # same underlying cert don't collide on a fixed id.
+            probed_host = rec.get("host") or tls.get("host") or url
             if tls.get("self_signed"):
                 findings.append(WebFinding(
-                    id="httpx-tls-self-signed",
+                    id=f"httpx-tls-self-signed-{probed_host}",
                     category="tls", severity="HIGH",
                     title="Self-signed TLS certificate detected",
-                    description=f"httpx flagged the certificate served for {url} as self-signed.",
+                    description=f"httpx flagged the certificate served for {probed_host} as self-signed.",
                     url=url,
                     remediation="Use a certificate issued by a trusted CA (e.g. Let's Encrypt) instead of a self-signed one.",
                 ))
             not_after = tls.get("not_after")
             if not_after:
                 findings.append(WebFinding(
-                    id="httpx-tls-cert-info",
+                    id=f"httpx-tls-cert-info-{probed_host}",
                     category="tls", severity="INFO",
                     title=f"TLS certificate expires {not_after}",
-                    description=f"Certificate for {url} expires on {not_after}.",
+                    description=f"Certificate for {probed_host} expires on {not_after}.",
                     url=url, evidence=str(not_after),
                 ))
     return findings, technologies
@@ -337,40 +386,94 @@ _NIKTO_SEVERITY_HINTS = {
 
 
 def run_nikto(url: str) -> List[WebFinding]:
-    out = _run_tool(["nikto", "-h", url, "-Format", "json", "-output", "-",
-                     "-Tuning", "123489bde", "-maxtime", "90s"], timeout=120)
-    if not out:
+    """Runs nikto and parses its JSON report.
+
+    Three things verified empirically against a real target that the
+    original implementation got wrong, all silently (never an exception,
+    just zero findings every time):
+
+    1. ``-ask no`` is mandatory -- nikto's default ("yes") interactively
+       prompts on stdin ("Would you like to submit this information...?")
+       whenever the server's header string isn't in its local database --
+       true for most modern servers -- and since we never provide stdin,
+       that hangs the whole tool until the timeout.
+    2. ``-output -`` does not alias to stdout the way most CLIs treat "-"
+       (same class of bug as testssl/gitleaks/ffuf above) -- nikto writes
+       nothing at all when given "-". A real file path is required.
+    3. nikto *appends* ``.<format>`` to whatever ``-output`` path is given,
+       even if that path already ends in the right extension -- passing
+       ``/out/report.json`` produces a file literally named
+       ``report.json.json``. Passing the path with no extension avoids
+       this (``/out/report`` -> ``/out/report.json``).
+
+    Also: the report's top level is a *list* of one dict per scanned host
+    (``[{"vulnerabilities": [...], ...}]``), not a single dict -- the
+    original code's ``data.get("vulnerabilities")`` on a list silently
+    returned nothing via the `isinstance(data, dict)` guard. And nikto 2.6.x
+    findings key their id under plain ``"id"`` (OSVDB was shut down years
+    ago), not ``"OSVDB"``; the real per-finding help link nikto emits lives
+    in ``"references"`` as a ready-made URL string, not something we need to
+    construct from an OSVDB id that's never actually present.
+    """
+    import os
+    import tempfile
+
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
         return []
-    try:
-        data = json.loads(out)
-    except json.JSONDecodeError:
-        # nikto sometimes emits non-JSON banner lines before the JSON blob
-        match = re.search(r'\{.*\}', out, re.DOTALL)
-        if not match:
-            return []
+
+    with tempfile.TemporaryDirectory(prefix="fdw-nikto-") as tmp_dir:
         try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
+            subprocess.run(
+                [docker_bin, "run", "--rm", "--network", "host",
+                 "-v", f"{tmp_dir}:/out", IMAGE_NAME,
+                 "nikto", "-h", url, "-Format", "json", "-o", "/out/report",
+                 "-ask", "no", "-Tuning", "123489bde", "-maxtime", "150s"],
+                # -maxtime is nikto's own internal deadline, but it still
+                # needs real time after that to finish the in-flight request,
+                # serialize, and write the JSON report -- measured empirically
+                # at ~172s wall clock for a 150s maxtime (docker startup +
+                # shutdown overhead). Give it a comfortable margin instead of
+                # racing that number.
+                capture_output=True, text=True, timeout=220,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug("docker_tools: nikto run failed: %s", exc)
             return []
 
-    vulnerabilities = data.get("vulnerabilities", []) if isinstance(data, dict) else []
+        result_path = os.path.join(tmp_dir, "report.json")
+        if not os.path.isfile(result_path):
+            return []
+        try:
+            with open(result_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    hosts = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
     findings: List[WebFinding] = []
-    for v in vulnerabilities:
-        if not isinstance(v, dict):
+    for host in hosts:
+        if not isinstance(host, dict):
             continue
-        msg = v.get("msg", "")
-        osvdb = v.get("OSVDB", "")
-        findings.append(WebFinding(
-            id=f"nikto-{osvdb or abs(hash(msg)) % 100000}",
-            category="exposure",
-            severity="MEDIUM",
-            title=msg[:120],
-            description=msg,
-            url=url + (v.get("url") or v.get("uri") or ""),
-            evidence=f"OSVDB-{osvdb}" if osvdb else "",
-            references=[f"https://vulners.com/osvdb/OSVDB:{osvdb}"] if osvdb else [],
-            remediation="Review the flagged path/configuration and apply the vendor's recommended hardening.",
-        ))
+        for v in host.get("vulnerabilities", []) or []:
+            if not isinstance(v, dict):
+                continue
+            msg = v.get("msg", "")
+            if not msg:
+                continue
+            finding_id = v.get("id") or abs(hash(msg)) % 100000
+            ref = v.get("references") or ""
+            findings.append(WebFinding(
+                id=f"nikto-{finding_id}",
+                category="exposure",
+                severity="MEDIUM",
+                title=msg[:120],
+                description=msg,
+                url=url.rstrip("/") + (v.get("url") or v.get("uri") or ""),
+                evidence=f"{v.get('method', 'GET')} {v.get('url', '')}",
+                references=[ref] if ref else [],
+                remediation="Review the flagged path/configuration and apply the vendor's recommended hardening.",
+            ))
     return findings
 
 
@@ -594,20 +697,51 @@ def run_subdomain_recon(hostname: str) -> List[WebFinding]:
 # ---------------------------------------------------------------------------
 
 def run_ffuf(url: str) -> List[WebFinding]:
+    # NOTE: -json and -of json/-o are two different, incompatible things --
+    # -json switches ffuf into newline-delimited streaming output (one
+    # record per match, base64-encoded FUZZ values, no top-level "results"
+    # key), while -of json -o <file> writes the final structured report this
+    # parser expects (a single {"results": [...]} object with a plain-text
+    # FUZZ value). Passing both interleaves the streaming records into
+    # stdout, corrupting it (verified empirically: "Extra data" JSON error).
+    #
+    # Separately, -o - does NOT alias to stdout (verified empirically: with
+    # -s/silent it produces zero bytes in the report and ffuf instead prints
+    # its own bare matched-path list to stdout) -- same class of bug as
+    # testssl/gitleaks above. Bind-mount a scratch dir and read the report
+    # file it actually writes.
+    import os
+    import tempfile
+
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        return []
+
     base = url.rstrip("/")
-    out = _run_tool([
-        "ffuf", "-u", f"{base}/FUZZ",
-        "-w", "/usr/share/seclists/Discovery/Web-Content/common.txt",
-        "-mc", "200,201,204,301,302,307,401,403",
-        "-t", "20", "-timeout", "8", "-rate", "50",
-        "-json", "-of", "json", "-o", "-", "-s",
-    ], timeout=120)
-    if not out:
-        return []
-    try:
-        data = json.loads(out)
-    except json.JSONDecodeError:
-        return []
+    with tempfile.TemporaryDirectory(prefix="fdw-ffuf-") as tmp_dir:
+        try:
+            subprocess.run(
+                [docker_bin, "run", "--rm", "--network", "host",
+                 "-v", f"{tmp_dir}:/out", IMAGE_NAME,
+                 "ffuf", "-u", f"{base}/FUZZ",
+                 "-w", "/usr/share/seclists/Discovery/Web-Content/common.txt",
+                 "-mc", "200,201,204,301,302,307,401,403",
+                 "-t", "20", "-timeout", "8", "-rate", "50",
+                 "-of", "json", "-o", "/out/report.json", "-s"],
+                capture_output=True, text=True, timeout=120,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug("docker_tools: ffuf run failed: %s", exc)
+            return []
+
+        result_path = os.path.join(tmp_dir, "report.json")
+        if not os.path.isfile(result_path):
+            return []
+        try:
+            with open(result_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return []
 
     results = data.get("results", []) if isinstance(data, dict) else []
     findings: List[WebFinding] = []
@@ -772,17 +906,43 @@ def _run_tool_with_mount(host_dir: str, args: List[str], timeout: int = _TOOL_TI
 
 def run_gitleaks(repo_dir: str) -> List[WebFinding]:
     """Scans a local repo clone for leaked secrets (API keys, tokens,
-    credentials committed to git history/working tree)."""
-    out = _run_tool_with_mount(repo_dir, [
-        "gitleaks", "detect", "--source", "/repo", "--no-git",
-        "-f", "json", "-r", "/dev/stdout", "--exit-code", "0",
-    ], timeout=120)
-    if not out:
+    credentials committed to git history/working tree).
+
+    gitleaks' ``-r /dev/stdout`` silently writes nothing when its stdout is a
+    pipe (as opposed to a TTY) -- captured empirically: `docker run ...
+    gitleaks -r /dev/stdout` returns a completely empty stdout under
+    `subprocess.run(capture_output=True)` even when leaks are found (and
+    logged to stderr as "leaks found: N"). Like testssl below, we bind-mount
+    a scratch dir and have gitleaks write its report to a real file instead.
+    """
+    import os
+    import tempfile
+
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
         return []
-    try:
-        entries = json.loads(out)
-    except json.JSONDecodeError:
-        return []
+
+    with tempfile.TemporaryDirectory(prefix="fdw-gitleaks-") as tmp_dir:
+        try:
+            subprocess.run(
+                [docker_bin, "run", "--rm",
+                 "-v", f"{repo_dir}:/repo:ro", "-v", f"{tmp_dir}:/out",
+                 IMAGE_NAME, "gitleaks", "detect", "--source", "/repo", "--no-git",
+                 "-f", "json", "-r", "/out/report.json", "--exit-code", "0"],
+                capture_output=True, text=True, timeout=120,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug("docker_tools: gitleaks run failed: %s", exc)
+            return []
+
+        result_path = os.path.join(tmp_dir, "report.json")
+        if not os.path.isfile(result_path):
+            return []
+        try:
+            with open(result_path, "r", encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return []
     if not isinstance(entries, list):
         return []
 
@@ -953,27 +1113,56 @@ async def run_docker_toolkit(
         except Exception:  # noqa: BLE001 - already logged in _timed
             return default
 
-    def _run_all() -> "tuple[List[WebFinding], List[str]]":
-        out: List[WebFinding] = []
-        techs: List[str] = []
-        out.extend(_timed_safe("nmap", run_nmap, hostname, default=[]))
-        httpx_findings, httpx_techs = _timed_safe("httpx", run_httpx, site_url, default=([], []))
-        out.extend(httpx_findings)
-        techs.extend(httpx_techs)
-        techs.extend(_timed_safe("whatweb", run_whatweb, site_url, default=[]))
-        out.extend(_timed_safe("nikto", run_nikto, site_url, default=[]))
-        out.extend(_timed_safe("testssl", run_testssl, hostname, default=[]))
-        out.extend(_timed_safe("nuclei", run_nuclei, site_url, default=[]))
-        out.extend(_timed_safe("subfinder+dnsx", run_subdomain_recon, hostname, default=[]))
-        out.extend(_timed_safe("ffuf", run_ffuf, site_url, default=[]))
-        out.extend(_timed_safe("dalfox", run_dalfox, urls_with_params, default=[]))
+    # Every tool below is independent of every other (none consumes another's
+    # output) except wpscan, which only makes sense once WordPress has been
+    # fingerprinted -- so it runs after this batch, not inside it. Measured
+    # empirically per-tool: nmap ~150s, httpx ~5-60s, whatweb ~35-100s,
+    # nikto ~175-220s, testssl ~30-150s, nuclei ~10-150s, subfinder+dnsx
+    # ~5-60s, ffuf ~95-120s, dalfox up to 450s worst case (10 URLs x 45s).
+    # Running them sequentially in one thread (the original implementation)
+    # sums to well over the frontend's scan timeout; running them
+    # concurrently instead bounds total wall-clock to roughly the slowest
+    # single tool rather than the sum of all of them.
+    await _p("Running deep scan toolkit (nmap, httpx, whatweb, nikto, testssl.sh, nuclei, subfinder, ffuf, dalfox) in parallel…", 60)
+    (
+        nmap_findings,
+        (httpx_findings, httpx_techs),
+        whatweb_techs,
+        nikto_findings,
+        testssl_findings,
+        nuclei_findings,
+        subdomain_findings,
+        ffuf_findings,
+        dalfox_findings,
+    ) = await asyncio.gather(
+        asyncio.to_thread(_timed_safe, "nmap", run_nmap, hostname, default=[]),
+        asyncio.to_thread(_timed_safe, "httpx", run_httpx, site_url, default=([], [])),
+        asyncio.to_thread(_timed_safe, "whatweb", run_whatweb, site_url, default=[]),
+        asyncio.to_thread(_timed_safe, "nikto", run_nikto, site_url, default=[]),
+        asyncio.to_thread(_timed_safe, "testssl", run_testssl, hostname, default=[]),
+        asyncio.to_thread(_timed_safe, "nuclei", run_nuclei, site_url, default=[]),
+        asyncio.to_thread(_timed_safe, "subfinder+dnsx", run_subdomain_recon, hostname, default=[]),
+        asyncio.to_thread(_timed_safe, "ffuf", run_ffuf, site_url, default=[]),
+        asyncio.to_thread(_timed_safe, "dalfox", run_dalfox, urls_with_params, default=[]),
+    )
 
-        is_wordpress = any("wordpress" in t.lower() for t in techs)
-        if is_wordpress:
-            out.extend(_timed_safe("wpscan", run_wpscan, site_url, default=[]))
-        return out, techs
+    findings: List[WebFinding] = []
+    technologies: List[str] = list(httpx_techs) + list(whatweb_techs)
+    findings.extend(nmap_findings)
+    findings.extend(httpx_findings)
+    findings.extend(nikto_findings)
+    findings.extend(testssl_findings)
+    findings.extend(nuclei_findings)
+    findings.extend(subdomain_findings)
+    findings.extend(ffuf_findings)
+    findings.extend(dalfox_findings)
 
-    await _p("Running deep scan toolkit (nmap, httpx, whatweb, nikto, testssl.sh, nuclei, subfinder, ffuf, dalfox)…", 60)
-    findings, technologies = await asyncio.to_thread(_run_all)
+    is_wordpress = any("wordpress" in t.lower() for t in technologies)
+    if is_wordpress:
+        await _p("WordPress detected -- running wpscan…", 65)
+        wpscan_findings = await asyncio.to_thread(
+            _timed_safe, "wpscan", run_wpscan, site_url, default=[])
+        findings.extend(wpscan_findings)
+
     await _p(f"Deep scan toolkit found {len(findings)} additional finding(s).", 70)
     return findings, technologies
