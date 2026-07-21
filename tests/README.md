@@ -56,7 +56,7 @@ python tests/api/test_api.py
 ### Environment Variables
 - `GOOGLE_API_KEY`: Required for Google AI embedder tests
 - `OPENAI_API_KEY`: Required for some integration tests
-- `FREEDEPWIKI_EMBEDDER_TYPE`: Set to 'google' for Google embedder tests
+- `HACKDEEPWIKI_EMBEDDER_TYPE`: Set to 'google' for Google embedder tests
 
 ### Dependencies
 All test dependencies are included in the main project requirements:
@@ -114,7 +114,7 @@ Make sure you have a `.env` file in the project root with the required API keys:
 ```
 GOOGLE_API_KEY=your_google_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
-FREEDEPWIKI_EMBEDDER_TYPE=google
+HACKDEEPWIKI_EMBEDDER_TYPE=google
 ```
 
 ### Server Dependencies

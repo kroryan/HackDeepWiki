@@ -184,7 +184,7 @@ def setup_persistent_config_and_logs(args):
             args.embed_model
         )
         print(f"Successfully configured Ollama: default model '{model}', embedding model '{embed_model}'")
-        os.environ["FREEDEPWIKI_EMBEDDER_TYPE"] = "ollama"
+        os.environ["HACKDEEPWIKI_EMBEDDER_TYPE"] = "ollama"
         os.environ["OLLAMA_HOST"] = args.ollama_endpoint
         if model:
             os.environ["OLLAMA_MODEL"] = model
@@ -250,14 +250,14 @@ def main():
     args, unknown = parser.parse_known_args()
     
     print("=" * 60)
-    print("                FREEDEPWIKI STANDALONE RUNNER")
+    print("                HACKDEEPWIKI STANDALONE RUNNER")
     print("=" * 60)
     
     # Initialize dirs & paths
     setup_persistent_config_and_logs(args)
     
     # Find free ports
-    backend_port = args.api_port if args.api_port is not None else int(os.environ.get("FREEDEPWIKI_API_PORT", find_free_port(8001)))
+    backend_port = args.api_port if args.api_port is not None else int(os.environ.get("HACKDEEPWIKI_API_PORT", find_free_port(8001)))
     frontend_port = args.port if args.port is not None else int(os.environ.get("PORT", find_free_port(3000)))
     
     # Locate Node.js executable

@@ -325,7 +325,7 @@ class TestEnvironmentVariableHandling:
     """Test embedder selection via environment variables."""
     
     def test_embedder_type_env_var(self, embedder_type=None):
-        """Test embedder selection via FREEDEPWIKI_EMBEDDER_TYPE environment variable."""
+        """Test embedder selection via HACKDEEPWIKI_EMBEDDER_TYPE environment variable."""
         import importlib
         import api.config
         
@@ -343,11 +343,11 @@ class TestEnvironmentVariableHandling:
         import api.config
         
         # Save original value
-        original_value = os.environ.get('FREEDEPWIKI_EMBEDDER_TYPE')
+        original_value = os.environ.get('HACKDEEPWIKI_EMBEDDER_TYPE')
         
         try:
             # Set environment variable
-            os.environ['FREEDEPWIKI_EMBEDDER_TYPE'] = embedder_type
+            os.environ['HACKDEEPWIKI_EMBEDDER_TYPE'] = embedder_type
             
             # Reload config to pick up new env var
             importlib.reload(api.config)
@@ -360,9 +360,9 @@ class TestEnvironmentVariableHandling:
         finally:
             # Restore original value
             if original_value is not None:
-                os.environ['FREEDEPWIKI_EMBEDDER_TYPE'] = original_value
-            elif 'FREEDEPWIKI_EMBEDDER_TYPE' in os.environ:
-                del os.environ['FREEDEPWIKI_EMBEDDER_TYPE']
+                os.environ['HACKDEEPWIKI_EMBEDDER_TYPE'] = original_value
+            elif 'HACKDEEPWIKI_EMBEDDER_TYPE' in os.environ:
+                del os.environ['HACKDEEPWIKI_EMBEDDER_TYPE']
             
             # Reload config to restore original state
             importlib.reload(api.config)

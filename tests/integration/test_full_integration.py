@@ -72,11 +72,11 @@ def test_embedder_selection():
 
 def test_google_embedder_with_env():
     """Test Google embedder with environment variable."""
-    print("\n🔧 Testing with FREEDEPWIKI_EMBEDDER_TYPE=google...")
+    print("\n🔧 Testing with HACKDEEPWIKI_EMBEDDER_TYPE=google...")
     
     # Set environment variable
-    original_value = os.environ.get('FREEDEPWIKI_EMBEDDER_TYPE')
-    os.environ['FREEDEPWIKI_EMBEDDER_TYPE'] = 'google'
+    original_value = os.environ.get('HACKDEEPWIKI_EMBEDDER_TYPE')
+    os.environ['HACKDEEPWIKI_EMBEDDER_TYPE'] = 'google'
     
     try:
         # Reload config module to pick up new env var
@@ -109,9 +109,9 @@ def test_google_embedder_with_env():
     finally:
         # Restore original environment variable
         if original_value is not None:
-            os.environ['FREEDEPWIKI_EMBEDDER_TYPE'] = original_value
-        elif 'FREEDEPWIKI_EMBEDDER_TYPE' in os.environ:
-            del os.environ['FREEDEPWIKI_EMBEDDER_TYPE']
+            os.environ['HACKDEEPWIKI_EMBEDDER_TYPE'] = original_value
+        elif 'HACKDEEPWIKI_EMBEDDER_TYPE' in os.environ:
+            del os.environ['HACKDEEPWIKI_EMBEDDER_TYPE']
 
 def main():
     """Run all integration tests."""

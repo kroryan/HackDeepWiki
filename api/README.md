@@ -101,7 +101,7 @@ HackDeepWiki now uses JSON configuration files to manage various system componen
 You can customize the configuration directory location using the environment variable:
 
 ```
-FREEDEPWIKI_CONFIG_DIR=/path/to/custom/config/dir  # Optional, for custom config file location
+HACKDEEPWIKI_CONFIG_DIR=/path/to/custom/config/dir  # Optional, for custom config file location
 ```
 
 This allows you to maintain different configurations for various environments or deployment scenarios without modifying the code.

@@ -49,12 +49,12 @@ if AWS_ROLE_ARN:
     os.environ["AWS_ROLE_ARN"] = AWS_ROLE_ARN
 
 # Wiki authentication settings
-raw_auth_mode = os.environ.get('FREEDEPWIKI_AUTH_MODE', 'False')
+raw_auth_mode = os.environ.get('HACKDEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
-WIKI_AUTH_CODE = os.environ.get('FREEDEPWIKI_AUTH_CODE', '')
+WIKI_AUTH_CODE = os.environ.get('HACKDEEPWIKI_AUTH_CODE', '')
 
 # Embedder settings
-EMBEDDER_TYPE = os.environ.get('FREEDEPWIKI_EMBEDDER_TYPE', 'ollama').lower()
+EMBEDDER_TYPE = os.environ.get('HACKDEEPWIKI_EMBEDDER_TYPE', 'ollama').lower()
 
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('HACKDEEPWIKI_CONFIG_DIR', None)
@@ -173,7 +173,7 @@ def load_embedder_config():
 
 def get_embedder_config():
     """
-    Get the current embedder configuration based on FREEDEPWIKI_EMBEDDER_TYPE.
+    Get the current embedder configuration based on HACKDEEPWIKI_EMBEDDER_TYPE.
 
     Returns:
         dict: The embedder configuration with model_client resolved
