@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
@@ -261,6 +261,15 @@ const Markdown: React.FC<MarkdownProps> = ({ content, repoInfo }) => {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={MarkdownComponents}
+        // react-markdown's default urlTransform strips any URL scheme not
+        // in its own safe-protocol allowlist (http/https/irc/mailto/xmpp)
+        // -- silently rewriting a `codefile:<path>` citation's href to ""
+        // before the `a` component above ever sees it, which is why
+        // clicking one fell through to the plain-link branch and (with an
+        // empty href + target="_blank") reopened the current page in a new
+        // tab instead of the code viewer. Allowlist codefile: specifically;
+        // everything else still goes through the default sanitizer.
+        urlTransform={(url) => (url.startsWith('codefile:') ? url : defaultUrlTransform(url))}
       >
         {content}
       </ReactMarkdown>
