@@ -67,6 +67,10 @@ else:
 packages_to_collect = [
     'api',
     'api.vuln_scanner',
+    'api.vuln_common',
+    'api.web_crawler',
+    'api.web_vuln_scanner',
+    'neo4j',
     'scripts',
     'fastapi',
     'uvicorn',
