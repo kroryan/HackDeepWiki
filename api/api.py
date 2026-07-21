@@ -721,41 +721,92 @@ os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
 
 # --- Vulnerability scan cache helpers ---
 # Vulnerability reports live in the same portable wikicache dir as the wiki
-# itself (no new storage location). Keyed by (repo_type, owner, repo, language)
-# -- one latest report per repo/language; a re-scan overwrites it.
+# itself (no new storage location). Versioned the same way wiki releases are
+# (_vN suffix, never overwritten) -- a plain single-file-per-repo/language
+# cache that got silently replaced on every re-scan looked, from the user's
+# side, exactly like scans "disappearing": run a scan, come back later after
+# a re-scan (or just a server restart racing a fresh save), and the earlier
+# result is simply gone with no way to get it back. Every scan is now its
+# own release; reads default to the latest but any past one stays retrievable.
 VULN_CACHE_PREFIX = "hackdeepwiki_vulns"
 _LEGACY_VULN_CACHE_PREFIX = "freedeepwiki_vulns"  # pre-rename filename prefix
 
 
+def _vuln_cache_prefix(repo_type: str, owner: str, repo: str, language: str,
+                        prefix: str = VULN_CACHE_PREFIX) -> str:
+    return f"{prefix}_{repo_type}_{owner}_{repo}_{language}"
+
+
 def _vuln_cache_path(repo_type: str, owner: str, repo: str, language: str,
-                      prefix: str = VULN_CACHE_PREFIX) -> str:
+                      version: Optional[int] = None, prefix: str = VULN_CACHE_PREFIX) -> str:
+    suffix = f"_v{version}" if version is not None else ""
     return os.path.join(
         WIKI_CACHE_DIR,
-        f"{prefix}_{repo_type}_{owner}_{repo}_{language}.json",
+        f"{_vuln_cache_prefix(repo_type, owner, repo, language, prefix)}{suffix}.json",
     )
+
+
+def _list_cache_files_for_prefix(prefix: str) -> List[str]:
+    """Every JSON cache file (any version, plus any pre-versioning legacy
+    single-file cache -- see _parse_cache_version, which treats a filename
+    with no _vN suffix as version 0) matching an exact filename prefix."""
+    try:
+        return [
+            os.path.join(WIKI_CACHE_DIR, fn)
+            for fn in os.listdir(WIKI_CACHE_DIR)
+            if fn.startswith(prefix) and fn.endswith(".json")
+        ]
+    except OSError:
+        return []
+
+
+def _next_version_for_prefix(prefix: str) -> int:
+    files = _list_cache_files_for_prefix(prefix)
+    max_version = 0
+    for path in files:
+        max_version = max(max_version, _parse_cache_version(os.path.basename(path)))
+    return max_version + 1
+
+
+def _latest_path_for_prefix(prefix: str) -> Optional[str]:
+    files = _list_cache_files_for_prefix(prefix)
+    if not files:
+        return None
+    files.sort(key=lambda p: _parse_cache_version(os.path.basename(p)))
+    return files[-1]
 
 
 def save_vuln_cache(report: dict) -> str:
-    """Persist a vulnerability report dict to the wikicache dir. Returns path."""
-    path = _vuln_cache_path(
-        report.get("repo_type", ""),
-        report.get("owner", ""),
-        report.get("repo", ""),
-        report.get("language", "en"),
-    )
+    """Persist a vulnerability report dict as a new versioned release (never
+    overwrites a previous scan's file). Returns path."""
+    repo_type = report.get("repo_type", "")
+    owner = report.get("owner", "")
+    repo = report.get("repo", "")
+    language = report.get("language", "en")
+    prefix = _vuln_cache_prefix(repo_type, owner, repo, language)
+    version = _next_version_for_prefix(prefix)
+    path = _vuln_cache_path(repo_type, owner, repo, language, version=version)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
     return path
 
 
-def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str) -> Optional[dict]:
-    # Check the current prefix first, then fall back to the pre-rename
-    # (FreeDeepWiki) prefix so scans saved before the rename are still found.
-    path = _vuln_cache_path(repo_type, owner, repo, language)
-    if not os.path.isfile(path):
-        path = _vuln_cache_path(repo_type, owner, repo, language, prefix=_LEGACY_VULN_CACHE_PREFIX)
+def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str,
+                     version: Optional[int] = None) -> Optional[dict]:
+    if version is not None:
+        path = _vuln_cache_path(repo_type, owner, repo, language, version=version)
         if not os.path.isfile(path):
             return None
+    else:
+        # Latest release under the current prefix, falling back to the
+        # pre-rename (FreeDeepWiki) prefix so scans saved before the rename
+        # are still found.
+        path = _latest_path_for_prefix(_vuln_cache_prefix(repo_type, owner, repo, language))
+        if path is None:
+            path = _latest_path_for_prefix(
+                _vuln_cache_prefix(repo_type, owner, repo, language, prefix=_LEGACY_VULN_CACHE_PREFIX))
+            if path is None:
+                return None
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
@@ -764,44 +815,118 @@ def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str) -> Opt
         return None
 
 
+def list_vuln_cache_releases(repo_type: str, owner: str, repo: str, language: str) -> List[dict]:
+    """Every saved scan release for a repo/language, newest first -- mirrors
+    list_wiki_releases below."""
+    prefixes = [
+        _vuln_cache_prefix(repo_type, owner, repo, language),
+        _vuln_cache_prefix(repo_type, owner, repo, language, prefix=_LEGACY_VULN_CACHE_PREFIX),
+    ]
+    files = [p for prefix in prefixes for p in _list_cache_files_for_prefix(prefix)]
+    releases = []
+    for path in files:
+        filename = os.path.basename(path)
+        version = _parse_cache_version(filename)
+        try:
+            mtime = os.path.getmtime(path)
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            releases.append({
+                "version": version,
+                "created_at": int(mtime * 1000),
+                "total_findings": data.get("total_findings"),
+                "generated_at": data.get("generated_at"),
+                "id": filename,
+            })
+        except Exception as e:
+            logger.warning(f"Could not read vuln release metadata from {filename}: {e}")
+            continue
+    releases.sort(key=lambda r: (r["version"], r["created_at"]), reverse=True)
+    return releases
+
+
 # --- Website security scan cache helpers ---
 # Same wikicache dir, own prefix -- keyed by (owner='website', repo=hostname,
-# language), mirroring the dependency vuln cache above.
+# language), mirroring the dependency vuln cache above (same versioning, same
+# reasoning: a single overwritten file per repo/language looked like scans
+# disappearing on a re-scan or a restart racing a save).
 WEB_VULN_CACHE_PREFIX = "hackdeepwiki_webvulns"
 _LEGACY_WEB_VULN_CACHE_PREFIX = "freedeepwiki_webvulns"  # pre-rename filename prefix
 
 
+def _web_vuln_cache_prefix(owner: str, repo: str, language: str,
+                            prefix: str = WEB_VULN_CACHE_PREFIX) -> str:
+    return f"{prefix}_{owner}_{repo}_{language}"
+
+
 def _web_vuln_cache_path(owner: str, repo: str, language: str,
-                          prefix: str = WEB_VULN_CACHE_PREFIX) -> str:
+                          version: Optional[int] = None, prefix: str = WEB_VULN_CACHE_PREFIX) -> str:
+    suffix = f"_v{version}" if version is not None else ""
     return os.path.join(
         WIKI_CACHE_DIR,
-        f"{prefix}_{owner}_{repo}_{language}.json",
+        f"{_web_vuln_cache_prefix(owner, repo, language, prefix)}{suffix}.json",
     )
 
 
 def save_web_vuln_cache(report: dict) -> str:
-    path = _web_vuln_cache_path(
-        report.get("owner", ""), report.get("repo", ""), report.get("language", "en"),
-    )
+    owner = report.get("owner", "")
+    repo = report.get("repo", "")
+    language = report.get("language", "en")
+    prefix = _web_vuln_cache_prefix(owner, repo, language)
+    version = _next_version_for_prefix(prefix)
+    path = _web_vuln_cache_path(owner, repo, language, version=version)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
     return path
 
 
-def read_web_vuln_cache(owner: str, repo: str, language: str) -> Optional[dict]:
-    # Check the current prefix first, then fall back to the pre-rename
-    # (FreeDeepWiki) prefix so scans saved before the rename are still found.
-    path = _web_vuln_cache_path(owner, repo, language)
-    if not os.path.isfile(path):
-        path = _web_vuln_cache_path(owner, repo, language, prefix=_LEGACY_WEB_VULN_CACHE_PREFIX)
+def read_web_vuln_cache(owner: str, repo: str, language: str,
+                         version: Optional[int] = None) -> Optional[dict]:
+    if version is not None:
+        path = _web_vuln_cache_path(owner, repo, language, version=version)
         if not os.path.isfile(path):
             return None
+    else:
+        path = _latest_path_for_prefix(_web_vuln_cache_prefix(owner, repo, language))
+        if path is None:
+            path = _latest_path_for_prefix(
+                _web_vuln_cache_prefix(owner, repo, language, prefix=_LEGACY_WEB_VULN_CACHE_PREFIX))
+            if path is None:
+                return None
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except Exception as exc:
         logger.warning("Failed to read web vuln cache %s: %s", path, exc)
         return None
+
+
+def list_web_vuln_cache_releases(owner: str, repo: str, language: str) -> List[dict]:
+    prefixes = [
+        _web_vuln_cache_prefix(owner, repo, language),
+        _web_vuln_cache_prefix(owner, repo, language, prefix=_LEGACY_WEB_VULN_CACHE_PREFIX),
+    ]
+    files = [p for prefix in prefixes for p in _list_cache_files_for_prefix(prefix)]
+    releases = []
+    for path in files:
+        filename = os.path.basename(path)
+        version = _parse_cache_version(filename)
+        try:
+            mtime = os.path.getmtime(path)
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            releases.append({
+                "version": version,
+                "created_at": int(mtime * 1000),
+                "total_findings": data.get("total_findings"),
+                "generated_at": data.get("generated_at"),
+                "id": filename,
+            })
+        except Exception as e:
+            logger.warning(f"Could not read web vuln release metadata from {filename}: {e}")
+            continue
+    releases.sort(key=lambda r: (r["version"], r["created_at"]), reverse=True)
+    return releases
 
 
 def _split_newline_filters(value) -> List[str]:
@@ -1562,14 +1687,29 @@ async def get_vuln_cache(
     repo: str = Query(..., description="Repository name"),
     repo_type: str = Query(..., description="Repository type (github, gitlab, bitbucket, local)"),
     language: str = Query("en", description="Wiki language the scan was run for"),
+    version: Optional[int] = Query(None, description="Specific scan release version; omit for the latest"),
 ):
     """Return the stored vulnerability report for a repo/language, or 404 if
-    none exists (so the frontend can decide whether to offer/run a scan)."""
-    data = read_vuln_cache(repo_type, owner, repo, language)
+    none exists (so the frontend can decide whether to offer/run a scan).
+    Defaults to the latest scan release; pass `version` for an older one."""
+    data = read_vuln_cache(repo_type, owner, repo, language, version=version)
     if data is None:
         raise HTTPException(status_code=404,
                             detail="No vulnerability scan found for this repo.")
     return data
+
+
+@app.get("/api/vuln_cache/releases")
+async def get_vuln_cache_releases(
+    owner: str = Query(..., description="Repository owner"),
+    repo: str = Query(..., description="Repository name"),
+    repo_type: str = Query(..., description="Repository type (github, gitlab, bitbucket, local)"),
+    language: str = Query("en", description="Wiki language the scan was run for"),
+):
+    """Lists every saved dependency-vulnerability scan release for a
+    repo/language, newest first -- mirrors /api/wiki_cache/releases."""
+    releases = list_vuln_cache_releases(repo_type, owner, repo, language)
+    return {"releases": releases, "latest": releases[0]["version"] if releases else None}
 
 
 @app.websocket("/ws/web_vuln_scan")
@@ -1645,13 +1785,26 @@ async def get_web_vuln_cache(
     owner: str = Query(..., description="Repository owner (typically 'website')"),
     repo: str = Query(..., description="Site hostname"),
     language: str = Query("en", description="Wiki language the scan was run for"),
+    version: Optional[int] = Query(None, description="Specific scan release version; omit for the latest"),
 ):
-    """Return the stored website vulnerability report, or 404 if none exists."""
-    data = read_web_vuln_cache(owner, repo, language)
+    """Return the stored website vulnerability report, or 404 if none exists.
+    Defaults to the latest scan release; pass `version` for an older one."""
+    data = read_web_vuln_cache(owner, repo, language, version=version)
     if data is None:
         raise HTTPException(status_code=404,
                             detail="No website vulnerability scan found for this site.")
     return data
+
+
+@app.get("/api/web_vuln_cache/releases")
+async def get_web_vuln_cache_releases(
+    owner: str = Query(..., description="Repository owner (typically 'website')"),
+    repo: str = Query(..., description="Site hostname"),
+    language: str = Query("en", description="Wiki language the scan was run for"),
+):
+    """Lists every saved website security scan release, newest first."""
+    releases = list_web_vuln_cache_releases(owner, repo, language)
+    return {"releases": releases, "latest": releases[0]["version"] if releases else None}
 
 
 @app.delete("/api/wiki_cache")

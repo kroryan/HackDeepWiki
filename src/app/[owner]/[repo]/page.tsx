@@ -1561,10 +1561,6 @@ IMPORTANT:
       // Parse pages using DOM
       pages = [];
 
-      if (parseError && (!pagesEls || pagesEls.length === 0)) {
-        console.warn('DOM parsing failed, trying regex fallback');
-      }
-
       pagesEls.forEach(pageEl => {
         const id = pageEl.getAttribute('id') || `page-${pages.length + 1}`;
         const titleEl = pageEl.querySelector('title');
@@ -1596,6 +1592,70 @@ IMPORTANT:
           relatedPages
         });
       });
+
+      // Regex fallback: strict browser XML parsing (DOMParser in "text/xml"
+      // mode) treats even ONE malformed tag ANYWHERE in the document as
+      // reason to give up on the rest of the tree -- verified directly
+      // against the real model with real crawled data: it produced a fully
+      // correct <wiki_structure> with all 10 requested <page> elements, but
+      // one <section> mid-document had a mismatched tag (opened <li>, closed
+      // </title> -- a normal, occasional LLM slip on deeply nested XML, nothing
+      // model-quality-specific about it), and that alone made
+      // querySelectorAll('page') return zero results despite every <page>
+      // element being intact later in the same string. A previous version of
+      // this code already recognized this failure mode (there was a
+      // console.warn('...trying regex fallback') right here) but never
+      // actually implemented the fallback -- it just logged and then ran the
+      // same (now confirmed empty) DOM query anyway. This extracts <page>
+      // blocks directly from the raw text instead, tolerant of malformed XML
+      // elsewhere in the document.
+      if (pages.length === 0) {
+        console.warn('DOM parsing found no <page> elements (likely a malformed tag elsewhere in the model\'s XML) -- falling back to regex extraction.');
+        const pageBlockRe = /<page\s+id="([^"]*)"[^>]*>([\s\S]*?)<\/page>/g;
+        let pageMatch: RegExpExecArray | null;
+        while ((pageMatch = pageBlockRe.exec(xmlText)) !== null) {
+          const id = pageMatch[1] || `page-${pages.length + 1}`;
+          const block = pageMatch[2];
+          const titleMatch = block.match(/<title>([\s\S]*?)<\/title>/);
+          const importanceMatch = block.match(/<importance>([\s\S]*?)<\/importance>/);
+          const filePaths: string[] = [];
+          const filePathRe = /<file_path>([\s\S]*?)<\/file_path>/g;
+          let fpMatch: RegExpExecArray | null;
+          while ((fpMatch = filePathRe.exec(block)) !== null) {
+            if (fpMatch[1].trim()) filePaths.push(fpMatch[1].trim());
+          }
+          const relatedPages: string[] = [];
+          const relatedRe = /<related>([\s\S]*?)<\/related>/g;
+          let relMatch: RegExpExecArray | null;
+          while ((relMatch = relatedRe.exec(block)) !== null) {
+            if (relMatch[1].trim()) relatedPages.push(relMatch[1].trim());
+          }
+          const importanceText = importanceMatch ? importanceMatch[1].trim() : '';
+          pages.push({
+            id,
+            title: titleMatch ? titleMatch[1].trim() : '',
+            content: '',
+            filePaths,
+            importance: importanceText === 'high' ? 'high' : importanceText === 'low' ? 'low' : 'medium',
+            relatedPages,
+          });
+        }
+        if (pages.length > 0) {
+          console.log(`Regex fallback recovered ${pages.length} page(s) DOM parsing missed.`);
+        }
+      }
+
+      // Same reasoning for title/description: if DOMParser gave up before
+      // reaching them (or, less likely, the malformed tag was early enough
+      // to break even these), recover them from the raw text too.
+      if (!title) {
+        const titleMatch = xmlText.match(/<wiki_structure>\s*<title>([\s\S]*?)<\/title>/);
+        if (titleMatch) title = titleMatch[1].trim();
+      }
+      if (!description) {
+        const descMatch = xmlText.match(/<description>([\s\S]*?)<\/description>/);
+        if (descMatch) description = descMatch[1].trim();
+      }
 
       // Extract sections if they exist in the XML
       const sections: WikiSection[] = [];
@@ -1647,6 +1707,46 @@ IMPORTANT:
               rootSections.push(id);
             }
           });
+        }
+
+        // Same regex fallback as the <page> extraction above, and for the
+        // same reason: a single malformed tag anywhere in the document
+        // breaks DOMParser's whole-document tree, and sections happen to be
+        // the elements most likely to contain the model's occasional slip
+        // (they're deeply nested with several sibling tag types). Without
+        // this, a successful page-regex-recovery still left the wiki with
+        // no section/TOC grouping.
+        if (sections.length === 0) {
+          const sectionBlockRe = /<section\s+id="([^"]*)"[^>]*>([\s\S]*?)<\/section>/g;
+          let sectionMatch: RegExpExecArray | null;
+          while ((sectionMatch = sectionBlockRe.exec(xmlText)) !== null) {
+            const id = sectionMatch[1] || `section-${sections.length + 1}`;
+            const block = sectionMatch[2];
+            const titleMatch = block.match(/<title>([\s\S]*?)<\/title>/);
+            const pageRefs: string[] = [];
+            const pageRefRe = /<page_ref>([\s\S]*?)<\/page_ref>/g;
+            let prMatch: RegExpExecArray | null;
+            while ((prMatch = pageRefRe.exec(block)) !== null) {
+              if (prMatch[1].trim()) pageRefs.push(prMatch[1].trim());
+            }
+            const subsectionRefs: string[] = [];
+            const sectionRefRe = /<section_ref>([\s\S]*?)<\/section_ref>/g;
+            let srMatch: RegExpExecArray | null;
+            while ((srMatch = sectionRefRe.exec(block)) !== null) {
+              if (srMatch[1].trim()) subsectionRefs.push(srMatch[1].trim());
+            }
+            sections.push({
+              id,
+              title: titleMatch ? titleMatch[1].trim() : '',
+              pages: pageRefs,
+              subsections: subsectionRefs.length > 0 ? subsectionRefs : undefined,
+            });
+          }
+          if (sections.length > 0) {
+            const referenced = new Set(sections.flatMap(s => s.subsections || []));
+            rootSections.push(...sections.filter(s => !referenced.has(s.id)).map(s => s.id));
+            console.log(`Regex fallback recovered ${sections.length} section(s) DOM parsing missed.`);
+          }
         }
       }
 
