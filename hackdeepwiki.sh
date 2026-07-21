@@ -5,8 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BASE_COMPOSE="${ROOT_DIR}/docker-compose.yml"
 OLLAMA_COMPOSE="${ROOT_DIR}/docker-compose.ollama.yml"
 LINUX_COMPOSE="${ROOT_DIR}/docker-compose.ollama-linux.yml"
-LOCAL_ENV="${ROOT_DIR}/freedeepwiki.env"
-RUNTIME_DIR="${ROOT_DIR}/.freedeepwiki"
+LOCAL_ENV="${ROOT_DIR}/hackdeepwiki.env"
+RUNTIME_DIR="${ROOT_DIR}/.hackdeepwiki"
 
 if [[ -f "${LOCAL_ENV}" ]]; then
   # shellcheck disable=SC1090
@@ -20,10 +20,10 @@ OLLAMA_EMBED_BATCH_SIZE="${OLLAMA_EMBED_BATCH_SIZE:-32}"
 OLLAMA_REQUEST_TIMEOUT="${OLLAMA_REQUEST_TIMEOUT:-1800}"
 OLLAMA_HEALTH_TIMEOUT="${OLLAMA_HEALTH_TIMEOUT:-60}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-FREEDEPWIKI_API_PORT="${FREEDEPWIKI_API_PORT:-8001}"
-FREEDEPWIKI_PROJECT_NAME="${FREEDEPWIKI_PROJECT_NAME:-freedeepwiki-local}"
-FREEDEPWIKI_NETWORK_MODE="${FREEDEPWIKI_NETWORK_MODE:-auto}"
-EFFECTIVE_NETWORK_MODE="${FREEDEPWIKI_NETWORK_MODE}"
+HACKDEEPWIKI_API_PORT="${HACKDEEPWIKI_API_PORT:-8001}"
+HACKDEEPWIKI_PROJECT_NAME="${HACKDEEPWIKI_PROJECT_NAME:-hackdeepwiki-local}"
+HACKDEEPWIKI_NETWORK_MODE="${HACKDEEPWIKI_NETWORK_MODE:-auto}"
+EFFECTIVE_NETWORK_MODE="${HACKDEEPWIKI_NETWORK_MODE}"
 OLLAMA_CONTAINER_ENDPOINT="${OLLAMA_ENDPOINT}"
 
 COMMAND=""
@@ -33,13 +33,13 @@ FOLLOW=false
 usage() {
   cat <<'EOF'
 Uso:
-  ./freedeepwiki.sh <comando> [opciones]
+  ./hackdeepwiki.sh <comando> [opciones]
 
 Comandos:
   setup          Comprueba Ollama y construye la imagen
-  up             Prepara la configuración y arranca FreeDeepWiki
-  down           Para y elimina solo los contenedores de FreeDeepWiki
-  restart        Recrea FreeDeepWiki con la configuración actual
+  up             Prepara la configuración y arranca HackDeepWiki
+  down           Para y elimina solo los contenedores de HackDeepWiki
+  restart        Recrea HackDeepWiki con la configuración actual
   status         Muestra el estado de los contenedores
   logs           Muestra los últimos logs (usa -f para seguirlos)
   health         Comprueba Ollama, API y web
@@ -74,17 +74,17 @@ Variables equivalentes:
   OLLAMA_ENDPOINT, OLLAMA_MODEL, OLLAMA_EMBED_MODEL,
   OLLAMA_EMBED_BATCH_SIZE, OLLAMA_REQUEST_TIMEOUT, OLLAMA_HEALTH_TIMEOUT,
   GITHUB_TOKEN,
-  FREEDEPWIKI_API_PORT, FREEDEPWIKI_PROJECT_NAME, FREEDEPWIKI_NETWORK_MODE
+  HACKDEEPWIKI_API_PORT, HACKDEEPWIKI_PROJECT_NAME, HACKDEEPWIKI_NETWORK_MODE
 
 Ejemplos:
-  ./freedeepwiki.sh setup
-  ./freedeepwiki.sh up
-  ./freedeepwiki.sh up --no-build
-  ./freedeepwiki.sh up --ollama-endpoint http://100.94.16.58:11434
-  ./freedeepwiki.sh logs -f
+  ./hackdeepwiki.sh setup
+  ./hackdeepwiki.sh up
+  ./hackdeepwiki.sh up --no-build
+  ./hackdeepwiki.sh up --ollama-endpoint http://100.94.16.58:11434
+  ./hackdeepwiki.sh logs -f
 
-Los valores persistentes pueden guardarse en freedeepwiki.env tomando como base
-freedeepwiki.env.example. `down` no detiene Ollama y no hay política de autoarranque.
+Los valores persistentes pueden guardarse en hackdeepwiki.env tomando como base
+hackdeepwiki.env.example. `down` no detiene Ollama y no hay política de autoarranque.
 EOF
 }
 
@@ -109,9 +109,9 @@ normalize_endpoint() {
 }
 
 validate_port() {
-  [[ "${FREEDEPWIKI_API_PORT}" =~ ^[0-9]+$ ]] ||
+  [[ "${HACKDEEPWIKI_API_PORT}" =~ ^[0-9]+$ ]] ||
     die "El puerto de API debe ser numérico"
-  ((FREEDEPWIKI_API_PORT >= 1 && FREEDEPWIKI_API_PORT <= 65535)) ||
+  ((HACKDEEPWIKI_API_PORT >= 1 && HACKDEEPWIKI_API_PORT <= 65535)) ||
     die "El puerto de API debe estar entre 1 y 65535"
 }
 
@@ -119,7 +119,7 @@ select_network_mode() {
   local docker_os=""
   docker_os="$(docker info --format '{{.OperatingSystem}}' 2>/dev/null || true)"
 
-  case "${FREEDEPWIKI_NETWORK_MODE}" in
+  case "${HACKDEEPWIKI_NETWORK_MODE}" in
     auto)
       if [[ "$(uname -s)" == "Linux" ]] &&
         [[ -z "${WSL_DISTRO_NAME:-}" ]] &&
@@ -130,7 +130,7 @@ select_network_mode() {
       fi
       ;;
     host|bridge)
-      EFFECTIVE_NETWORK_MODE="${FREEDEPWIKI_NETWORK_MODE}"
+      EFFECTIVE_NETWORK_MODE="${HACKDEEPWIKI_NETWORK_MODE}"
       ;;
     *)
       die "--network debe ser auto, host o bridge"
@@ -146,7 +146,7 @@ select_network_mode() {
 
 compose() {
   local compose_files=(
-    --project-name "${FREEDEPWIKI_PROJECT_NAME}"
+    --project-name "${HACKDEEPWIKI_PROJECT_NAME}"
     --file "${BASE_COMPOSE}"
     --file "${OLLAMA_COMPOSE}"
   )
@@ -154,7 +154,7 @@ compose() {
     compose_files+=(--file "${LINUX_COMPOSE}")
   fi
 
-  PORT="${FREEDEPWIKI_API_PORT}" \
+  PORT="${HACKDEEPWIKI_API_PORT}" \
   OLLAMA_CONTAINER_ENDPOINT="${OLLAMA_CONTAINER_ENDPOINT}" \
   OLLAMA_MODEL="${OLLAMA_MODEL}" \
   OLLAMA_EMBED_MODEL="${OLLAMA_EMBED_MODEL}" \
@@ -212,9 +212,9 @@ show_config() {
   local github_auth="no configurado"
   [[ -n "${GITHUB_TOKEN}" ]] && github_auth="configurado"
   cat <<EOF
-Proyecto Compose : ${FREEDEPWIKI_PROJECT_NAME}
+Proyecto Compose : ${HACKDEEPWIKI_PROJECT_NAME}
 Web              : http://localhost:3000
-API              : http://localhost:${FREEDEPWIKI_API_PORT}
+API              : http://localhost:${HACKDEEPWIKI_API_PORT}
 Ollama           : ${OLLAMA_ENDPOINT}
 Modelo           : ${selected_model}
 Embeddings       : ${selected_embed_model}
@@ -238,10 +238,10 @@ health() {
     failed=1
   fi
   if curl --fail --silent --max-time 5 \
-    "http://127.0.0.1:${FREEDEPWIKI_API_PORT}/health" >/dev/null; then
-    printf 'OK    API     http://localhost:%s\n' "${FREEDEPWIKI_API_PORT}"
+    "http://127.0.0.1:${HACKDEEPWIKI_API_PORT}/health" >/dev/null; then
+    printf 'OK    API     http://localhost:%s\n' "${HACKDEEPWIKI_API_PORT}"
   else
-    printf 'ERROR API     http://localhost:%s\n' "${FREEDEPWIKI_API_PORT}"
+    printf 'ERROR API     http://localhost:%s\n' "${HACKDEEPWIKI_API_PORT}"
     failed=1
   fi
   if curl --fail --silent --max-time 5 "http://127.0.0.1:3000" >/dev/null; then
@@ -345,12 +345,12 @@ while (($#)); do
       ;;
     --api-port)
       (($# >= 2)) || die "Falta el puerto"
-      FREEDEPWIKI_API_PORT="$2"
+      HACKDEEPWIKI_API_PORT="$2"
       shift 2
       ;;
     --network)
       (($# >= 2)) || die "Falta el modo de red"
-      FREEDEPWIKI_NETWORK_MODE="$2"
+      HACKDEEPWIKI_NETWORK_MODE="$2"
       shift 2
       ;;
     --no-build)
@@ -386,7 +386,7 @@ case "${COMMAND}" in
     check_dependencies
     check_ollama
     mkdir -p "${RUNTIME_DIR}"
-    info "Construyendo FreeDeepWiki"
+    info "Construyendo HackDeepWiki"
     compose build
     info "Setup completado"
     show_config
@@ -395,18 +395,18 @@ case "${COMMAND}" in
     check_dependencies
     check_ollama
     mkdir -p "${RUNTIME_DIR}"
-    info "Arrancando FreeDeepWiki"
+    info "Arrancando HackDeepWiki"
     if [[ "${BUILD}" == true ]]; then
       compose up --detach --build --force-recreate --wait --wait-timeout 120
     else
       compose up --detach --force-recreate --wait --wait-timeout 120
     fi
-    info "FreeDeepWiki arrancado y listo"
+    info "HackDeepWiki arrancado y listo"
     show_config
     ;;
   down)
     check_dependencies
-    info "Deteniendo FreeDeepWiki (Ollama seguirá activo)"
+    info "Deteniendo HackDeepWiki (Ollama seguirá activo)"
     compose down
     ;;
   restart)
@@ -450,7 +450,7 @@ case "${COMMAND}" in
   test)
     check_dependencies
     require_command bash
-    bash -n "${ROOT_DIR}/freedeepwiki.sh"
+    bash -n "${ROOT_DIR}/hackdeepwiki.sh"
     mkdir -p "${RUNTIME_DIR}"
 
     original_network_mode="${EFFECTIVE_NETWORK_MODE}"
@@ -460,14 +460,14 @@ case "${COMMAND}" in
     compose config --quiet
     EFFECTIVE_NETWORK_MODE="${original_network_mode}"
 
-    docker image inspect freedeepwiki:ollama >/dev/null 2>&1 ||
-      die "Falta la imagen. Ejecuta './freedeepwiki.sh setup' primero."
+    docker image inspect hackdeepwiki:ollama >/dev/null 2>&1 ||
+      die "Falta la imagen. Ejecuta './hackdeepwiki.sh setup' primero."
     docker run --rm \
       --volume "${ROOT_DIR}:/workspace" \
       --workdir /workspace \
-      freedeepwiki:ollama \
+      hackdeepwiki:ollama \
       python -m pytest -q \
-        test/test_freedeepwiki_config.py \
+        test/test_hackdeepwiki_config.py \
         test/test_extract_repo_name.py \
         test/test_ollama_batch.py
     info "Pruebas reproducibles superadas"

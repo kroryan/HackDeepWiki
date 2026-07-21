@@ -2,6 +2,6 @@
 # container shares the host network. Docker Desktop and WSL use bridge mode
 # from docker-compose.ollama.yml instead.
 services:
-  freedeepwiki:
+  hackdeepwiki:
     network_mode: host
     ports: !reset []

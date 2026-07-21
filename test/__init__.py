@@ -1,1 +1,1 @@
-# Test package for FreeDeepWiki data pipeline
+# Test package for HackDeepWiki data pipeline

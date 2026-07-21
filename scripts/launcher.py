@@ -111,7 +111,7 @@ def setup_persistent_config_and_logs(args):
     # Portable DATABASE folder: live next to the .AppImage / .exe so the entire
     # install (executable + DATABASE) is self-contained and can be zipped/moved as
     # one unit. Holds config, logs, wiki cache, cloned repos, embeddings, and
-    # adalflow's internal caches/dbs. Falls back to ~/.freedeepwiki if the folder
+    # adalflow's internal caches/dbs. Falls back to ~/.hackdeepwiki if the folder
     # next to the executable is not writable (e.g. read-only location).
     database_dir = os.path.join(get_portable_base_dir(), "DATABASE")
     use_portable = _is_writable_dir(database_dir)
@@ -121,8 +121,8 @@ def setup_persistent_config_and_logs(args):
         os.makedirs(config_dir, exist_ok=True)
         os.makedirs(logs_dir, exist_ok=True)
         # Point the app's data root (wikicache/repos/faiss) at DATABASE. The app's
-        # get_data_root() honors FREEDEEPWIKI_DATA_DIR first and verifies writability.
-        os.environ["FREEDEEPWIKI_DATA_DIR"] = database_dir
+        # get_data_root() honors HACKDEEPWIKI_DATA_DIR first and verifies writability.
+        os.environ["HACKDEEPWIKI_DATA_DIR"] = database_dir
         # Migrate wikis produced by older (non-portable) builds into DATABASE so they
         # are still detected. adalflow's hardcoded ~/.adalflow root is redirected to
         # DATABASE by api.data_root at import time, so no patch is needed here.
@@ -133,9 +133,9 @@ def setup_persistent_config_and_logs(args):
             print(f"Warning: legacy wiki cache migration skipped: {e}")
         print(f"Portable DATABASE directory: {database_dir}")
     else:
-        freedeepwiki_dir = os.path.join(home_dir, ".freedeepwiki")
-        config_dir = os.path.join(freedeepwiki_dir, "config")
-        logs_dir = os.path.join(freedeepwiki_dir, "logs")
+        hackdeepwiki_dir = os.path.join(home_dir, ".hackdeepwiki")
+        config_dir = os.path.join(hackdeepwiki_dir, "config")
+        logs_dir = os.path.join(hackdeepwiki_dir, "logs")
         os.makedirs(config_dir, exist_ok=True)
         os.makedirs(logs_dir, exist_ok=True)
         print(f"Warning: portable DATABASE dir '{database_dir}' is not writable; "
@@ -161,16 +161,16 @@ def setup_persistent_config_and_logs(args):
     default_config_src = os.path.join(BASE_DIR, "api", "config")
     
     # Try dynamic Ollama discovery first
-    # Note: freedeepwiki_config.render() raises SystemExit (not Exception) on
+    # Note: hackdeepwiki_config.render() raises SystemExit (not Exception) on
     # connection errors, so we catch BaseException to handle both gracefully.
     try:
         # Try both import paths: bundled (scripts package) and dev mode (direct)
         try:
-            from scripts.freedeepwiki_config import render as _render
+            from scripts.hackdeepwiki_config import render as _render
         except ImportError:
             import importlib.util
-            _spec_path = os.path.join(BASE_DIR, "scripts", "freedeepwiki_config.py")
-            _spec = importlib.util.spec_from_file_location("freedeepwiki_config", _spec_path)
+            _spec_path = os.path.join(BASE_DIR, "scripts", "hackdeepwiki_config.py")
+            _spec = importlib.util.spec_from_file_location("hackdeepwiki_config", _spec_path)
             _mod = importlib.util.module_from_spec(_spec)
             _spec.loader.exec_module(_mod)
             _render = _mod.render
@@ -227,7 +227,7 @@ def is_port_open(port):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="FreeDeepWiki Standalone Runner")
+    parser = argparse.ArgumentParser(description="HackDeepWiki Standalone Runner")
     parser.add_argument("--ollama-endpoint", default=os.environ.get("OLLAMA_ENDPOINT", "http://127.0.0.1:11434"),
                         help="Ollama API endpoint URL")
     parser.add_argument("--model", default=os.environ.get("OLLAMA_MODEL", ""),
@@ -308,7 +308,7 @@ def main():
     print(f"Opening browser at: {url}")
     webbrowser.open(url)
     
-    print("\nFreeDeepWiki is running successfully!")
+    print("\nHackDeepWiki is running successfully!")
     print("Press Ctrl+C in this terminal window to stop the application.")
     print("=" * 60)
     
@@ -320,7 +320,7 @@ def main():
                 break
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nStopping FreeDeepWiki...")
+        print("\nStopping HackDeepWiki...")
     finally:
         if node_process:
             node_process.terminate()

@@ -110,7 +110,7 @@ const wikiStyles = `
 
 // Helper function to generate cache key for localStorage
 const getCacheKey = (owner: string, repo: string, repoType: string, language: string, isComprehensive: boolean = true, pageCount: number = 10): string => {
-  return `freedeepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}_${pageCount}`;
+  return `hackdeepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}_${pageCount}`;
 };
 
 // Helper function to add tokens and other parameters to request body
@@ -1605,8 +1605,8 @@ IMPORTANT:
       setError(
         disconnected
           ? language === 'es'
-            ? 'Se interrumpió la conexión con el backend de FreeDeepWiki. El repositorio es válido; vuelve a intentar la generación.'
-            : 'The connection to the FreeDeepWiki backend was interrupted. The repository is valid; retry the generation.'
+            ? 'Se interrumpió la conexión con el backend de HackDeepWiki. El repositorio es válido; vuelve a intentar la generación.'
+            : 'The connection to the HackDeepWiki backend was interrupted. The repository is valid; retry the generation.'
           : message
       );
       setLoadingMessage(undefined);
@@ -1844,7 +1844,7 @@ IMPORTANT:
           if (apiErrorDetails) {
             throw new Error(`Could not fetch repository structure. API Error: ${apiErrorDetails}`);
           } else if (githubNetworkError) {
-            throw new TypeError('NetworkError while contacting the FreeDeepWiki GitHub proxy');
+            throw new TypeError('NetworkError while contacting the HackDeepWiki GitHub proxy');
           } else {
             throw new Error('Could not fetch repository structure. Repository might not exist, be empty or private.');
           }
@@ -2059,8 +2059,8 @@ IMPORTANT:
       setError(
         disconnected
           ? language === 'es'
-            ? 'No se pudo contactar con el backend de FreeDeepWiki. El repositorio no es el problema; comprueba que el servicio siga activo y vuelve a intentarlo.'
-            : 'Could not contact the FreeDeepWiki backend. The repository is not the problem; check that the service is running and retry.'
+            ? 'No se pudo contactar con el backend de HackDeepWiki. El repositorio no es el problema; comprueba que el servicio siga activo y vuelve a intentarlo.'
+            : 'Could not contact the HackDeepWiki backend. The repository is not the problem; check that the service is running and retry.'
           : message
       );
       setLoadingMessage(undefined);

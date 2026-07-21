@@ -1,4 +1,4 @@
-# FreeDeepWiki vuln-scan stack -- own fork/build, independent of RedAmon at
+# HackDeepWiki vuln-scan stack -- own fork/build, independent of RedAmon at
 # runtime. Three services:
 #   - vulnscan: the Kali toolkit image (built from ./Dockerfile), invoked as
 #     one-shot `docker run`/`docker compose run` per tool call, not a
@@ -13,7 +13,7 @@
 #
 # The user runs/updates this stack themselves via `docker compose up -d`
 # (see api/web_vuln_scanner/docker_tools.py for how the backend detects
-# whether it's running and prompts to start it). FreeDeepWiki does not
+# whether it's running and prompts to start it). HackDeepWiki does not
 # manage Docker itself -- the user installs Docker and controls this stack.
 
 services:
@@ -21,8 +21,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: freedeepwiki-vulnscan:latest
-    container_name: freedeepwiki-vulnscan
+    image: hackdeepwiki-vulnscan:latest
+    container_name: hackdeepwiki-vulnscan
     # No long-running process by default -- `docker compose run --rm
     # vulnscan <tool> <args>` is how the backend invokes it. `up -d` just
     # keeps the image built/available; entrypoint.sh idles if given no args.
@@ -30,14 +30,14 @@ services:
     volumes:
       - vulnscan_output:/data/output
     networks:
-      - freedeepwiki-vulnscan-net
+      - hackdeepwiki-vulnscan-net
     restart: unless-stopped
 
   neo4j:
     image: neo4j:5-community
-    container_name: freedeepwiki-vulnscan-neo4j
+    container_name: hackdeepwiki-vulnscan-neo4j
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-freedeepwiki_secret}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-hackdeepwiki_secret}
       NEO4J_server_memory_pagecache_size: 256M
       NEO4J_server_memory_heap_initial__size: 256M
       NEO4J_server_memory_heap_max__size: 512M
@@ -47,7 +47,7 @@ services:
     volumes:
       - vulnscan_neo4j_data:/data
     networks:
-      - freedeepwiki-vulnscan-net
+      - hackdeepwiki-vulnscan-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
@@ -57,27 +57,27 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: freedeepwiki-vulnscan-postgres
+    container_name: hackdeepwiki-vulnscan-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-freedeepwiki}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-freedeepwiki_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-freedeepwiki_vulnscan}
+      POSTGRES_USER: ${POSTGRES_USER:-hackdeepwiki}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hackdeepwiki_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-hackdeepwiki_vulnscan}
     ports:
       - "127.0.0.1:5433:5432"  # non-default host port to avoid clashing with a local Postgres
     volumes:
       - vulnscan_postgres_data:/var/lib/postgresql/data
     networks:
-      - freedeepwiki-vulnscan-net
+      - hackdeepwiki-vulnscan-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-freedeepwiki} -d ${POSTGRES_DB:-freedeepwiki_vulnscan}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hackdeepwiki} -d ${POSTGRES_DB:-hackdeepwiki_vulnscan}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
 networks:
-  freedeepwiki-vulnscan-net:
-    name: freedeepwiki-vulnscan-net
+  hackdeepwiki-vulnscan-net:
+    name: hackdeepwiki-vulnscan-net
 
 volumes:
   vulnscan_output:

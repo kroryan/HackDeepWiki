@@ -81,7 +81,7 @@ class _RobotsCache:
         self._respect = respect
         self._parsers: dict = {}
 
-    def allowed(self, url: str, user_agent: str = "FreeDeepWikiBot") -> bool:
+    def allowed(self, url: str, user_agent: str = "HackDeepWikiBot") -> bool:
         if not self._respect:
             return True
         parsed = urlparse(url)
@@ -205,7 +205,7 @@ async def crawl_site(
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (compatible; FreeDeepWikiBot/1.0; +https://github.com/kroryan/FreeDeepWiki)",
+            user_agent="Mozilla/5.0 (compatible; HackDeepWikiBot/1.0; +https://github.com/kroryan/HackDeepWiki)",
         )
         try:
             await _p(f"Starting crawl of {root_netloc}…")

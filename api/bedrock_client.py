@@ -128,7 +128,7 @@ class BedrockClient(ModelClient):
                 sts_client = session.client('sts')
                 assumed_role = sts_client.assume_role(
                     RoleArn=self.aws_role_arn,
-                    RoleSessionName="FreeDeepWikiBedrockSession"
+                    RoleSessionName="HackDeepWikiBedrockSession"
                 )
                 credentials = assumed_role['Credentials']
                 

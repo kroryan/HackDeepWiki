@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Freedeepwiki-Open",
+            "name": "Hackdeepwiki-Open",
             "type": "python",
             "request": "launch",
             "module": "uvicorn",

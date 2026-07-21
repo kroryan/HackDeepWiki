@@ -1,6 +1,6 @@
-# 🚀 FreeDeepWiki API
+# 🚀 HackDeepWiki API
 
-This is the backend API for FreeDeepWiki, providing smart code analysis and AI-powered documentation generation.
+This is the backend API for HackDeepWiki, providing smart code analysis and AI-powered documentation generation.
 
 ## ✨ Features
 
@@ -58,7 +58,7 @@ If you're not using Ollama mode, you need to configure an OpenAI API key for emb
 #### Advanced Environment Configuration
 
 ##### Provider-Based Model Selection
-FreeDeepWiki supports multiple LLM providers. The environment variables above are required depending on which providers you want to use:
+HackDeepWiki supports multiple LLM providers. The environment variables above are required depending on which providers you want to use:
 
 - **Google Gemini**: Requires `GOOGLE_API_KEY`
 - **OpenAI**: Requires `OPENAI_API_KEY`
@@ -79,7 +79,7 @@ OPENAI_BASE_URL=https://custom-openai-endpoint.com/v1
 ```
 
 ##### Configuration Files
-FreeDeepWiki now uses JSON configuration files to manage various system components instead of hardcoded values:
+HackDeepWiki now uses JSON configuration files to manage various system components instead of hardcoded values:
 
 1. **`generator.json`**: Configuration for text generation models
    - Located in `api/config/` by default
@@ -171,7 +171,7 @@ url = "http://localhost:8001/chat/completions/stream"
 
 # Request data
 payload = {
-    "repo_url": "https://github.com/kroryan/freedeepwiki",
+    "repo_url": "https://github.com/kroryan/hackdeepwiki",
     "messages": [
         {
             "role": "user",

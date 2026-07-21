@@ -1,6 +1,6 @@
 // TypeScript mirrors of api/web_vuln_scanner/models.py -- the shape of the
 // website security report streamed back from /ws/web_vuln_scan and stored
-// in wikicache (freedeepwiki_webvulns_*.json).
+// in wikicache (hackdeepwiki_webvulns_*.json).
 
 import { RemediationPlan } from './types';
 

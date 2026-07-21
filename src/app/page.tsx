@@ -19,7 +19,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 
 // Define the demo mermaid charts outside the component
 const DEMO_FLOW_CHART = `graph TD
-  A[Code Repository] --> B[FreeDeepWiki]
+  A[Code Repository] --> B[HackDeepWiki]
   B --> C[Architecture Diagrams]
   B --> D[Component Relationships]
   B --> E[Data Flow]
@@ -34,17 +34,17 @@ const DEMO_FLOW_CHART = `graph TD
 
 const DEMO_SEQUENCE_CHART = `sequenceDiagram
   participant User
-  participant FreeDeepWiki
+  participant HackDeepWiki
   participant GitHub
 
-  User->>FreeDeepWiki: Enter repository URL
-  FreeDeepWiki->>GitHub: Request repository data
-  GitHub-->>FreeDeepWiki: Return repository data
-  FreeDeepWiki->>FreeDeepWiki: Process and analyze code
-  FreeDeepWiki-->>User: Display wiki with diagrams
+  User->>HackDeepWiki: Enter repository URL
+  HackDeepWiki->>GitHub: Request repository data
+  GitHub-->>HackDeepWiki: Return repository data
+  HackDeepWiki->>HackDeepWiki: Process and analyze code
+  HackDeepWiki-->>User: Display wiki with diagrams
 
   %% Add a note to make text more visible
-  Note over User,GitHub: FreeDeepWiki supports sequence diagrams for visualizing interactions`;
+  Note over User,GitHub: HackDeepWiki supports sequence diagrams for visualizing interactions`;
 
 export default function Home() {
   const router = useRouter();
@@ -79,9 +79,9 @@ export default function Home() {
     return key;
   };
 
-  const [repositoryInput, setRepositoryInput] = useState('https://github.com/kroryan/FreeDeepWiki');
+  const [repositoryInput, setRepositoryInput] = useState('https://github.com/kroryan/HackDeepWiki');
 
-  const REPO_CONFIG_CACHE_KEY = 'freedeepwikiRepoConfigCache';
+  const REPO_CONFIG_CACHE_KEY = 'hackdeepwikiRepoConfigCache';
 
   const loadConfigFromCache = (repoUrl: string) => {
     if (!repoUrl) return;
@@ -319,7 +319,7 @@ export default function Home() {
     const windowsPathRegex = /^[a-zA-Z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*$/;
 
     // A hostname that actually looks like a real domain/host, not a bare
-    // shorthand segment like "kroryan" (from "kroryan/FreeDeepWiki").
+    // shorthand segment like "kroryan" (from "kroryan/HackDeepWiki").
     const looksLikeRealHost = (h: string): boolean =>
       h.includes('.') || h === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(h);
 
@@ -346,8 +346,8 @@ export default function Home() {
     //   0 or 1 path segments, real-looking host -> website (crawl target):
     //     "kroryandev.com", "https://example.com/", "https://example.com/blog"
     //   >=2 path segments -> git host/owner/repo:
-    //     "https://github.com/kroryan/FreeDeepWiki", self-hosted forges, etc.
-    //   host has no dot and no path (e.g. "kroryan/FreeDeepWiki" parsed as
+    //     "https://github.com/kroryan/HackDeepWiki", self-hosted forges, etc.
+    //   host has no dot and no path (e.g. "kroryan/HackDeepWiki" parsed as
     //     host "kroryan") -> falls through to Unsupported, same as before
     //     this feature existed, so a mistyped GitHub shorthand doesn't
     //     silently turn into a crawl of a nonexistent domain.
@@ -379,8 +379,8 @@ export default function Home() {
         repo = hostname;
         fullPath = path;
       }
-      // else: single bare segment with no dot (e.g. "kroryan/FreeDeepWiki"
-      // parsed to host "kroryan", path "FreeDeepWiki") -- falls through,
+      // else: single bare segment with no dot (e.g. "kroryan/HackDeepWiki"
+      // parsed to host "kroryan", path "HackDeepWiki") -- falls through,
       // owner/repo stay empty, caught by the check below.
     }
 
@@ -856,7 +856,7 @@ export default function Home() {
             <div className="grid grid-cols-1 gap-3 text-xs text-[var(--muted)]">
               <div
                 className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap"
-              >https://github.com/kroryan/FreeDeepWiki
+              >https://github.com/kroryan/HackDeepWiki
               </div>
               <div
                 className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap"
@@ -864,7 +864,7 @@ export default function Home() {
               </div>
               <div
                 className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap"
-              >kroryan/FreeDeepWiki
+              >kroryan/HackDeepWiki
               </div>
               <div
                 className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap"
@@ -918,7 +918,7 @@ export default function Home() {
 
           <div className="flex items-center gap-6">
             <div className="flex items-center space-x-5">
-              <a href="https://github.com/kroryan/FreeDeepWiki" target="_blank" rel="noopener noreferrer"
+              <a href="https://github.com/kroryan/HackDeepWiki" target="_blank" rel="noopener noreferrer"
                 className="text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors">
                 <FaGithub className="text-xl" />
               </a>

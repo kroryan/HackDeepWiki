@@ -1,4 +1,4 @@
-"""Module containing all prompts used in the FreeDeepWiki project."""
+"""Module containing all prompts used in the HackDeepWiki project."""
 
 from typing import Optional
 

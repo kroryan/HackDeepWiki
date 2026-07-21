@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "FreeDeepWiki",
+    "appName": "HackDeepWiki",
     "tagline": "AI-powered documentation",
     "generateWiki": "Generate Wiki",
     "processing": "Processing...",
@@ -18,13 +18,13 @@
     "preparingDownload": "Please wait while we prepare your download..."
   },
   "home": {
-    "welcome": "Welcome to FreeDeepWiki",
+    "welcome": "Welcome to HackDeepWiki",
     "welcomeTagline": "AI-powered documentation for code, websites, and offline archives",
     "description": "Generate comprehensive wikis from GitHub, GitLab, or Bitbucket repositories, local folders, ZIM archives, or any live website -- with an optional built-in security scan (dependency CVEs, secrets, SAST, and deep website vulnerability scanning) for repos and sites alike.",
     "quickStart": "Quick Start",
     "enterRepoUrl": "Enter a repository URL, a local folder path, or a website URL:",
     "advancedVisualization": "Advanced Visualization with Mermaid Diagrams",
-    "diagramDescription": "FreeDeepWiki automatically generates interactive diagrams to help you understand code structure and relationships:",
+    "diagramDescription": "HackDeepWiki automatically generates interactive diagrams to help you understand code structure and relationships:",
     "flowDiagram": "Flow Diagram",
     "sequenceDiagram": "Sequence Diagram"
   },
@@ -95,7 +95,7 @@
     "authorizationRequired": "Authentication is required to generate the wiki."
   },
   "footer": {
-    "copyright": "FreeDeepWiki - AI-powered documentation for code repositories"
+    "copyright": "HackDeepWiki - AI-powered documentation for code repositories"
   },
   "diagram": {
     "title": "Diagram view",

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 ProgressCb = Callable[[str, Optional[int]], Awaitable[None]]
 
 _TIMEOUT = 10
-_USER_AGENT = "Mozilla/5.0 (compatible; FreeDeepWikiBot/1.0; security-check)"
+_USER_AGENT = "Mozilla/5.0 (compatible; HackDeepWikiBot/1.0; security-check)"
 # Sample size for the header/cookie/fingerprint pass -- checking every page
 # on a large crawl adds little signal (headers are near-identical site-wide)
 # for a lot more requests, so a representative sample keeps this fast.

@@ -1,5 +1,5 @@
 services:
-  freedeepwiki:
+  hackdeepwiki:
     build:
       context: .
       dockerfile: Dockerfile

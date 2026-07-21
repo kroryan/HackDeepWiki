@@ -1,4 +1,4 @@
-# FreeDeepWiki vuln-scan toolkit -- a lean, purpose-built image containing
+# HackDeepWiki vuln-scan toolkit -- a lean, purpose-built image containing
 # only the tools api/web_vuln_scanner/docker_tools.py actually invokes
 # (nmap, nikto, whatweb, testssl.sh, nuclei, subfinder+dnsx, httpx, ffuf,
 # dalfox, wpscan, gitleaks, semgrep), plus the code-scan pass
@@ -13,7 +13,7 @@
 # Still a real Kali base, though: `docker exec` in and `apt install`/`go
 # install`/`pip install` whatever else you need, same as any other Kali box.
 #
-# No MCP servers -- FreeDeepWiki's Python backend invokes tools directly as
+# No MCP servers -- HackDeepWiki's Python backend invokes tools directly as
 # one-shot subprocesses (docker run --rm ...), not as long-running SSE/HTTP
 # servers, since a wiki security scan is "one scan, one result" rather than
 # an interactive agent session.
@@ -50,7 +50,7 @@ RUN retry go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 
 # ---------------------------------------------------------------------------
 FROM kalilinux/kali-rolling:latest
 
-LABEL maintainer="FreeDeepWiki"
+LABEL maintainer="HackDeepWiki"
 LABEL description="Lean vulnerability-scan toolkit -- only the tools api/web_vuln_scanner/docker_tools.py invokes"
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -136,6 +136,6 @@ RUN chmod +x /entrypoint.sh
 WORKDIR /data
 
 # No EXPOSE / server ports -- this image is invoked as one-shot
-# `docker run --rm freedeepwiki-vulnscan <tool> <args>` per tool call, not
+# `docker run --rm hackdeepwiki-vulnscan <tool> <args>` per tool call, not
 # as a long-running server.
 ENTRYPOINT ["/entrypoint.sh"]

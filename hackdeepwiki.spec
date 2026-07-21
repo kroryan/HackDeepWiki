@@ -47,7 +47,7 @@ datas = [
     ('.next/static', '.next/static'),
     # Package python api package
     ('api', 'api'),
-    # Package scripts package (includes freedeepwiki_config.py for runtime Ollama discovery)
+    # Package scripts package (includes hackdeepwiki_config.py for runtime Ollama discovery)
     ('scripts', 'scripts'),
 ]
 
@@ -138,7 +138,7 @@ if is_win:
         a.zipfiles,
         a.datas,
         [],
-        name='freedeepwiki',
+        name='hackdeepwiki',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -166,7 +166,7 @@ else:
         a.scripts,
         [],
         exclude_binaries=True,
-        name='freedeepwiki',
+        name='hackdeepwiki',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -186,5 +186,5 @@ else:
         strip=False,
         upx=True,
         upx_exclude=[],
-        name='freedeepwiki',
+        name='hackdeepwiki',
     )

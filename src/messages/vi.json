@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "FreeDeepWiki",
+    "appName": "HackDeepWiki",
     "tagline": "Tài liệu hỗ trợ bởi AI",
     "generateWiki": "Tạo Wiki",
     "processing": "Đang xử lý...",
@@ -18,13 +18,13 @@
     "preparingDownload": "Đang tải! Vui lòng chờ..."
   },
   "home": {
-    "welcome": "Chào mừng đến với FreeDeepWiki",
+    "welcome": "Chào mừng đến với HackDeepWiki",
     "welcomeTagline": "Tài liệu hỗ trợ bởi AI cho mã nguồn, website và kho lưu trữ ngoại tuyến",
     "description": "Tạo wiki đầy đủ từ các repository GitHub, GitLab, Bitbucket, thư mục cục bộ, kho lưu trữ ZIM, hoặc bất kỳ website trực tuyến nào -- kèm quét bảo mật tùy chọn tích hợp sẵn (lỗ hổng phụ thuộc CVE, rò rỉ bí mật, SAST, và quét sâu lỗ hổng website) cho cả repository lẫn website.",
     "quickStart": "Bắt đầu nhanh",
     "enterRepoUrl": "Nhập URL repository, đường dẫn thư mục cục bộ, hoặc URL website:",
     "advancedVisualization": "Tùy chỉnh sơ đồ trực quan với Mermaid",
-    "diagramDescription": "FreeDeepWiki tự động tạo các sơ đồ tương tác giúp bạn hiểu cấu trúc source codes và mối quan hệ giữa chúng:",
+    "diagramDescription": "HackDeepWiki tự động tạo các sơ đồ tương tác giúp bạn hiểu cấu trúc source codes và mối quan hệ giữa chúng:",
     "flowDiagram": "Sơ đồ luồng",
     "sequenceDiagram": "Sơ đồ tuần tự"
   },
@@ -84,7 +84,7 @@
     "authorizationRequired": "Mã xác thực cần thiết để tạo Wiki"
   },
   "footer": {
-    "copyright": "FreeDeepWiki - Tài liệu hỗ trợ bởi AI cho repository"
+    "copyright": "HackDeepWiki - Tài liệu hỗ trợ bởi AI cho repository"
   },
   "ask": {
     "placeholder": "Đặt một câu hỏi về repository này...",

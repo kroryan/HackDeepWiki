@@ -375,7 +375,7 @@ def resolve_tool_calling(
     transports can't drift on what "tool calling enabled" means or what
     tools are on offer. Never enabled for Deep Research (it has its own
     multi-iteration structure/prompts) or via the
-    FREEDEEPWIKI_DISABLE_AGENT_LOOP=1 env killswitch.
+    HACKDEEPWIKI_DISABLE_AGENT_LOOP=1 env killswitch.
 
     Returns (enabled, tools) where `tools` maps a textual prefix (e.g.
     "SEARCH_WIKI:") to a `query -> tool_result text` handler. Every source
@@ -392,7 +392,7 @@ def resolve_tool_calling(
     enabled = (
         bool(enable_tool_calling)
         and not is_deep_research
-        and os.environ.get("FREEDEEPWIKI_DISABLE_AGENT_LOOP") != "1"
+        and os.environ.get("HACKDEEPWIKI_DISABLE_AGENT_LOOP") != "1"
     )
     if not enabled:
         return False, {}

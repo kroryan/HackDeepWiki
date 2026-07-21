@@ -68,9 +68,11 @@ next-env.d.ts
 # ignore adding self-signed certs
 certs/
 
-# Local FreeDeepWiki/Ollama runtime state
+# Local HackDeepWiki/Ollama runtime state
+/.hackdeepwiki/
 /.freedeepwiki/
 /.deepwiki/
+/hackdeepwiki.env
 /freedeepwiki.env
 
 # Standalone build directories

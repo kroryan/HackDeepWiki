@@ -24,7 +24,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   const headers: HeadersInit = {
     Accept: 'application/vnd.github+json',
-    'User-Agent': 'FreeDeepWiki',
+    'User-Agent': 'HackDeepWiki',
     'X-GitHub-Api-Version': '2022-11-28',
   };
   if (authorization) {
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       {
         message:
           'GitHub anonymous API rate limit exceeded. Configure GITHUB_TOKEN ' +
-          'in freedeepwiki.env or provide a token in the FreeDeepWiki configuration.',
+          'in hackdeepwiki.env or provide a token in the HackDeepWiki configuration.',
       },
       { status: 403 }
     );

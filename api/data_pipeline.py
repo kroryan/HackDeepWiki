@@ -912,7 +912,7 @@ def get_local_file_content(repo_path: str, file_path: str) -> str:
 def _local_clone_dir(repo_url: str, repo_type: str) -> str:
     """Local clone directory for a github/gitlab/bitbucket repo_url, using
     the exact same naming convention DatabaseManager._create_repo already
-    uses (~/.adalflow/repos/{owner}_{repo}, or FREEDEEPWIKI_DATA_DIR's
+    uses (~/.adalflow/repos/{owner}_{repo}, or HACKDEEPWIKI_DATA_DIR's
     equivalent) -- so this resolves to the very clone wiki generation
     already made, without re-deriving or duplicating that logic elsewhere.
     """

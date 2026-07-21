@@ -136,8 +136,8 @@ class OpenRouterClient(ModelClient):
         headers = {
             "Authorization": f"Bearer {self.async_client['api_key']}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/kroryan/FreeDeepWiki",
-            "X-Title": "FreeDeepWiki",
+            "HTTP-Referer": "https://github.com/kroryan/HackDeepWiki",
+            "X-Title": "HackDeepWiki",
         }
         api_kwargs = {**api_kwargs, "stream": True}
 
@@ -193,8 +193,8 @@ class OpenRouterClient(ModelClient):
             headers = {
                 "Authorization": f"Bearer {self.async_client['api_key']}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/kroryan/FreeDeepWiki",  # Optional
-                "X-Title": "FreeDeepWiki"  # Optional
+                "HTTP-Referer": "https://github.com/kroryan/HackDeepWiki",  # Optional
+                "X-Title": "HackDeepWiki"  # Optional
             }
 
             # Always use non-streaming mode for OpenRouter

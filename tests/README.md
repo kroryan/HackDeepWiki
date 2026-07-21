@@ -1,6 +1,6 @@
-# FreeDeepWiki Tests
+# HackDeepWiki Tests
 
-This directory contains all tests for the FreeDeepWiki project, organized by type and scope.
+This directory contains all tests for the HackDeepWiki project, organized by type and scope.
 
 ## Directory Structure
 

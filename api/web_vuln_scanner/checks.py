@@ -25,7 +25,7 @@ from api.web_vuln_scanner.models import (
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10
-_USER_AGENT = "Mozilla/5.0 (compatible; FreeDeepWikiBot/1.0; security-check)"
+_USER_AGENT = "Mozilla/5.0 (compatible; HackDeepWikiBot/1.0; security-check)"
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def check_exposed_paths(base_url: str, timeout: int = _TIMEOUT) -> List[WebFindi
     # every single probe below.
     probe_404_body = None
     try:
-        r = requests.get(urljoin(root, "/__freedeepwiki_nonexistent_probe__"),
+        r = requests.get(urljoin(root, "/__hackdeepwiki_nonexistent_probe__"),
                          timeout=timeout, headers={"User-Agent": _USER_AGENT}, allow_redirects=False)
         probe_404_body = r.text[:200] if r.status_code == 200 else None
     except requests.RequestException:

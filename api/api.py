@@ -723,13 +723,15 @@ os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
 # Vulnerability reports live in the same portable wikicache dir as the wiki
 # itself (no new storage location). Keyed by (repo_type, owner, repo, language)
 # -- one latest report per repo/language; a re-scan overwrites it.
-VULN_CACHE_PREFIX = "freedeepwiki_vulns"
+VULN_CACHE_PREFIX = "hackdeepwiki_vulns"
+_LEGACY_VULN_CACHE_PREFIX = "freedeepwiki_vulns"  # pre-rename filename prefix
 
 
-def _vuln_cache_path(repo_type: str, owner: str, repo: str, language: str) -> str:
+def _vuln_cache_path(repo_type: str, owner: str, repo: str, language: str,
+                      prefix: str = VULN_CACHE_PREFIX) -> str:
     return os.path.join(
         WIKI_CACHE_DIR,
-        f"{VULN_CACHE_PREFIX}_{repo_type}_{owner}_{repo}_{language}.json",
+        f"{prefix}_{repo_type}_{owner}_{repo}_{language}.json",
     )
 
 
@@ -747,9 +749,13 @@ def save_vuln_cache(report: dict) -> str:
 
 
 def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str) -> Optional[dict]:
+    # Check the current prefix first, then fall back to the pre-rename
+    # (FreeDeepWiki) prefix so scans saved before the rename are still found.
     path = _vuln_cache_path(repo_type, owner, repo, language)
     if not os.path.isfile(path):
-        return None
+        path = _vuln_cache_path(repo_type, owner, repo, language, prefix=_LEGACY_VULN_CACHE_PREFIX)
+        if not os.path.isfile(path):
+            return None
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
@@ -761,13 +767,15 @@ def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str) -> Opt
 # --- Website security scan cache helpers ---
 # Same wikicache dir, own prefix -- keyed by (owner='website', repo=hostname,
 # language), mirroring the dependency vuln cache above.
-WEB_VULN_CACHE_PREFIX = "freedeepwiki_webvulns"
+WEB_VULN_CACHE_PREFIX = "hackdeepwiki_webvulns"
+_LEGACY_WEB_VULN_CACHE_PREFIX = "freedeepwiki_webvulns"  # pre-rename filename prefix
 
 
-def _web_vuln_cache_path(owner: str, repo: str, language: str) -> str:
+def _web_vuln_cache_path(owner: str, repo: str, language: str,
+                          prefix: str = WEB_VULN_CACHE_PREFIX) -> str:
     return os.path.join(
         WIKI_CACHE_DIR,
-        f"{WEB_VULN_CACHE_PREFIX}_{owner}_{repo}_{language}.json",
+        f"{prefix}_{owner}_{repo}_{language}.json",
     )
 
 
@@ -781,9 +789,13 @@ def save_web_vuln_cache(report: dict) -> str:
 
 
 def read_web_vuln_cache(owner: str, repo: str, language: str) -> Optional[dict]:
+    # Check the current prefix first, then fall back to the pre-rename
+    # (FreeDeepWiki) prefix so scans saved before the rename are still found.
     path = _web_vuln_cache_path(owner, repo, language)
     if not os.path.isfile(path):
-        return None
+        path = _web_vuln_cache_path(owner, repo, language, prefix=_LEGACY_WEB_VULN_CACHE_PREFIX)
+        if not os.path.isfile(path):
+            return None
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
@@ -801,9 +813,25 @@ def _split_newline_filters(value) -> List[str]:
         return [str(v).strip() for v in value if str(v).strip()]
     return [line.strip() for line in str(value).splitlines() if line.strip()]
 
+WIKI_CACHE_FILE_PREFIX = "hackdeepwiki_cache_"
+_LEGACY_WIKI_CACHE_FILE_PREFIX = "freedeepwiki_cache_"  # pre-rename filename prefix
+
+
 def _repo_cache_prefix(repo_type: str, owner: str, repo: str, language: str) -> str:
-    """Filename prefix shared by every release of one repo/language/type."""
-    return f"freedeepwiki_cache_{repo_type}_{owner}_{repo}_{language}"
+    """Filename prefix used for *new* cache writes for one repo/language/type."""
+    return f"{WIKI_CACHE_FILE_PREFIX}{repo_type}_{owner}_{repo}_{language}"
+
+
+def _repo_cache_prefixes(repo_type: str, owner: str, repo: str, language: str) -> List[str]:
+    """Every filename prefix that could hold a release of one
+    repo/language/type -- current prefix first, then the pre-rename
+    (FreeDeepWiki) prefix, so caches saved before the rename are still
+    found/managed (read, deleted, version-counted) rather than silently
+    orphaned."""
+    return [
+        _repo_cache_prefix(repo_type, owner, repo, language),
+        f"{_LEGACY_WIKI_CACHE_FILE_PREFIX}{repo_type}_{owner}_{repo}_{language}",
+    ]
 
 
 def _repo_has_any_cache(repo_type: str, owner: str, repo: str) -> bool:
@@ -814,10 +842,13 @@ def _repo_has_any_cache(repo_type: str, owner: str, repo: str) -> bool:
     owner_repo, not by language/version), so they must only be removed
     once literally nothing references them anymore.
     """
-    prefix = f"freedeepwiki_cache_{repo_type}_{owner}_{repo}_"
+    prefixes = (
+        f"{WIKI_CACHE_FILE_PREFIX}{repo_type}_{owner}_{repo}_",
+        f"{_LEGACY_WIKI_CACHE_FILE_PREFIX}{repo_type}_{owner}_{repo}_",
+    )
     try:
         return any(
-            filename.startswith(prefix) and filename.endswith(".json")
+            filename.startswith(prefixes) and filename.endswith(".json")
             for filename in os.listdir(WIKI_CACHE_DIR)
         )
     except OSError:
@@ -828,10 +859,10 @@ def _delete_local_repo_clone(repo_type: str, owner: str, repo: str) -> None:
     """Removes the local git clone and embeddings db for an owner/repo,
     the same way DatabaseManager._create_repo names them
     (~/.adalflow/repos/{owner}_{repo}, ~/.adalflow/databases/{owner}_{repo}.pkl,
-    or FREEDEEPWIKI_DATA_DIR's equivalent). Only ever called once
+    or HACKDEEPWIKI_DATA_DIR's equivalent). Only ever called once
     _repo_has_any_cache confirms no wiki release still needs them --
     never for repo_type == 'local', where the "clone" is the user's own
-    folder on disk, not something FreeDeepWiki created.
+    folder on disk, not something HackDeepWiki created.
     """
     root_path = get_adalflow_default_root_path()
     repo_name = f"{owner}_{repo}"
@@ -875,22 +906,24 @@ def get_wiki_cache_path(
         variant = f"_{mode}_{page_count}"
     version_suffix = f"_v{version}" if version is not None else ""
     filename = (
-        f"freedeepwiki_cache_{repo_type}_{owner}_{repo}_{language}{variant}{version_suffix}.json"
+        f"{WIKI_CACHE_FILE_PREFIX}{repo_type}_{owner}_{repo}_{language}{variant}{version_suffix}.json"
     )
     return os.path.join(WIKI_CACHE_DIR, filename)
 
 
 def _list_repo_cache_files(repo_type: str, owner: str, repo: str, language: str) -> List[str]:
-    """Return absolute paths of every cache file for one repo/language/type."""
-    prefix = _repo_cache_prefix(repo_type, owner, repo, language)
+    """Return absolute paths of every cache file for one repo/language/type
+    (both the current and pre-rename filename prefix -- see
+    ``_repo_cache_prefixes``)."""
+    prefixes = tuple(_repo_cache_prefixes(repo_type, owner, repo, language))
     try:
         return [
             os.path.join(WIKI_CACHE_DIR, fn)
             for fn in os.listdir(WIKI_CACHE_DIR)
-            if fn.startswith(prefix) and fn.endswith(".json")
+            if fn.startswith(prefixes) and fn.endswith(".json")
         ]
     except Exception as e:
-        logger.error(f"Error listing cache files for {prefix}: {e}")
+        logger.error(f"Error listing cache files for {prefixes}: {e}")
         return []
 
 
@@ -1655,13 +1688,13 @@ async def delete_wiki_cache(
 
     logger.info(f"Attempting to delete wiki cache for {owner}/{repo} ({repo_type}), lang: {language}, version: {version}")
 
-    prefix = _repo_cache_prefix(repo_type, owner, repo, language)
+    prefixes = _repo_cache_prefixes(repo_type, owner, repo, language)
     cache_paths = []
     try:
         for filename in os.listdir(WIKI_CACHE_DIR):
             if not filename.endswith(".json"):
                 continue
-            if not (filename == f"{prefix}.json" or filename.startswith(f"{prefix}_")):
+            if not any(filename == f"{p}.json" or filename.startswith(f"{p}_") for p in prefixes):
                 continue
             if version is not None and _parse_cache_version(filename) != version:
                 continue
@@ -1712,7 +1745,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "service": "freedeepwiki-api"
+        "service": "hackdeepwiki-api"
     }
 
 @app.get("/")
@@ -1747,7 +1780,9 @@ async def root():
 async def get_processed_projects():
     """
     Lists all processed projects found in the wiki cache directory.
-    Projects are identified by files named like: freedeepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json
+    Projects are identified by files named like: hackdeepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json
+    (or the pre-rename freedeepwiki_cache_... prefix, for wikis generated
+    before the FreeDeepWiki -> HackDeepWiki rename).
     """
     project_entries: List[ProcessedProjectEntry] = []
     # WIKI_CACHE_DIR is already defined globally in the file
@@ -1762,11 +1797,16 @@ async def get_processed_projects():
 
         newest_projects: Dict[tuple, ProcessedProjectEntry] = {}
         for filename in filenames:
-            if filename.startswith("freedeepwiki_cache_") and filename.endswith(".json"):
+            matched_prefix = next(
+                (p for p in (WIKI_CACHE_FILE_PREFIX, _LEGACY_WIKI_CACHE_FILE_PREFIX)
+                 if filename.startswith(p)),
+                None,
+            )
+            if matched_prefix and filename.endswith(".json"):
                 file_path = os.path.join(WIKI_CACHE_DIR, filename)
                 try:
                     stats = await asyncio.to_thread(os.stat, file_path) # Use asyncio.to_thread for os.stat
-                    cache_name = filename.replace("freedeepwiki_cache_", "").replace(".json", "")
+                    cache_name = filename.replace(matched_prefix, "").replace(".json", "")
                     # Strip the release version suffix (_vN) and the variant suffix
                     # (_comprehensive_N / _concise_N) so the remaining
                     # repo_type_owner_repo_language splits cleanly into parts.
@@ -1779,8 +1819,8 @@ async def get_processed_projects():
                     parts = cache_name.split('_')
 
                     # Expecting repo_type_owner_repo_language
-                    # Example: freedeepwiki_cache_github_kroryan_FreeDeepWiki_en.json
-                    # parts = [github, kroryan, FreeDeepWiki, en]
+                    # Example: hackdeepwiki_cache_github_kroryan_HackDeepWiki_en.json
+                    # parts = [github, kroryan, HackDeepWiki, en]
                     if len(parts) >= 4:
                         repo_type = parts[0]
                         owner = parts[1]

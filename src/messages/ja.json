@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "FreeDeepWiki",
+    "appName": "HackDeepWiki",
     "tagline": "AI駆動のドキュメンテーション",
     "generateWiki": "Wikiを生成",
     "processing": "処理中...",
@@ -18,13 +18,13 @@
     "preparingDownload": "ダウンロードの準備中です..."
   },
   "home": {
-    "welcome": "FreeDeepWikiへようこそ",
+    "welcome": "HackDeepWikiへようこそ",
     "welcomeTagline": "コード、ウェブサイト、オフラインアーカイブのためのAI駆動ドキュメンテーション",
     "description": "GitHub、GitLab、Bitbucketリポジトリ、ローカルフォルダ、ZIMアーカイブ、または任意のライブウェブサイトから包括的なwikiを生成します。リポジトリとサイトの両方に対応するオプションのセキュリティスキャン（依存関係のCVE、シークレット、SAST、詳細なウェブ脆弱性スキャン）も内蔵しています。",
     "quickStart": "クイックスタート",
     "enterRepoUrl": "リポジトリURL、ローカルフォルダのパス、またはウェブサイトのURLを入力してください：",
     "advancedVisualization": "Mermaidダイアグラムによる高度な可視化",
-    "diagramDescription": "FreeDeepWikiは、コード構造と関係を理解するのに役立つインタラクティブな図を自動的に生成します：",
+    "diagramDescription": "HackDeepWikiは、コード構造と関係を理解するのに役立つインタラクティブな図を自動的に生成します：",
     "flowDiagram": "フロー図",
     "sequenceDiagram": "シーケンス図"
   },
@@ -84,7 +84,7 @@
     "authorizationRequired": "Wiki生成には認証コードが必要です"
   },
   "footer": {
-    "copyright": "FreeDeepWiki - コードリポジトリのためのAI駆動ドキュメンテーション"
+    "copyright": "HackDeepWiki - コードリポジトリのためのAI駆動ドキュメンテーション"
   },
   "ask": {
     "placeholder": "このリポジトリについて質問する...",

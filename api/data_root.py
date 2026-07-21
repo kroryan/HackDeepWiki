@@ -1,4 +1,4 @@
-"""Writable data-root resolution for FreeDeepWiki.
+"""Writable data-root resolution for HackDeepWiki.
 
 All persistent state (cloned repos, embedding databases, wiki cache, and
 adalflow's generator cache dbs) lives under one data root. The root is resolved
@@ -57,11 +57,14 @@ def get_portable_base_dir() -> str:
 
 
 def _legacy_env_override() -> str:
-    """Honour an explicit data-dir override. Accepts both the canonical
-    ``FREEDEEPWIKI_DATA_DIR`` and the legacy misspelled ``FREEDEPWIKI_DATA_DIR``
-    so older docs/scripts still work."""
+    """Honour an explicit data-dir override. Accepts the canonical
+    ``HACKDEEPWIKI_DATA_DIR`` plus the pre-rename ``FREEDEEPWIKI_DATA_DIR``
+    and its legacy misspelled ``FREEDEPWIKI_DATA_DIR`` so older docs/scripts
+    (and installs from before the FreeDeepWiki -> HackDeepWiki rename) still
+    work."""
     return (
-        os.environ.get("FREEDEEPWIKI_DATA_DIR")
+        os.environ.get("HACKDEEPWIKI_DATA_DIR")
+        or os.environ.get("FREEDEEPWIKI_DATA_DIR")
         or os.environ.get("FREEDEPWIKI_DATA_DIR")
         or ""
     )
@@ -71,12 +74,15 @@ def get_data_root() -> str:
     """Return the writable directory used for repos/databases/wikicache/caches.
 
     Resolution order:
-      1. Explicit env override (FREEDEEPWIKI_DATA_DIR / FREEDEPWIKI_DATA_DIR)
+      1. Explicit env override (HACKDEEPWIKI_DATA_DIR / FREEDEEPWIKI_DATA_DIR
+         / FREEDEPWIKI_DATA_DIR)
       2. <portable_base>/DATABASE  (PRIMARY — portable folder next to the exe)
       3. ~/.adalflow (upstream default, kept for existing installs)
-      4. ~/.freedeepwiki/adalflow (per-user fallback when ~/.adalflow is
+      4. ~/.hackdeepwiki/adalflow (per-user fallback when ~/.adalflow is
          unwritable, e.g. root-owned from a previous sudo run)
-      5. a temp directory as a last resort
+      5. ~/.freedeepwiki/adalflow (same fallback, pre-rename location --
+         kept so installs from before the rename still find their data)
+      6. a temp directory as a last resort
     """
     global _cached_root
     if _cached_root:
@@ -94,6 +100,7 @@ def get_data_root() -> str:
         candidates.append(os.path.join(appdata, "adalflow"))
     else:
         candidates.append(os.path.join(os.path.expanduser("~"), ".adalflow"))
+    candidates.append(os.path.join(os.path.expanduser("~"), ".hackdeepwiki", "adalflow"))
     candidates.append(os.path.join(os.path.expanduser("~"), ".freedeepwiki", "adalflow"))
 
     for candidate in candidates:
@@ -102,7 +109,7 @@ def get_data_root() -> str:
             break
 
     if not _cached_root:
-        _cached_root = os.path.join(tempfile.gettempdir(), "freedeepwiki-adalflow")
+        _cached_root = os.path.join(tempfile.gettempdir(), "hackdeepwiki-adalflow")
         os.makedirs(_cached_root, exist_ok=True)
 
     default_root = candidates[0]
@@ -155,13 +162,16 @@ def _patch_adalflow_root(root: str) -> None:
 
 
 def migrate_legacy_wikicache(target_root: str) -> None:
-    """Copy wiki cache files from legacy locations (~/.freedeepwiki/adalflow/wikicache,
-    ~/.adalflow/wikicache) into ``<target_root>/wikicache`` so previously generated
-    wikis are still found after switching to the portable DATABASE layout. Existing
-    files in the target are never overwritten.
+    """Copy wiki cache files from legacy locations (~/.hackdeepwiki/adalflow/wikicache,
+    ~/.freedeepwiki/adalflow/wikicache -- pre-rename, ~/.adalflow/wikicache) into
+    ``<target_root>/wikicache`` so previously generated wikis are still found
+    after switching to the portable DATABASE layout, and after the
+    FreeDeepWiki -> HackDeepWiki rename. Existing files in the target are
+    never overwritten.
     """
     home = os.path.expanduser("~")
     legacy_dirs = [
+        os.path.join(home, ".hackdeepwiki", "adalflow", "wikicache"),
         os.path.join(home, ".freedeepwiki", "adalflow", "wikicache"),
         os.path.join(home, ".adalflow", "wikicache"),
     ]

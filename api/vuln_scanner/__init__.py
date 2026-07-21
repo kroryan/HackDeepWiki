@@ -1,4 +1,4 @@
-"""Vulnerability scanning subpackage for FreeDeepWiki.
+"""Vulnerability scanning subpackage for HackDeepWiki.
 
 Scans a locally-cloned repository's dependency manifests/lockfiles for known
 CVEs via the free OSV.dev API (no API key required), optionally enriches with

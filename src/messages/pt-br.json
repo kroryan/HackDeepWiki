@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "FreeDeepWiki",
+    "appName": "HackDeepWiki",
     "tagline": "Documentação com IA",
     "generateWiki": "Gerar Wiki",
     "processing": "Processando...",
@@ -18,13 +18,13 @@
     "preparingDownload": "Aguarde enquanto preparamos seu download..."
   },
   "home": {
-    "welcome": "Bem-vindo ao FreeDeepWiki",
+    "welcome": "Bem-vindo ao HackDeepWiki",
     "welcomeTagline": "Documentação com IA para código, sites e arquivos offline",
     "description": "Gere wikis completas a partir de repositórios GitHub, GitLab ou Bitbucket, pastas locais, arquivos ZIM, ou qualquer site ao vivo -- com uma verificação de segurança opcional integrada (CVEs de dependências, segredos, SAST e verificação profunda de vulnerabilidades web) tanto para repositórios quanto para sites.",
     "quickStart": "Início Rápido",
     "enterRepoUrl": "Digite uma URL de repositório, um caminho de pasta local, ou uma URL de site:",
     "advancedVisualization": "Visualização Avançada com Diagramas Mermaid",
-    "diagramDescription": "O FreeDeepWiki gera automaticamente diagramas interativos para ajudar você a entender a estrutura e os relacionamentos do código:",
+    "diagramDescription": "O HackDeepWiki gera automaticamente diagramas interativos para ajudar você a entender a estrutura e os relacionamentos do código:",
     "flowDiagram": "Diagrama de Fluxo",
     "sequenceDiagram": "Diagrama de Sequência"
   },
@@ -93,7 +93,7 @@
     "authorizationRequired": "A autenticação é necessária para gerar a wiki."
   },
   "footer": {
-    "copyright": "FreeDeepWiki - Documentação com IA para repositórios de código"
+    "copyright": "HackDeepWiki - Documentação com IA para repositórios de código"
   },
   "ask": {
     "placeholder": "Faça uma pergunta sobre este repositório...",

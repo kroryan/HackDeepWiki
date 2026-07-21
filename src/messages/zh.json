@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "FreeDeepWiki",
+    "appName": "HackDeepWiki",
     "tagline": "AI驱动的文档",
     "generateWiki": "生成Wiki",
     "processing": "处理中...",
@@ -18,13 +18,13 @@
     "preparingDownload": "请等待，我们正在准备您的下载..."
   },
   "home": {
-    "welcome": "欢迎使用FreeDeepWiki",
+    "welcome": "欢迎使用HackDeepWiki",
     "welcomeTagline": "为代码、网站和离线归档提供AI驱动的文档",
     "description": "从GitHub、GitLab或Bitbucket仓库、本地文件夹、ZIM归档，或任意在线网站生成全面的wiki——并可选内置安全扫描（依赖项CVE、密钥泄露、SAST以及深度网站漏洞扫描），适用于仓库和网站。",
     "quickStart": "快速开始",
     "enterRepoUrl": "请输入仓库URL、本地文件夹路径，或网站URL：",
     "advancedVisualization": "使用Mermaid图表进行高级可视化",
-    "diagramDescription": "FreeDeepWiki自动生成交互式图表，帮助您理解代码结构和关系：",
+    "diagramDescription": "HackDeepWiki自动生成交互式图表，帮助您理解代码结构和关系：",
     "flowDiagram": "流程图",
     "sequenceDiagram": "序列图"
   },
@@ -84,7 +84,7 @@
     "authorizationRequired": "生成wiki页面需要填写授权码"
   },
   "footer": {
-    "copyright": "FreeDeepWiki - 为代码仓库提供AI驱动的文档"
+    "copyright": "HackDeepWiki - 为代码仓库提供AI驱动的文档"
   },
   "ask": {
     "placeholder": "询问关于此仓库的问题...",

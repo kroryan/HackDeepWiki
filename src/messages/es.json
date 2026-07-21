@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "FreeDeepWiki",
+    "appName": "HackDeepWiki",
     "tagline": "Documentación impulsada por IA",
     "generateWiki": "Generar Wiki",
     "processing": "Procesando...",
@@ -18,13 +18,13 @@
     "preparingDownload": "Por favor espere mientras preparamos su descarga..."
   },
   "home": {
-    "welcome": "Bienvenido a FreeDeepWiki",
+    "welcome": "Bienvenido a HackDeepWiki",
     "welcomeTagline": "Documentación impulsada por IA para código, sitios web y archivos offline",
     "description": "Genera wikis completas a partir de repositorios GitHub, GitLab o Bitbucket, carpetas locales, archivos ZIM, o cualquier sitio web en vivo -- con un escaneo de seguridad opcional integrado (CVEs de dependencias, secretos, SAST y escaneo profundo de vulnerabilidades web) tanto para repos como para sitios.",
     "quickStart": "Inicio Rápido",
     "enterRepoUrl": "Ingresa una URL de repositorio, una ruta de carpeta local, o una URL de sitio web:",
     "advancedVisualization": "Visualización Avanzada con Diagramas Mermaid",
-    "diagramDescription": "FreeDeepWiki genera automáticamente diagramas interactivos para ayudarte a entender la estructura y relaciones del código:",
+    "diagramDescription": "HackDeepWiki genera automáticamente diagramas interactivos para ayudarte a entender la estructura y relaciones del código:",
     "flowDiagram": "Diagrama de Flujo",
     "sequenceDiagram": "Diagrama de Secuencia"
   },
@@ -86,7 +86,7 @@
     "authorizationRequired": "Generar Wiki requiere código de autorización"
   },
   "footer": {
-    "copyright": "FreeDeepWiki - Documentación impulsada por IA para repositorios de código"
+    "copyright": "HackDeepWiki - Documentación impulsada por IA para repositorios de código"
   },
   "diagram": {
     "title": "Vista del diagrama",

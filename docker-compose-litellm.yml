@@ -10,7 +10,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - freedeepwiki_litellm_db:/var/lib/postgresql/data
+      - hackdeepwiki_litellm_db:/var/lib/postgresql/data
 
   litellm:
     image: ghcr.io/berriai/litellm:v1.83.10-stable
@@ -31,8 +31,8 @@ services:
     depends_on:
       - db
 
-  freedeepwiki:
-    image: freedeepwiki-litellm  # Using image name to show it depends on LiteLLM
+  hackdeepwiki:
+    image: hackdeepwiki-litellm  # Using image name to show it depends on LiteLLM
     build:
       context: .
       dockerfile: Dockerfile-litellm  # ← Using Dockerfile that depends on LiteLLM
@@ -67,4 +67,4 @@ services:
       - litellm
 
 volumes:
-  freedeepwiki_litellm_db:
+  hackdeepwiki_litellm_db:

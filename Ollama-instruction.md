@@ -1,6 +1,6 @@
-# Using FreeDeepWiki with Ollama: Beginner's Guide
+# Using HackDeepWiki with Ollama: Beginner's Guide
 
-FreeDeepWiki supports local AI models through Ollama, which is perfect if you want to:
+HackDeepWiki supports local AI models through Ollama, which is perfect if you want to:
 
 - Run everything locally without relying on cloud APIs
 - Avoid API costs from OpenAI or Google
@@ -33,14 +33,14 @@ ollama pull nomic-embed-text
 ollama pull qwen3:1.7b
 ```
 
-The first command downloads the embedding model that FreeDeepWiki uses to understand your code. The second downloads a small but capable language model for generating documentation.
+The first command downloads the embedding model that HackDeepWiki uses to understand your code. The second downloads a small but capable language model for generating documentation.
 
-## Step 3: Set Up FreeDeepWiki
+## Step 3: Set Up HackDeepWiki
 
-Clone the FreeDeepWiki repository:
+Clone the HackDeepWiki repository:
 ```bash
-git clone https://github.com/kroryan/freedeepwiki.git
-cd freedeepwiki
+git clone https://github.com/kroryan/hackdeepwiki.git
+cd hackdeepwiki
 ```
 
 Create a `.env` file in the project root:
@@ -69,7 +69,7 @@ npm install
 npm run dev
 ```
 
-## Step 4: Use FreeDeepWiki with Ollama
+## Step 4: Use HackDeepWiki with Ollama
 
 1. Open http://localhost:3000 in your browser
 2. Enter a GitHub, GitLab, or Bitbucket repository URL
@@ -86,21 +86,21 @@ cp api/config/embedder.ollama.json.bak api/config/embedder.json
 # overwrite api/config/embedder.json? (y/n [n]) y
 ```
 
-2. Build the docker image `docker build -f Dockerfile-ollama-local -t freedeepwiki:ollama-local .`
+2. Build the docker image `docker build -f Dockerfile-ollama-local -t hackdeepwiki:ollama-local .`
 3. Run the container:
    ```bash
    # For regular use
-   docker run -p 3000:3000 -p 8001:8001 --name freedeepwiki \
+   docker run -p 3000:3000 -p 8001:8001 --name hackdeepwiki \
      -v ~/.adalflow:/root/.adalflow \
      -e OLLAMA_HOST=your_ollama_host \
-     freedeepwiki:ollama-local
+     hackdeepwiki:ollama-local
    
    # For local repository analysis
-   docker run -p 3000:3000 -p 8001:8001 --name freedeepwiki \
+   docker run -p 3000:3000 -p 8001:8001 --name hackdeepwiki \
      -v ~/.adalflow:/root/.adalflow \
      -e OLLAMA_HOST=your_ollama_host \
      -v /path/to/your/repo:/app/local-repos/repo-name \
-     freedeepwiki:ollama-local
+     hackdeepwiki:ollama-local
    ```
 
 4. When using local repositories in the interface: use `/app/local-repos/repo-name` as the local repository path.
@@ -111,7 +111,7 @@ Note: For Apple Silicon Macs, the Dockerfile automatically uses ARM64 binaries f
 
 ## How It Works
 
-When you select "Use Local Ollama", FreeDeepWiki will:
+When you select "Use Local Ollama", HackDeepWiki will:
 
 1. Use the `nomic-embed-text` model for creating embeddings of your code
 2. Use the `qwen3:1.7b` model for generating documentation
@@ -182,7 +182,7 @@ For optimal performance with Ollama:
 
 ## Limitations
 
-When using Ollama with FreeDeepWiki:
+When using Ollama with HackDeepWiki:
 
 1. **No Internet Access**: The models run completely offline and cannot access external information
 2. **Limited Context Window**: Local models typically have smaller context windows than cloud APIs
@@ -190,6 +190,6 @@ When using Ollama with FreeDeepWiki:
 
 ## Conclusion
 
-Using FreeDeepWiki with Ollama gives you a completely local, private solution for code documentation. While it may not match the speed or quality of cloud-based solutions, it provides a free and privacy-focused alternative that works well for most projects.
+Using HackDeepWiki with Ollama gives you a completely local, private solution for code documentation. While it may not match the speed or quality of cloud-based solutions, it provides a free and privacy-focused alternative that works well for most projects.
 
-Enjoy using FreeDeepWiki with your local Ollama models!
+Enjoy using HackDeepWiki with your local Ollama models!

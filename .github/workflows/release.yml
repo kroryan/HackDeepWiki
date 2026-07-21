@@ -52,13 +52,13 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller freedeepwiki.spec
+          pyinstaller hackdeepwiki.spec
 
       - name: Rename and upload Windows binary
         uses: actions/upload-artifact@v4
         with:
-          name: freedeepwiki-windows
-          path: dist/freedeepwiki.exe
+          name: hackdeepwiki-windows
+          path: dist/hackdeepwiki.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -100,7 +100,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller freedeepwiki.spec
+          pyinstaller hackdeepwiki.spec
 
       - name: Package AppImage
         run: |
@@ -109,24 +109,24 @@ jobs:
 
           # 2. Copy launcher (onedir build: a folder containing the exe +
           # _internal/, not a single file) and assets
-          cp -r dist/freedeepwiki/. AppDir/usr/bin/
-          cp public/freedeepwiki.png AppDir/freedeepwiki.png
+          cp -r dist/hackdeepwiki/. AppDir/usr/bin/
+          cp public/hackdeepwiki.png AppDir/hackdeepwiki.png
           
           # 3. Create AppRun script
           cat << 'EOF' > AppDir/AppRun
           #!/bin/sh
           SELF=$(readlink -f "$0")
           HERE=$(dirname "$SELF")
-          exec "$HERE/usr/bin/freedeepwiki" "$@"
+          exec "$HERE/usr/bin/hackdeepwiki" "$@"
           EOF
           chmod +x AppDir/AppRun
           
           # 4. Create desktop entry
-          cat << 'EOF' > AppDir/freedeepwiki.desktop
+          cat << 'EOF' > AppDir/hackdeepwiki.desktop
           [Desktop Entry]
-          Name=FreeDeepWiki
-          Exec=freedeepwiki
-          Icon=freedeepwiki
+          Name=HackDeepWiki
+          Exec=hackdeepwiki
+          Icon=hackdeepwiki
           Type=Application
           Categories=Development;
           Comment=AI-powered wiki generation and code analysis
@@ -138,13 +138,13 @@ jobs:
           chmod +x appimagetool-x86_64.AppImage
           
           export APPIMAGE_EXTRACT_AND_RUN=1
-          ./appimagetool-x86_64.AppImage --no-appstream AppDir FreeDeepWiki-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage --no-appstream AppDir HackDeepWiki-x86_64.AppImage
 
       - name: Upload Linux AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: freedeepwiki-linux
-          path: FreeDeepWiki-x86_64.AppImage
+          name: hackdeepwiki-linux
+          path: HackDeepWiki-x86_64.AppImage
 
   publish-release:
     runs-on: ubuntu-latest
@@ -153,20 +153,20 @@ jobs:
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
-          name: freedeepwiki-windows
+          name: hackdeepwiki-windows
           path: ./artifacts/windows
 
       - name: Download Linux AppImage
         uses: actions/download-artifact@v4
         with:
-          name: freedeepwiki-linux
+          name: hackdeepwiki-linux
           path: ./artifacts/linux
 
       - name: Setup environment for Release
         run: |
           # Arrange files
-          mv ./artifacts/windows/freedeepwiki.exe ./FreeDeepWiki-windows-x64.exe
-          mv ./artifacts/linux/FreeDeepWiki-x86_64.AppImage ./FreeDeepWiki-x86_64.AppImage
+          mv ./artifacts/windows/hackdeepwiki.exe ./HackDeepWiki-windows-x64.exe
+          mv ./artifacts/linux/HackDeepWiki-x86_64.AppImage ./HackDeepWiki-x86_64.AppImage
           
           # Check if this is a tag or a commit push
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
@@ -187,18 +187,18 @@ jobs:
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           draft: false
           body: |
-            Automatic pre-release builds of FreeDeepWiki.
+            Automatic pre-release builds of HackDeepWiki.
             
             - Built from branch: `${{ github.ref_name }}`
             - Commit: `${{ github.sha }}`
             - Built at: ${{ github.event.head_commit.timestamp || 'N/A' }}
             
             ### Standalone Executables
-            - **Windows**: [FreeDeepWiki-windows-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/FreeDeepWiki-windows-x64.exe)
-            - **Linux (AppImage)**: [FreeDeepWiki-x86_64.AppImage](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/FreeDeepWiki-x86_64.AppImage)
+            - **Windows**: [HackDeepWiki-windows-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/HackDeepWiki-windows-x64.exe)
+            - **Linux (AppImage)**: [HackDeepWiki-x86_64.AppImage](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/HackDeepWiki-x86_64.AppImage)
             
             *No installation is required. Simply download and run the binary for your platform.*
           files: |
-            FreeDeepWiki-windows-x64.exe
-            FreeDeepWiki-x86_64.AppImage
+            HackDeepWiki-windows-x64.exe
+            HackDeepWiki-x86_64.AppImage
           make_latest: ${{ env.IS_PRERELEASE == 'false' }}

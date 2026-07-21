@@ -1,1 +1,1 @@
-# Tests for FreeDeepWiki
+# Tests for HackDeepWiki

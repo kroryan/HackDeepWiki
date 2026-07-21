@@ -1,8 +1,8 @@
 # Local, Ollama-first overrides. Keep this file separate from the upstream
 # docker-compose.yml so upstream updates can be merged without conflicts.
 services:
-  freedeepwiki:
-    image: freedeepwiki:ollama
+  hackdeepwiki:
+    image: hackdeepwiki:ollama
     env_file: !reset []
     environment:
       PORT: "${PORT:-8001}"
@@ -13,24 +13,24 @@ services:
       OLLAMA_EMBED_BATCH_SIZE: "${OLLAMA_EMBED_BATCH_SIZE:-32}"
       OLLAMA_REQUEST_TIMEOUT: "${OLLAMA_REQUEST_TIMEOUT:-1800}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
-      FREEDEPWIKI_EMBEDDER_TYPE: ollama
-      FREEDEPWIKI_CONFIG_DIR: /app/.freedeepwiki/config
+      HACKDEEPWIKI_EMBEDDER_TYPE: ollama
+      HACKDEEPWIKI_CONFIG_DIR: /app/.hackdeepwiki/config
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./.freedeepwiki:/app/.freedeepwiki
-      - ./scripts/freedeepwiki_config.py:/opt/freedeepwiki_config.py:ro
+      - ./.hackdeepwiki:/app/.hackdeepwiki
+      - ./scripts/hackdeepwiki_config.py:/opt/hackdeepwiki_config.py:ro
     command:
       - /bin/bash
       - -c
       - |
-        python /opt/freedeepwiki_config.py \
+        python /opt/hackdeepwiki_config.py \
           --source /app/api/config \
-          --output /app/.freedeepwiki/config \
+          --output /app/.hackdeepwiki/config \
           --ollama-endpoint "$${OLLAMA_HOST}" \
           --model "$${OLLAMA_MODEL}" \
           --embed-model "$${OLLAMA_EMBED_MODEL}"
-        printf 'FREEDEPWIKI_OLLAMA_MODE=1\n' > /app/.env
+        printf 'HACKDEEPWIKI_OLLAMA_MODE=1\n' > /app/.env
         exec /app/start.sh
     # `docker compose up` starts it explicitly; it will not start at boot.
     restart: "no"

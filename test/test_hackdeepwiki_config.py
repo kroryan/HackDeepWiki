@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.freedeepwiki_config import classify_models, render
+from scripts.hackdeepwiki_config import classify_models, render
 
 
 def read_json(path: Path):

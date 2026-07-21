@@ -1,10 +1,10 @@
-"""Neo4j graph persistence for web vulnerability scan results -- FreeDeepWiki's
+"""Neo4j graph persistence for web vulnerability scan results -- HackDeepWiki's
 own independent port of the schema/connection pattern used by RedAmon's
 graph_db module (tmp/redamon/graph_db/), trimmed to what a single-user local
 app actually needs.
 
 Differences from RedAmon's graph_db:
-    - No user_id/project_id tenant scoping -- FreeDeepWiki is a local,
+    - No user_id/project_id tenant scoping -- HackDeepWiki is a local,
       single-user app, not a multi-tenant SaaS. Nodes are scoped by
       ``site_url`` instead.
     - One flat client, no mixin-per-topic split -- the node/relationship
@@ -14,7 +14,7 @@ Differences from RedAmon's graph_db:
       scale.
     - No GVM/OSINT/secret-hunt/attack-chain node types -- those model
       RedAmon's other scan modules (Shodan/Censys enrichment, credential
-      leaks, multi-step exploitation chains), which have no FreeDeepWiki
+      leaks, multi-step exploitation chains), which have no HackDeepWiki
       equivalent.
 
 Entirely optional: every call site wraps this in a try/except and the
@@ -33,9 +33,9 @@ from api.web_vuln_scanner.models import WebFinding, WebVulnReport
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_URI = os.environ.get("FREEDEEPWIKI_NEO4J_URI", "bolt://localhost:7687")
-DEFAULT_USER = os.environ.get("FREEDEEPWIKI_NEO4J_USER", "neo4j")
-DEFAULT_PASSWORD = os.environ.get("FREEDEEPWIKI_NEO4J_PASSWORD", "freedeepwiki_secret")
+DEFAULT_URI = os.environ.get("HACKDEEPWIKI_NEO4J_URI", "bolt://localhost:7687")
+DEFAULT_USER = os.environ.get("HACKDEEPWIKI_NEO4J_USER", "neo4j")
+DEFAULT_PASSWORD = os.environ.get("HACKDEEPWIKI_NEO4J_PASSWORD", "hackdeepwiki_secret")
 
 CONSTRAINTS = [
     "CREATE CONSTRAINT fdw_site_unique IF NOT EXISTS FOR (s:Site) REQUIRE s.url IS UNIQUE",

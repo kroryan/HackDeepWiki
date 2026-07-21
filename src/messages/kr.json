@@ -1,6 +1,6 @@
 {
     "common": {
-      "appName": "FreeDeepWiki",
+      "appName": "HackDeepWiki",
       "tagline": "AI 기반 문서화",
       "generateWiki": "위키 생성",
       "processing": "처리 중...",
@@ -18,13 +18,13 @@
       "preparingDownload": "다운로드를 준비 중입니다. 잠시만 기다려 주세요..."
     },
     "home": {
-      "welcome": "FreeDeepWiki에 오신 것을 환영합니다",
+      "welcome": "HackDeepWiki에 오신 것을 환영합니다",
       "welcomeTagline": "코드, 웹사이트, 오프라인 아카이브를 위한 AI 기반 문서화",
       "description": "GitHub, GitLab, Bitbucket 저장소, 로컬 폴더, ZIM 아카이브, 또는 모든 실시간 웹사이트에서 종합적인 위키를 생성하세요. 저장소와 사이트 모두를 위한 선택적 내장 보안 스캔(종속성 CVE, 시크릿, SAST, 심층 웹 취약점 스캔)도 제공됩니다.",
       "quickStart": "빠른 시작",
       "enterRepoUrl": "저장소 URL, 로컬 폴더 경로, 또는 웹사이트 URL을 입력하세요:",
       "advancedVisualization": "Mermaid 다이어그램을 활용한 고급 시각화",
-      "diagramDescription": "FreeDeepWiki는 코드 구조와 관계를 이해하는 데 도움이 되는 대화형 다이어그램을 자동 생성합니다:",
+      "diagramDescription": "HackDeepWiki는 코드 구조와 관계를 이해하는 데 도움이 되는 대화형 다이어그램을 자동 생성합니다:",
       "flowDiagram": "흐름도",
       "sequenceDiagram": "시퀀스 다이어그램"
     },
@@ -84,7 +84,7 @@
       "authorizationRequired": "Wiki 생성에는 인증코드가 필요합니다"
     },
     "footer": {
-      "copyright": "FreeDeepWiki - 코드 저장소를 위한 AI 기반 문서화"
+      "copyright": "HackDeepWiki - 코드 저장소를 위한 AI 기반 문서화"
     },
     "ask": {
       "placeholder": "이 저장소에 대해 질문해 보세요...",

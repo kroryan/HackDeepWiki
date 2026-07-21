@@ -1,8 +1,8 @@
-"""Runs the freedeepwiki-vulnscan Kali toolkit container (docker/vulnscan/)
+"""Runs the hackdeepwiki-vulnscan Kali toolkit container (docker/vulnscan/)
 as one-shot subprocesses and parses each tool's output into WebFinding
 objects.
 
-Docker is entirely user-managed: FreeDeepWiki never installs, starts, or
+Docker is entirely user-managed: HackDeepWiki never installs, starts, or
 auto-configures Docker itself (see docker/vulnscan/docker-compose.yml's
 module docstring). This module only:
     1. Detects whether Docker is available and whether the image exists.
@@ -34,12 +34,12 @@ from api.web_vuln_scanner.models import WebFinding
 
 logger = logging.getLogger(__name__)
 
-IMAGE_NAME = "freedeepwiki-vulnscan:latest"
+IMAGE_NAME = "hackdeepwiki-vulnscan:latest"
 # Public image on Docker Hub -- built from docker/vulnscan/Dockerfile and
 # pushed independently of this repo's release cadence. Falls back to a local
 # `docker build` (see ensure_image) if the pull fails (offline dev, private
 # registry mirror, etc.) and a local Dockerfile is present.
-REGISTRY_IMAGE = "krory90/freedeepwiki-vulnscan:latest"
+REGISTRY_IMAGE = "krory90/hackdeepwiki-vulnscan:latest"
 
 _DOCKER_TIMEOUT = 20  # for quick availability checks
 _TOOL_TIMEOUT = 180  # per-tool scan timeout -- generous but bounded
@@ -162,7 +162,7 @@ async def _build_local_image(on_progress: Optional[ProgressCb] = None) -> bool:
 
 
 def _run_tool(args: List[str], timeout: int = _TOOL_TIMEOUT) -> Optional[str]:
-    """Run `docker run --rm freedeepwiki-vulnscan <args>` and return stdout,
+    """Run `docker run --rm hackdeepwiki-vulnscan <args>` and return stdout,
     or None on any failure/timeout (non-fatal -- caller just gets no
     findings from this tool)."""
     docker_bin = shutil.which("docker")

@@ -1,4 +1,4 @@
-# FreeDeepWiki
+# HackDeepWiki
 <img width="1344" height="759" alt="image" src="https://github.com/user-attachments/assets/b88d40f8-78f9-413e-9327-a10e2610f0cf" />
 <img width="1907" height="780" alt="image" src="https://github.com/user-attachments/assets/3a454f91-39b7-4a25-a4b6-2c49cc3480fc" />
 
@@ -6,7 +6,7 @@
 
 
 
-**FreeDeepWiki** turns any Git repository into an interactive, AI-generated wiki. Point it at a GitHub, GitLab, or Bitbucket repo (or a local folder) and it will:
+**HackDeepWiki** turns any Git repository into an interactive, AI-generated wiki. Point it at a GitHub, GitLab, or Bitbucket repo (or a local folder) and it will:
 
 1. Analyze the code structure
 2. Generate structured documentation, page by page
@@ -28,10 +28,10 @@ It ships as a **single portable binary** — an AppImage on Linux, a `.exe` on W
 
 ## Quick start — portable app (recommended)
 
-1. Grab the latest build from the [Releases page](https://github.com/kroryan/FreeDeepWiki/releases):
-   - **Linux** → `FreeDeepWiki-x86_64.AppImage`
-   - **Windows** → `FreeDeepWiki-windows-x64.exe`
-2. Make it executable and run it (Linux: `chmod +x FreeDeepWiki-x86_64.AppImage && ./FreeDeepWiki-x86_64.AppImage`; Windows: just double-click it).
+1. Grab the latest build from the [Releases page](https://github.com/kroryan/HackDeepWiki/releases):
+   - **Linux** → `HackDeepWiki-x86_64.AppImage`
+   - **Windows** → `HackDeepWiki-windows-x64.exe`
+2. Make it executable and run it (Linux: `chmod +x HackDeepWiki-x86_64.AppImage && ./HackDeepWiki-x86_64.AppImage`; Windows: just double-click it).
 3. It starts its own local server, waits for it to come up, and opens your browser automatically at `http://127.0.0.1:<port>`.
 4. Paste a repository URL and generate your first wiki. If you have Ollama running locally, no further setup is needed — otherwise open the model settings panel and add an API key for the provider of your choice.
 
@@ -72,7 +72,7 @@ npm run build
 python scripts/prepare_assets.py linux   # or "windows"
 pip install poetry pyinstaller
 poetry -C api install --only main
-pyinstaller freedeepwiki.spec
+pyinstaller hackdeepwiki.spec
 ```
 
 This bundles the built Next.js frontend, the FastAPI backend, and a Node.js runtime into a single PyInstaller binary (`scripts/launcher.py` is the entrypoint), which the Linux job then wraps into an AppImage.
@@ -90,7 +90,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=kroryan/freedeepwiki&type=Date)](https://star-history.com/#kroryan/freedeepwiki&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=kroryan/hackdeepwiki&type=Date)](https://star-history.com/#kroryan/hackdeepwiki&Date)
 
 ## 🙏 Credits
 

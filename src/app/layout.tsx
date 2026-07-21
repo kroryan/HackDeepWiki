@@ -5,7 +5,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import CyberBackground from "@/components/CyberBackground";
 
 export const metadata: Metadata = {
-  title: "FreeDeepWiki Open Source | Sheing Ng",
+  title: "HackDeepWiki Open Source | Sheing Ng",
   description: "Created by Sheing Ng",
 };
 
