@@ -922,22 +922,47 @@ Remember:
           // Create a promise that resolves when the WebSocket response is complete
           const pageStreamParser = new StreamParser();
           await new Promise<void>((resolve, reject) => {
+            // Idle (not total) timeout, reset on every chunk actually
+            // received -- see the matching comment on the wiki-structure
+            // request above for why this exists (a stream can genuinely
+            // stall mid-response with no further data and no close frame,
+            // and pages generate one at a time, so a single stalled page
+            // would otherwise wedge the entire remaining queue forever).
+            const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+            let idleTimer: ReturnType<typeof setTimeout>;
+            const resetIdleTimer = () => {
+              clearTimeout(idleTimer);
+              idleTimer = setTimeout(() => {
+                console.warn(`Page "${page.title}" stream went idle -- no data received for 5 minutes.`);
+                try { ws.close(); } catch {}
+                reject(new Error(
+                  language === 'es'
+                    ? 'El modelo dejó de responder (sin datos nuevos durante 5 minutos).'
+                    : 'The model stopped responding (no new data for 5 minutes).'
+                ));
+              }, IDLE_TIMEOUT_MS);
+            };
+            resetIdleTimer();
+
             // Handle incoming messages. Even with enable_tool_calling: false
             // above, a reasoning model's thinking tokens can still arrive
             // wrapped as out-of-band process frames -- strip them here too
             // so they never end up saved as page content.
             ws.onmessage = (event) => {
+              resetIdleTimer();
               content += pageStreamParser.feed(event.data).text;
             };
 
             // Handle WebSocket close
             ws.onclose = () => {
+              clearTimeout(idleTimer);
               console.log(`WebSocket connection closed for page: ${page.title}`);
               resolve();
             };
 
             // Handle WebSocket errors
             ws.onerror = (error) => {
+              clearTimeout(idleTimer);
               console.error('WebSocket error during message reception:', error);
               reject(new Error('WebSocket error during message reception'));
             };
@@ -1293,21 +1318,52 @@ IMPORTANT:
         // Create a promise that resolves when the WebSocket response is complete
         const structureStreamParser = new StreamParser();
         await new Promise<void>((resolve, reject) => {
+          // Model inference has no *total* timeout by design (see
+          // src/utils/timeouts.ts -- a slow local model must be allowed to
+          // take as long as it needs). But with nothing bounding this at
+          // all, a stream that genuinely stalls mid-response (seen in
+          // practice: a cloud-hosted Ollama model's connection going quiet
+          // partway through a long structure response, never sending
+          // another chunk and never closing) left the user staring at the
+          // loading spinner forever with no error and no way to know it had
+          // died rather than just being slow. An *idle* timeout -- reset on
+          // every chunk actually received -- catches that stalled case
+          // without cutting off a model that's still actively, if slowly,
+          // producing output.
+          const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+          let idleTimer: ReturnType<typeof setTimeout>;
+          const resetIdleTimer = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              console.warn('Wiki structure stream went idle -- no data received for 5 minutes.');
+              try { ws.close(); } catch {}
+              reject(new Error(
+                language === 'es'
+                  ? 'El modelo dejó de responder (sin datos nuevos durante 5 minutos). Vuelve a intentar la generación.'
+                  : 'The model stopped responding (no new data for 5 minutes). Retry the generation.'
+              ));
+            }, IDLE_TIMEOUT_MS);
+          };
+          resetIdleTimer();
+
           // Handle incoming messages (see the page-generation WS handler
           // above for why this still needs frame-stripping even with
           // enable_tool_calling: false).
           ws.onmessage = (event) => {
+            resetIdleTimer();
             responseText += structureStreamParser.feed(event.data).text;
           };
 
           // Handle WebSocket close
           ws.onclose = () => {
+            clearTimeout(idleTimer);
             console.log('WebSocket connection closed for wiki structure');
             resolve();
           };
 
           // Handle WebSocket errors
           ws.onerror = (error) => {
+            clearTimeout(idleTimer);
             console.error('WebSocket error during message reception:', error);
             reject(new Error('WebSocket error during message reception'));
           };
