@@ -40,6 +40,9 @@ export default function WebVulnOverview({ report }: Props) {
         <span>Total findings: <strong className="text-[var(--foreground)]">{report.total_findings}</strong></span>
         <span>Pages scanned: <strong className="text-[var(--foreground)]">{report.pages_scanned}</strong></span>
         <span>AI cross-check: <strong className="text-[var(--foreground)]">{report.ai_analyzed ? 'yes' : 'no'}</strong></span>
+        <span>
+          Deep scan (Docker): <strong className="text-[var(--foreground)]">{report.deep_scan_ran ? 'yes' : 'no'}</strong>
+        </span>
         {report.detected_technologies.length > 0 && (
           <span>Technologies: <strong className="text-[var(--foreground)]">{report.detected_technologies.map((t) => t.name).join(', ')}</strong></span>
         )}
@@ -47,6 +50,13 @@ export default function WebVulnOverview({ report }: Props) {
           <span>Generated: <strong className="text-[var(--foreground)]">{new Date(report.generated_at).toLocaleString()}</strong></span>
         )}
       </div>
+      {!report.deep_scan_ran && (
+        <div className="mt-2 text-xs text-[var(--muted)] bg-[var(--background)]/50 border border-[var(--border-color)] rounded-md px-3 py-2">
+          This report only includes the always-on header/cookie/TLS/exposed-path checks.
+          For a full professional-tool pass (nmap, nikto, whatweb, testssl, nuclei, subfinder,
+          ffuf, dalfox, wpscan), use &quot;Rerun scan&quot; and enable the Docker deep scan.
+        </div>
+      )}
     </div>
   );
 }

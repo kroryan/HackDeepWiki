@@ -52,6 +52,7 @@ export interface WebVulnReport {
   ai_analyzed: boolean;
   remediation_plan?: RemediationPlan;
   graph: GraphData;
+  deep_scan_ran?: boolean;
 }
 
 export const WEB_SEVERITY_ORDER: WebSeverity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];

@@ -121,7 +121,7 @@ def _query_osv_for_js_libs(queries: List[dict]) -> List[WebFinding]:
 def _build_report(site_url: str, owner: str, repo: str, language: str,
                   provider: str, model: str, pages_scanned: int,
                   findings: List[WebFinding], technologies: List[str],
-                  ai_analyzed: bool) -> WebVulnReport:
+                  ai_analyzed: bool, deep_scan_ran: bool = False) -> WebVulnReport:
     counts = {s: 0 for s in SEVERITY_RANKS}
     for f in findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -146,6 +146,7 @@ def _build_report(site_url: str, owner: str, repo: str, language: str,
         all_findings=[f.to_dict() for f in findings],
         detected_technologies=[{"name": t} for t in technologies],
         ai_analyzed=ai_analyzed,
+        deep_scan_ran=deep_scan_ran,
     )
 
 
@@ -257,6 +258,7 @@ async def run_web_vuln_scan(
         site_url=site_url, owner=owner, repo=repo, language=language,
         provider=provider, model=model or "", pages_scanned=len(sample),
         findings=findings, technologies=sorted(technologies), ai_analyzed=ai_analyzed,
+        deep_scan_ran=enable_deep_scan,
     )
 
     from api.vuln_common.remediation import build_remediation_plan

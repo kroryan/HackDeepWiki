@@ -70,6 +70,11 @@ class WebVulnReport:
     all_findings: List[Dict[str, Any]] = field(default_factory=list)
     detected_technologies: List[Dict[str, Any]] = field(default_factory=list)  # [{name, version}]
     ai_analyzed: bool = False
+    # Whether the opt-in Docker toolkit pass (nmap/nikto/httpx/whatweb/
+    # testssl/nuclei/subfinder/ffuf/dalfox/wpscan) ran -- surfaced to the
+    # frontend so a thin report (just the always-on header/cookie/TLS checks)
+    # is visibly explained instead of looking incomplete.
+    deep_scan_ran: bool = False
     # Consolidated, prioritized "Suggested Solutions" page -- see
     # api.vuln_common.remediation.build_remediation_plan.
     remediation_plan: Dict[str, Any] = field(default_factory=dict)
