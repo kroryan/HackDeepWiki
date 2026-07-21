@@ -1,9 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+import importlib.util
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
+
+# ---------------------------------------------------------------------------
+# Fail fast if a required runtime dependency is missing from the build env.
+# PyInstaller's collect_submodules() silently skips packages that aren't
+# installed, which produces a bundle that *builds green* but crashes at
+# startup with ModuleNotFoundError (e.g. libzim). Aborting here turns that
+# silent failure into a loud, actionable build error — for both local and
+# CI builds. Keep this list in sync with `packages_to_collect` below.
+# ---------------------------------------------------------------------------
+_REQUIRED_IMPORTS = [
+    "fastapi", "uvicorn", "pydantic", "adalflow", "google.generativeai",
+    "tiktoken", "tiktoken_ext", "websockets", "azure.identity", "azure.core",
+    "boto3", "botocore", "requests", "jinja2", "aiohttp", "langid", "numpy",
+    "openai", "ollama", "faiss", "libzim",
+]
+_missing = [m for m in _REQUIRED_IMPORTS if importlib.util.find_spec(m) is None]
+if _missing:
+    raise SystemExit(
+        "\n[build aborted] missing required dependencies: "
+        + ", ".join(_missing)
+        + "\nPyInstaller would silently skip them and ship a broken bundle."
+        + "\nInstall them first (e.g. `poetry install --only main` in api/,"
+        " or `pip install <pkg>`).\n"
+    )
 
 # Identify current OS
 is_win = sys.platform.startswith('win')

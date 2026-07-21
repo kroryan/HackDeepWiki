@@ -2128,6 +2128,31 @@ IMPORTANT:
       currentUrl.searchParams.delete('is_custom_model');
       currentUrl.searchParams.delete('custom_model');
     }
+
+    // 🔐 Security Analysis — mirror the vuln scan selection into the URL so the
+    // wiki-save effect kicks off a scan after the refreshed wiki is generated
+    // (it triggers runVulnScan when vuln_scan=1, and runVulnScan reads the
+    // category/nvd params straight from the URL). Reset the scan guard + report
+    // so a refresh always re-scans fresh instead of keeping the previous run.
+    if (selection?.enableVulnScan) {
+      currentUrl.searchParams.set('vuln_scan', '1');
+      currentUrl.searchParams.set('vuln_client', (selection.vulnClient ?? true) ? '1' : '0');
+      currentUrl.searchParams.set('vuln_server', (selection.vulnServer ?? true) ? '1' : '0');
+      currentUrl.searchParams.set('vuln_deps', (selection.vulnDeps ?? true) ? '1' : '0');
+      currentUrl.searchParams.set('vuln_obsidian', (selection.includeVulnsInObsidian ?? true) ? '1' : '0');
+      if (selection.nvdKey) {
+        currentUrl.searchParams.set('nvd_key', encodeURIComponent(selection.nvdKey));
+      } else {
+        currentUrl.searchParams.delete('nvd_key');
+      }
+      vulnScanStartedRef.current = false;
+      setVulnReport(null);
+      setVulnStatus('idle');
+      setVulnError(null);
+      setViewMode('wiki');
+    } else {
+      currentUrl.searchParams.delete('vuln_scan');
+    }
     window.history.replaceState({}, '', currentUrl.toString());
 
     // Proceed with the rest of the refresh logic. The new generation is saved as
@@ -3285,6 +3310,13 @@ IMPORTANT:
         authCode={authCode}
         setAuthCode={setAuthCode}
         isAuthLoading={isAuthLoading}
+        showVulnScan={true}
+        enableVulnScan={vulnScanRequested}
+        vulnClient={vulnClientEnabled}
+        vulnServer={vulnServerEnabled}
+        vulnDeps={vulnDepsEnabled}
+        nvdKey={nvdKeyParam}
+        includeVulnsInObsidian={vulnObsidianInclude}
       />
     </div>
   );
