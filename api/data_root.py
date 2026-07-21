@@ -201,7 +201,31 @@ def migrate_legacy_wikicache(target_root: str) -> None:
         print(f"Migrated {moved} legacy wiki cache file(s) into {target_wikicache}")
 
 
+def _setup_playwright_browsers_path(root: str) -> None:
+    """Point Playwright at a writable, portable browsers directory.
+
+    Playwright's Python package ships its Node.js driver but NOT the actual
+    browser binaries (Chromium etc.) -- those are a separate ~150-300MB
+    download `playwright install` normally does once, outside of `pip
+    install playwright`. In a frozen PyInstaller build the driver resolves
+    its default browsers directory to a ``.local-browsers`` folder *next to
+    itself inside the bundle* (verified empirically:
+    ``.../driver/package/.local-browsers/...``) -- which is read-only once
+    packaged into an AppImage, so nothing can ever be installed there and
+    every crawl fails with "Executable doesn't exist". Redirecting
+    PLAYWRIGHT_BROWSERS_PATH to somewhere inside the writable portable
+    DATABASE root fixes both problems: it's writable, and it survives
+    between runs so the one-time download (see
+    ``api/web_crawler/crawler.py::_ensure_chromium``) only ever happens once.
+    Never overrides an explicit user-set PLAYWRIGHT_BROWSERS_PATH.
+    """
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(root, "playwright-browsers")
+
+
 # Resolve the root once at import time and redirect adalflow's hardcoded root to it
 # so EVERYTHING (app data + adalflow internal dbs/caches) lives inside DATABASE.
 _resolved_root = get_data_root()
 _patch_adalflow_root(_resolved_root)
+_setup_playwright_browsers_path(_resolved_root)

@@ -57,7 +57,7 @@ WIKI_AUTH_CODE = os.environ.get('FREEDEPWIKI_AUTH_CODE', '')
 EMBEDDER_TYPE = os.environ.get('FREEDEPWIKI_EMBEDDER_TYPE', 'ollama').lower()
 
 # Get configuration directory from environment variable, or use default if not set
-CONFIG_DIR = os.environ.get('FREEDEPWIKI_CONFIG_DIR', None)
+CONFIG_DIR = os.environ.get('HACKDEEPWIKI_CONFIG_DIR', None)
 
 # Client class mapping
 CLIENT_CLASSES = {

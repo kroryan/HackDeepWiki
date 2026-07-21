@@ -10,6 +10,7 @@ on-disk Markdown tree the wiki pipeline reads.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import urllib.robotparser as robotparser
@@ -20,7 +21,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 from markdownify import markdownify as _html_to_md
 
-from api.web_crawler.models import CrawlPage, CrawlScope, ProgressCb
+from api.web_crawler.models import CrawlPage, CrawlProgress, CrawlScope, ProgressCb
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,54 @@ def _is_user_content(path: str) -> bool:
 def _looks_skippable(url: str) -> bool:
     path = urlparse(url).path.lower()
     return any(path.endswith(ext) for ext in _SKIP_EXTENSIONS)
+
+
+async def _ensure_chromium(on_progress: Optional[ProgressCb]) -> None:
+    """Self-heals a missing Playwright Chromium install by downloading it,
+    once, the first time a crawl needs it.
+
+    ``pip install playwright`` does not include the browser binaries --
+    those are a separate ~150-300MB download ``playwright install chromium``
+    normally does once, outside the Python package. The packaged app's CI
+    build never runs that step, so a fresh install has no browser at all and
+    the first crawl attempt fails with "Executable doesn't exist" (verified
+    against a real packaged build). ``api.data_root`` already redirects
+    PLAYWRIGHT_BROWSERS_PATH to a writable, portable location; this
+    downloads into it directly via Playwright's own driver (the same
+    Node.js + cli.js the ``playwright install`` command wraps), so no
+    separate `playwright`/`python` executable needs to exist on the
+    end user's machine -- everything needed is already bundled.
+    """
+    from playwright._impl._driver import compute_driver_executable, get_driver_env
+
+    node_path, cli_path = compute_driver_executable()
+
+    async def _p(msg: str) -> None:
+        logger.info("[web-crawl] %s", msg)
+        if on_progress:
+            try:
+                await on_progress(CrawlProgress(
+                    message=msg, pages_done=0, pages_total_estimate=None, percent=None,
+                ))
+            except Exception:  # noqa: BLE001 - progress must never break the crawl
+                pass
+
+    await _p("Downloading headless browser for crawling (one-time, ~150-300MB)…")
+    proc = await asyncio.create_subprocess_exec(
+        node_path, cli_path, "install", "chromium",
+        env=get_driver_env(),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    assert proc.stdout is not None
+    async for raw_line in proc.stdout:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if line:
+            await _p(line)
+    await proc.wait()
+    if proc.returncode == 0:
+        await _p("Browser ready.")
+    else:
+        await _p(f"Browser install exited with code {proc.returncode}; crawl may still fail.")
 
 
 class _RobotsCache:
@@ -203,7 +252,13 @@ async def crawl_site(
                 pass
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+        try:
+            browser = await pw.chromium.launch(headless=True)
+        except Exception as exc:
+            if "Executable doesn't exist" not in str(exc):
+                raise
+            await _ensure_chromium(on_progress)
+            browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (compatible; HackDeepWikiBot/1.0; +https://github.com/kroryan/HackDeepWiki)",
         )

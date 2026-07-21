@@ -142,7 +142,7 @@ def setup_persistent_config_and_logs(args):
               f"falling back to {config_dir}")
 
     # Set config environment variables
-    os.environ["FREEDEPWIKI_CONFIG_DIR"] = config_dir
+    os.environ["HACKDEEPWIKI_CONFIG_DIR"] = config_dir
     os.environ["LOG_FILE_PATH"] = os.path.join(logs_dir, "application.log")
 
     # Set TIKTOKEN_CACHE_DIR to the bundled cache if it exists in BASE_DIR
