@@ -39,7 +39,13 @@ export interface ScannedDependency {
   usage_files: string[];
 }
 
-export type GraphNodeType = 'package' | 'cve' | 'file' | 'cwe' | 'fix';
+// 'package' | 'file' | 'cwe' | 'fix' come from the dependency scan graph;
+// 'site' | 'technology' | 'category' | 'finding' come from the website scan
+// graph (api.web_vuln_scanner.models.build_web_graph) -- both share this
+// type so VulnGraph3D/VulnGraph2D work unmodified for either report.
+export type GraphNodeType =
+  | 'package' | 'cve' | 'file' | 'cwe' | 'fix'
+  | 'site' | 'technology' | 'category' | 'finding';
 
 export interface GraphNode {
   id: string;
@@ -106,3 +112,14 @@ export interface VulnReport {
 export type VulnScanStatus = 'idle' | 'running' | 'done' | 'error';
 
 export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
+
+// One saved release (version) of a dependency or website security scan,
+// returned by /api/vuln_cache/releases or /api/web_vuln_cache/releases --
+// same versioning scheme as the wiki's release history.
+export interface ScanRelease {
+  version: number;
+  created_at: number;
+  total_findings: number | null;
+  generated_at: string | null;
+  id: string;
+}

@@ -2,7 +2,7 @@
 // website security report streamed back from /ws/web_vuln_scan and stored
 // in wikicache (hackdeepwiki_webvulns_*.json).
 
-import { RemediationPlan } from './types';
+import { GraphData, RemediationPlan } from './types';
 
 export type WebSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type WebFindingCategory = 'headers' | 'cookies' | 'tls' | 'exposure' | 'cve';
@@ -51,6 +51,7 @@ export interface WebVulnReport {
   detected_technologies: DetectedTechnology[];
   ai_analyzed: boolean;
   remediation_plan?: RemediationPlan;
+  graph: GraphData;
 }
 
 export const WEB_SEVERITY_ORDER: WebSeverity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];

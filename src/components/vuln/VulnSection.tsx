@@ -5,12 +5,14 @@ import {
   VulnReport,
   CVEFinding,
   VulnScanStatus,
+  ScanRelease,
 } from './types';
 import VulnOverview from './VulnOverview';
 import VulnFindingCard from './VulnFindingCard';
 import VulnDetailDrawer from './VulnDetailDrawer';
 import VulnGraph3D from './VulnGraph3D';
 import VulnRemediationPlan from './VulnRemediationPlan';
+import ScanReleaseSelector from './ScanReleaseSelector';
 
 interface Props {
   report: VulnReport | null;
@@ -19,12 +21,17 @@ interface Props {
   progressPercent?: number | null;
   errorMessage?: string;
   onRetry?: () => void;
+  releases?: ScanRelease[];
+  selectedVersion?: number | null;
+  onSelectVersion?: (version: number) => void;
+  onDeleteVersion?: (version: number) => void;
 }
 
 type Tab = 'client' | 'server' | 'dependencies' | 'graph' | 'solutions';
 
 export default function VulnSection({
   report, status, progressMessage, progressPercent, errorMessage, onRetry,
+  releases = [], selectedVersion = null, onSelectVersion, onDeleteVersion,
 }: Props) {
   const [tab, setTab] = useState<Tab>('client');
   const [selected, setSelected] = useState<CVEFinding | null>(null);
@@ -101,6 +108,15 @@ export default function VulnSection({
 
   return (
     <div className="space-y-4">
+      {onSelectVersion && onDeleteVersion && (
+        <ScanReleaseSelector
+          releases={releases}
+          selectedVersion={selectedVersion}
+          onSelectVersion={onSelectVersion}
+          onDeleteVersion={onDeleteVersion}
+          disabled={status === 'running'}
+        />
+      )}
       <VulnOverview report={report} />
 
       {/* tabs */}

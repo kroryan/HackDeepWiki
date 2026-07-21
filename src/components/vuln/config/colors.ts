@@ -23,11 +23,16 @@ export const SEVERITY_CANVAS_COLOR: Record<Severity, string> = {
 };
 
 export const NODE_COLORS: Record<string, string> = {
-  package: '#3b82f6', // blue
-  cve: '#ef4444',     // red (overridden by severity)
-  file: '#94a3b8',    // grey
-  cwe: '#a855f7',     // purple
-  fix: '#22c55e',     // green
+  package: '#3b82f6',    // blue
+  cve: '#ef4444',        // red (overridden by severity)
+  file: '#94a3b8',       // grey
+  cwe: '#a855f7',        // purple
+  fix: '#22c55e',        // green
+  // Website scan graph node types (build_web_graph)
+  site: '#e2e8f0',       // near-white, the graph's root node
+  technology: '#3b82f6', // blue, same family as 'package'
+  category: '#a855f7',   // purple, same family as 'cwe'
+  finding: '#f59e0b',    // amber
 };
 
 export function severityColor(sev: Severity): string {

@@ -29,3 +29,8 @@ export function packageNodeRadius(cveCount: number | null | undefined): number {
 export const FILE_NODE_SIZE = 3;
 export const CWE_NODE_SIZE = 5;
 export const FIX_NODE_SIZE = 4;
+
+// Website scan graph node types (build_web_graph).
+export const SITE_NODE_SIZE = 15; // the graph's single root node
+export const CATEGORY_NODE_SIZE = 6;
+export const TECH_NODE_SIZE = 6;

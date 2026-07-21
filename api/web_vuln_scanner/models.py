@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 SEVERITY_RANKS = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
@@ -72,6 +73,14 @@ class WebVulnReport:
     # Consolidated, prioritized "Suggested Solutions" page -- see
     # api.vuln_common.remediation.build_remediation_plan.
     remediation_plan: Dict[str, Any] = field(default_factory=dict)
+    # Interactive graph (site -> technology -> CVE, site -> category -> finding)
+    # -- see build_web_graph below. Mirrors api.vuln_scanner's dependency graph
+    # so the frontend can reuse the same VulnGraph3D/2D component for both.
+    # Defaults to an empty (not missing) nodes/links shape -- the frontend
+    # types this as required GraphData, so reading a report saved before this
+    # field existed must still produce something it can render (an empty
+    # graph), not a crash.
+    graph: Dict[str, Any] = field(default_factory=lambda: {"nodes": [], "links": []})
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -81,3 +90,72 @@ class WebVulnReport:
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in (data or {}).items() if k in known}
         return cls(**filtered)
+
+
+_CATEGORY_LABELS = {
+    CATEGORY_HEADERS: "Headers",
+    CATEGORY_COOKIES: "Cookies",
+    CATEGORY_TLS: "TLS",
+    CATEGORY_EXPOSURE: "Exposed Paths",
+}
+
+
+def build_web_graph(findings: List[WebFinding], technologies: List[str], site_url: str):
+    """Build the interactive graph (Site / Technology / CVE / Category /
+    Finding nodes) from a completed scan's findings. Reuses the generic
+    GraphNode/GraphLink/GraphData dataclasses from api.vuln_scanner.models --
+    same JSON shape, so the frontend's VulnGraph3D/VulnGraph2D components
+    work unmodified for both dependency and website scans."""
+    from api.vuln_scanner.models import GraphData, GraphLink, GraphNode
+
+    g = GraphData()
+    seen_nodes: set = set()
+    seen_links: set = set()
+
+    def add_node(node: GraphNode) -> None:
+        if node.id in seen_nodes:
+            return
+        seen_nodes.add(node.id)
+        g.nodes.append(node)
+
+    def add_link(source: str, target: str, label: str) -> None:
+        key = (source, target, label)
+        if key in seen_links:
+            return
+        seen_links.add(key)
+        g.links.append(GraphLink(source=source, target=target, label=label))
+
+    hostname = urlparse(site_url).netloc or site_url
+    site_node = f"site:{hostname}"
+    add_node(GraphNode(id=site_node, type="site", label=hostname))
+
+    tech_node_by_key: Dict[str, str] = {}
+    for tech in technologies:
+        tid = f"tech:{tech}"
+        tech_node_by_key[tech] = tid
+        add_node(GraphNode(id=tid, type="technology", label=tech))
+        add_link(site_node, tid, "USES")
+
+    for f in findings:
+        if f.category == CATEGORY_CVE:
+            cve_node = f"cve:{f.id}"
+            add_node(GraphNode(
+                id=cve_node, type="cve", label=f.cve_id or f.title[:40],
+                severity=f.severity, cvss_score=f.cvss_score,
+            ))
+            tech_key = None
+            if f.technology:
+                candidate = f"{f.technology}@{f.technology_version}" if f.technology_version else f.technology
+                tech_key = tech_node_by_key.get(candidate) or tech_node_by_key.get(f.technology)
+            add_link(tech_key or site_node, cve_node, "AFFECTED_BY")
+            continue
+
+        cat_node = f"category:{f.category}"
+        add_node(GraphNode(id=cat_node, type="category", label=_CATEGORY_LABELS.get(f.category, f.category.title())))
+        add_link(site_node, cat_node, "HAS")
+
+        finding_node = f"finding:{f.id}"
+        add_node(GraphNode(id=finding_node, type="finding", label=f.title[:60], severity=f.severity))
+        add_link(cat_node, finding_node, "CONTAINS")
+
+    return g

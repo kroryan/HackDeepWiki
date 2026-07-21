@@ -6,7 +6,10 @@ import { forceCollide } from 'd3-force-3d';
 import SpriteText from 'three-spritetext';
 import { GraphData, GraphNode, Severity } from './types';
 import { SEVERITY_COLORS, NODE_COLORS } from './config/colors';
-import { cveNodeRadius, packageNodeRadius, FILE_NODE_SIZE, CWE_NODE_SIZE, FIX_NODE_SIZE } from './config/sizes';
+import {
+  cveNodeRadius, packageNodeRadius, FILE_NODE_SIZE, CWE_NODE_SIZE, FIX_NODE_SIZE,
+  SITE_NODE_SIZE, CATEGORY_NODE_SIZE, TECH_NODE_SIZE,
+} from './config/sizes';
 import { GRAPH_CONFIG, CAMERA_DISTANCE } from './config/graph';
 
 interface Props {
@@ -167,14 +170,41 @@ export default function VulnGraph3DInner({ graph, onNodeClick, height = 460 }: P
   );
 }
 
+// Even after capping CVE nodes, a pathological report (thousands of
+// usage-file/package nodes on a huge monorepo, or a giant crawl's worth of
+// per-page findings) could still exceed what WebGL/the browser can render
+// without freezing the tab -- this is the hard backstop.
+const HARD_NODE_CAP = 400;
+// Lowest-priority-first: node types dropped to get under HARD_NODE_CAP.
+// cve/site/technology/category are never dropped here (cve is already
+// capped above; the rest are typically few in number and structurally
+// important -- dropping them would gut the graph rather than just declutter it).
+const DROP_PRIORITY: string[] = ['file', 'cwe', 'fix', 'finding', 'package'];
+
 function prepareData(graph: GraphData) {
-  // Keep worst CVEs + their neighbours; cap total for perf.
+  // Cap CVE nodes to the worst MAX_NODES_3D for perf; every other node type
+  // (site/category/finding/technology/package/cwe/fix/file) is structural,
+  // not per-CVE, so it's always kept -- capping only CVEs is what keeps a
+  // website scan's graph (mostly non-CVE header/cookie/TLS findings) from
+  // collapsing to near-nothing, since most of it has no 'cve' node to hang
+  // off of.
   const cveNodes = graph.nodes.filter((n) => n.type === 'cve');
   cveNodes.sort(sevCompare);
-  const keep = new Set<string>();
+  const keep = new Set<string>(graph.nodes.filter((n) => n.type !== 'cve').map((n) => n.id));
   for (const n of cveNodes.slice(0, MAX_NODES_3D)) keep.add(n.id);
-  const keepLinks = graph.links.filter((l) => keep.has(l.source) || keep.has(l.target));
-  for (const l of keepLinks) { keep.add(l.source); keep.add(l.target); }
+
+  if (keep.size > HARD_NODE_CAP) {
+    const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+    for (const type of DROP_PRIORITY) {
+      if (keep.size <= HARD_NODE_CAP) break;
+      for (const id of keep) {
+        if (keep.size <= HARD_NODE_CAP) break;
+        if (nodeById.get(id)?.type === type) keep.delete(id);
+      }
+    }
+  }
+
+  const keepLinks = graph.links.filter((l) => keep.has(l.source) && keep.has(l.target));
   const keepNodes = graph.nodes.filter((n) => keep.has(n.id));
 
   return {
@@ -190,7 +220,9 @@ function sevCompare(a: GraphNode, b: GraphNode) {
 
 function nodeColor(node: FGNode): string {
   const n = node.__raw ?? (node as unknown as GraphNode);
-  if (n.type === 'cve') return SEVERITY_COLORS[(n.severity as Severity) || 'UNKNOWN'] || SEVERITY_COLORS.UNKNOWN;
+  if (n.type === 'cve' || n.type === 'finding') {
+    return SEVERITY_COLORS[(n.severity as Severity) || 'UNKNOWN'] || SEVERITY_COLORS.UNKNOWN;
+  }
   return NODE_COLORS[n.type] || '#94a3b8';
 }
 
@@ -198,10 +230,14 @@ function nodeVal(node: FGNode): number {
   const n = node.__raw ?? (node as unknown as GraphNode);
   switch (n.type) {
     case 'cve': return cveNodeRadius(n.cvss_score, n.severity ?? 'UNKNOWN');
+    case 'finding': return cveNodeRadius(null, n.severity ?? 'UNKNOWN');
     case 'package': return packageNodeRadius(n.cve_count);
     case 'cwe': return CWE_NODE_SIZE;
     case 'fix': return FIX_NODE_SIZE;
     case 'file': return FILE_NODE_SIZE;
+    case 'site': return SITE_NODE_SIZE;
+    case 'category': return CATEGORY_NODE_SIZE;
+    case 'technology': return TECH_NODE_SIZE;
     default: return FILE_NODE_SIZE;
   }
 }
@@ -212,6 +248,9 @@ function nodeLabel(node: FGNode): string {
     return `${n.label} — ${n.severity || 'UNKNOWN'}` +
       (n.cvss_score != null ? ` (CVSS ${n.cvss_score.toFixed(1)})` : '');
   }
+  if (n.type === 'finding') {
+    return `${n.label} — ${n.severity || 'UNKNOWN'}`;
+  }
   return n.label || '';
 }
 
@@ -221,7 +260,7 @@ function nodeThreeObject(node: FGNode): SpriteText | null {
   if (n.type === 'file') return null;
   const sprite = new SpriteText(n.label || '');
   sprite.color = '#e2e8f0';
-  sprite.backgroundColor = n.type === 'cwe'
+  sprite.backgroundColor = (n.type === 'cwe' || n.type === 'finding')
     ? SEVERITY_COLORS[(n.severity as Severity) || 'UNKNOWN']
     : NODE_COLORS[n.type] || '#334155';
   sprite.padding = 2;

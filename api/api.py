@@ -776,9 +776,9 @@ def _latest_path_for_prefix(prefix: str) -> Optional[str]:
     return files[-1]
 
 
-def save_vuln_cache(report: dict) -> str:
+def save_vuln_cache(report: dict) -> tuple[str, int]:
     """Persist a vulnerability report dict as a new versioned release (never
-    overwrites a previous scan's file). Returns path."""
+    overwrites a previous scan's file). Returns (path, version)."""
     repo_type = report.get("repo_type", "")
     owner = report.get("owner", "")
     repo = report.get("repo", "")
@@ -788,7 +788,7 @@ def save_vuln_cache(report: dict) -> str:
     path = _vuln_cache_path(repo_type, owner, repo, language, version=version)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
-    return path
+    return path, version
 
 
 def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str,
@@ -868,7 +868,8 @@ def _web_vuln_cache_path(owner: str, repo: str, language: str,
     )
 
 
-def save_web_vuln_cache(report: dict) -> str:
+def save_web_vuln_cache(report: dict) -> tuple[str, int]:
+    """Persist a web vuln report dict as a new versioned release. Returns (path, version)."""
     owner = report.get("owner", "")
     repo = report.get("repo", "")
     language = report.get("language", "en")
@@ -877,7 +878,7 @@ def save_web_vuln_cache(report: dict) -> str:
     path = _web_vuln_cache_path(owner, repo, language, version=version)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
-    return path
+    return path, version
 
 
 def read_web_vuln_cache(owner: str, repo: str, language: str,
@@ -895,10 +896,17 @@ def read_web_vuln_cache(owner: str, repo: str, language: str,
                 return None
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
     except Exception as exc:
         logger.warning("Failed to read web vuln cache %s: %s", path, exc)
         return None
+
+    # Route through the dataclass so a report saved before a field was added
+    # (e.g. `graph`, added after these caches already existed) comes back
+    # with that field defaulted instead of missing -- the frontend types it
+    # as required, so an absent key would crash the graph tab on old reports.
+    from api.web_vuln_scanner.models import WebVulnReport
+    return WebVulnReport.from_dict(data).to_dict()
 
 
 def list_web_vuln_cache_releases(owner: str, repo: str, language: str) -> List[dict]:
@@ -1662,12 +1670,13 @@ async def ws_vuln_scan(websocket: WebSocket):
         )
 
         report_dict = report.to_dict()
+        saved_version: Optional[int] = None
         try:
-            save_vuln_cache(report_dict)
+            _, saved_version = save_vuln_cache(report_dict)
         except Exception as exc:
             logger.warning("Failed to persist vuln cache: %s", exc)
 
-        await websocket.send_json({"type": "done", "report": report_dict})
+        await websocket.send_json({"type": "done", "report": report_dict, "version": saved_version})
     except Exception as e:
         logger.error(f"Error in /ws/vuln_scan: {e}")
         try:
@@ -1761,12 +1770,13 @@ async def ws_web_vuln_scan(websocket: WebSocket):
         )
 
         report_dict = report.to_dict()
+        saved_version: Optional[int] = None
         try:
-            save_web_vuln_cache(report_dict)
+            _, saved_version = save_web_vuln_cache(report_dict)
         except Exception as exc:
             logger.warning("Failed to persist web vuln cache: %s", exc)
 
-        await websocket.send_json({"type": "done", "report": report_dict})
+        await websocket.send_json({"type": "done", "report": report_dict, "version": saved_version})
     except Exception as e:
         logger.error(f"Error in /ws/web_vuln_scan: {e}")
         try:
@@ -1891,6 +1901,74 @@ async def delete_wiki_cache(
             language,
         )
         raise HTTPException(status_code=404, detail="Wiki cache not found")
+
+
+@app.delete("/api/vuln_cache")
+async def delete_vuln_cache_release(
+    owner: str = Query(..., description="Repository owner"),
+    repo: str = Query(..., description="Repository name"),
+    repo_type: str = Query(..., description="Repository type (github, gitlab, bitbucket, local)"),
+    language: str = Query("en", description="Wiki language the scan was run for"),
+    version: Optional[int] = Query(
+        None, ge=0,
+        description="Delete only this release version. If omitted, deletes all releases.",
+    ),
+):
+    """Deletes dependency-vulnerability scan release(s) -- mirrors DELETE /api/wiki_cache."""
+    prefixes = [
+        _vuln_cache_prefix(repo_type, owner, repo, language),
+        _vuln_cache_prefix(repo_type, owner, repo, language, prefix=_LEGACY_VULN_CACHE_PREFIX),
+    ]
+    deleted_paths = []
+    for prefix in prefixes:
+        for path in _list_cache_files_for_prefix(prefix):
+            if version is not None and _parse_cache_version(os.path.basename(path)) != version:
+                continue
+            try:
+                os.remove(path)
+                deleted_paths.append(path)
+                logger.info(f"Successfully deleted vuln cache: {path}")
+            except Exception as e:
+                logger.error(f"Error deleting vuln cache {path}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to delete vuln cache: {str(e)}")
+
+    if not deleted_paths:
+        raise HTTPException(status_code=404, detail="Vulnerability scan cache not found")
+    return {"message": f"Vulnerability scan cache for {owner}/{repo} ({language}) deleted successfully"}
+
+
+@app.delete("/api/web_vuln_cache")
+async def delete_web_vuln_cache_release(
+    owner: str = Query(..., description="Repository owner (typically 'website')"),
+    repo: str = Query(..., description="Site hostname"),
+    language: str = Query("en", description="Wiki language the scan was run for"),
+    version: Optional[int] = Query(
+        None, ge=0,
+        description="Delete only this release version. If omitted, deletes all releases.",
+    ),
+):
+    """Deletes website security scan release(s) -- mirrors DELETE /api/wiki_cache."""
+    prefixes = [
+        _web_vuln_cache_prefix(owner, repo, language),
+        _web_vuln_cache_prefix(owner, repo, language, prefix=_LEGACY_WEB_VULN_CACHE_PREFIX),
+    ]
+    deleted_paths = []
+    for prefix in prefixes:
+        for path in _list_cache_files_for_prefix(prefix):
+            if version is not None and _parse_cache_version(os.path.basename(path)) != version:
+                continue
+            try:
+                os.remove(path)
+                deleted_paths.append(path)
+                logger.info(f"Successfully deleted web vuln cache: {path}")
+            except Exception as e:
+                logger.error(f"Error deleting web vuln cache {path}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to delete web vuln cache: {str(e)}")
+
+    if not deleted_paths:
+        raise HTTPException(status_code=404, detail="Website vulnerability scan cache not found")
+    return {"message": f"Website vulnerability scan cache for {owner}/{repo} ({language}) deleted successfully"}
+
 
 @app.get("/health")
 async def health_check():

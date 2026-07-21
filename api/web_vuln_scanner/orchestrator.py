@@ -262,6 +262,9 @@ async def run_web_vuln_scan(
     from api.vuln_common.remediation import build_remediation_plan
     report.remediation_plan = build_remediation_plan([f.to_dict() for f in findings]).to_dict()
 
+    from api.web_vuln_scanner.models import build_web_graph
+    report.graph = build_web_graph(findings, sorted(technologies), site_url).to_dict()
+
     # Best-effort graph persistence (Neo4j) -- entirely optional, never
     # blocks or fails the scan if the graph stack isn't running (see
     # docker/vulnscan/docker-compose.yml; the user starts it themselves).

@@ -2,11 +2,13 @@
 
 import React, { useMemo, useState } from 'react';
 import { WebVulnReport, WebFinding } from './webTypes';
-import { VulnScanStatus } from './types';
+import { VulnScanStatus, ScanRelease } from './types';
 import WebVulnOverview from './WebVulnOverview';
 import WebFindingCard from './WebFindingCard';
 import WebFindingDetailDrawer from './WebFindingDetailDrawer';
 import VulnRemediationPlan from './VulnRemediationPlan';
+import VulnGraph3D from './VulnGraph3D';
+import ScanReleaseSelector from './ScanReleaseSelector';
 
 interface Props {
   report: WebVulnReport | null;
@@ -15,24 +17,30 @@ interface Props {
   progressPercent?: number | null;
   errorMessage?: string;
   onRetry?: () => void;
+  releases?: ScanRelease[];
+  selectedVersion?: number | null;
+  onSelectVersion?: (version: number) => void;
+  onDeleteVersion?: (version: number) => void;
 }
 
-type Tab = 'headers' | 'cookies' | 'tls' | 'exposure' | 'cve' | 'solutions';
+type Tab = 'headers' | 'cookies' | 'tls' | 'exposure' | 'cve' | 'graph' | 'solutions';
 
 export default function WebVulnSection({
   report, status, progressMessage, progressPercent, errorMessage, onRetry,
+  releases = [], selectedVersion = null, onSelectVersion, onDeleteVersion,
 }: Props) {
   const [tab, setTab] = useState<Tab>('exposure');
   const [selected, setSelected] = useState<WebFinding | null>(null);
 
   const enabledTabs = useMemo<Tab[]>(() => {
-    if (!report) return ['headers', 'cookies', 'tls', 'exposure', 'cve'];
+    if (!report) return ['headers', 'cookies', 'tls', 'exposure', 'cve', 'graph'];
     const t: Tab[] = [];
     if (report.header_findings.length) t.push('headers');
     if (report.cookie_findings.length) t.push('cookies');
     if (report.tls_findings.length) t.push('tls');
     if (report.exposure_findings.length) t.push('exposure');
     if (report.cve_findings.length) t.push('cve');
+    t.push('graph');
     if (report.remediation_plan?.steps?.length) t.push('solutions');
     return t.length ? t : ['exposure'];
   }, [report]);
@@ -97,6 +105,15 @@ export default function WebVulnSection({
 
   return (
     <div className="space-y-4">
+      {onSelectVersion && onDeleteVersion && (
+        <ScanReleaseSelector
+          releases={releases}
+          selectedVersion={selectedVersion}
+          onSelectVersion={onSelectVersion}
+          onDeleteVersion={onDeleteVersion}
+          disabled={status === 'running'}
+        />
+      )}
       <WebVulnOverview report={report} />
 
       <div className="flex flex-wrap gap-1 border-b border-[var(--border-color)]">
@@ -116,7 +133,17 @@ export default function WebVulnSection({
         ))}
       </div>
 
-      {activeTab === 'solutions' ? (
+      {activeTab === 'graph' ? (
+        <VulnGraph3D
+          graph={report.graph}
+          onNodeClick={(node) => {
+            if (node.type !== 'cve' && node.type !== 'finding') return;
+            const rawId = node.id.replace(/^(cve|finding):/, '');
+            const f = report.all_findings.find((x) => x.id === rawId) || null;
+            setSelected(f);
+          }}
+        />
+      ) : activeTab === 'solutions' ? (
         <VulnRemediationPlan plan={report.remediation_plan} />
       ) : findings.length === 0 ? (
         <div className="p-6 rounded-md border border-[var(--border-color)] bg-[var(--card-bg)] text-sm text-[var(--muted)]">
@@ -142,6 +169,7 @@ function tabLabel(t: Tab, report: WebVulnReport): string {
     case 'tls': return `🔒 TLS (${report.tls_findings.length})`;
     case 'exposure': return `🔓 Exposure (${report.exposure_findings.length})`;
     case 'cve': return `🐛 CVEs (${report.cve_findings.length})`;
+    case 'graph': return `🕸️ Graph`;
     case 'solutions': return `🛠️ Solutions`;
   }
 }

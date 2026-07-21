@@ -10,6 +10,7 @@ import VulnSection from '@/components/vuln/VulnSection';
 import { VulnReport, VulnScanStatus } from '@/components/vuln/types';
 import WebVulnSection from '@/components/vuln/WebVulnSection';
 import { WebVulnReport } from '@/components/vuln/webTypes';
+import RescanConfigModal, { RescanSelection } from '@/components/vuln/RescanConfigModal';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
 import { getSavedApiCredentials } from '@/utils/apiCredentials';
@@ -63,6 +64,35 @@ interface WikiRelease {
   model: string | null;
   title: string | null;
   id: string;
+}
+
+// One saved release (version) of a vulnerability or website-security scan,
+// returned by /api/vuln_cache/releases or /api/web_vuln_cache/releases --
+// same versioning scheme as WikiRelease above.
+interface ScanRelease {
+  version: number;
+  created_at: number;
+  total_findings: number | null;
+  generated_at: string | null;
+  id: string;
+}
+
+// Optional per-call overrides for runVulnScan -- lets the "Rerun scan" config
+// modal pick a provider/model/category selection without waiting on React
+// state (which wouldn't be visible yet in the same tick the scan starts).
+interface VulnScanOverrides {
+  provider?: string;
+  model?: string;
+  nvdKey?: string;
+  vulnClient?: boolean;
+  vulnServer?: boolean;
+  vulnDeps?: boolean;
+}
+
+interface WebVulnScanOverrides {
+  provider?: string;
+  model?: string;
+  enableDeepScan?: boolean;
 }
 
 // Add CSS styles for wiki with Japanese aesthetic
@@ -556,7 +586,12 @@ export default function RepoWikiPage() {
   const [exportIncludeVulnGraph, setExportIncludeVulnGraph] = useState<boolean>(true);
   // Lets the wiki-save effect kick off the vuln scan without adding
   // runVulnScan to its dependency list (which would retrigger saves).
-  const runVulnScanRef = useRef<() => void>(() => {});
+  const runVulnScanRef = useRef<(overrides?: VulnScanOverrides) => void>(() => {});
+  // Release history (versioned like wiki releases -- see VulnRelease below)
+  // + the "rerun with a chosen provider/model" floating config modal.
+  const [vulnReleases, setVulnReleases] = useState<ScanRelease[]>([]);
+  const [selectedVulnVersion, setSelectedVulnVersion] = useState<number | null>(null);
+  const [isVulnRescanModalOpen, setIsVulnRescanModalOpen] = useState(false);
 
   // 🌐 Website vulnerability scan state -- separate report shape/endpoint
   // from the dependency scan above (WebVulnReport vs VulnReport), used only
@@ -567,7 +602,10 @@ export default function RepoWikiPage() {
   const [webVulnProgressPercent, setWebVulnProgressPercent] = useState<number | null>(null);
   const [webVulnError, setWebVulnError] = useState<string | null>(null);
   const webVulnScanStartedRef = useRef(false);
-  const runWebVulnScanRef = useRef<() => void>(() => {});
+  const runWebVulnScanRef = useRef<(overrides?: WebVulnScanOverrides) => void>(() => {});
+  const [webVulnReleases, setWebVulnReleases] = useState<ScanRelease[]>([]);
+  const [selectedWebVulnVersion, setSelectedWebVulnVersion] = useState<number | null>(null);
+  const [isWebVulnRescanModalOpen, setIsWebVulnRescanModalOpen] = useState(false);
 
   // Page edit mode (manual textarea + AI-assisted rewrite). Never
   // autosaves -- editedContent only replaces generatedPages[pageId] on an
@@ -2322,11 +2360,81 @@ IMPORTANT:
     }
   }, [owner, repo, determineWikiStructure, currentToken, effectiveRepoInfo, requestInProgress, messages.loading]);
 
+  // Release history (versioned like wiki releases) for the dependency vuln
+  // scan -- lists every saved scan, loads a specific one, or deletes one.
+  // Mirrors loadWikiReleases/loadWikiRelease/deleteWikiRelease above.
+  const loadVulnReleases = useCallback(async (autoSelectVersion?: number) => {
+    try {
+      const params = new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo,
+        repo_type: repoType, language,
+      });
+      const response = await fetch(`/api/vuln_cache/releases?${params.toString()}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      const releases: ScanRelease[] = Array.isArray(data?.releases) ? data.releases : [];
+      setVulnReleases(releases);
+      if (autoSelectVersion != null) {
+        setSelectedVulnVersion(autoSelectVersion);
+      } else if (releases.length > 0) {
+        setSelectedVulnVersion(prev => (prev == null ? releases[0].version : prev));
+      }
+    } catch (err) {
+      console.warn('Error loading vuln releases:', err);
+    }
+  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language]);
+
+  const loadVulnRelease = useCallback(async (version: number) => {
+    if (!version) return;
+    try {
+      const params = new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo,
+        repo_type: repoType, language, version: version.toString(),
+      });
+      const response = await fetch(`/api/vuln_cache?${params.toString()}`);
+      if (!response.ok) throw new Error(`Failed to load release v${version}: ${response.status}`);
+      const data = (await response.json()) as VulnReport;
+      setVulnReport(data);
+      setVulnStatus('done');
+      setSelectedVulnVersion(version);
+    } catch (err) {
+      console.warn('Error loading vuln release:', err);
+    }
+  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language]);
+
+  const deleteVulnRelease = useCallback(async (version: number) => {
+    if (!version) return;
+    if (!window.confirm(`Delete security scan release v${version}? This cannot be undone.`)) return;
+    try {
+      const params = new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo,
+        repo_type: repoType, language, version: version.toString(),
+      });
+      const response = await fetch(`/api/vuln_cache?${params.toString()}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(`Failed to delete release v${version}: ${response.status}`);
+      const relRes = await fetch(`/api/vuln_cache/releases?${new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, repo_type: repoType, language,
+      }).toString()}`);
+      const relData = relRes.ok ? await relRes.json() : { releases: [] };
+      const remaining: ScanRelease[] = Array.isArray(relData?.releases) ? relData.releases : [];
+      setVulnReleases(remaining);
+      if (remaining.length > 0) {
+        await loadVulnRelease(remaining[0].version);
+      } else {
+        setSelectedVulnVersion(null);
+        setVulnReport(null);
+        setVulnStatus('idle');
+      }
+    } catch (err) {
+      console.warn('Error deleting vuln release:', err);
+    }
+  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language, loadVulnRelease]);
+
   // Function to export wiki content
   // 🔐 Vulnerability scan: open /ws/vuln_scan, stream progress, store report.
   // Sequential with wiki generation by design -- runs after the wiki is done
   // and the repo is already cloned locally, reusing that clone.
-  const runVulnScan = useCallback(async () => {
+  const runVulnScan = useCallback(async (overrides?: VulnScanOverrides) => {
     if (vulnScanStartedRef.current) return;
     vulnScanStartedRef.current = true;
     setVulnStatus('running');
@@ -2337,7 +2445,9 @@ IMPORTANT:
 
     const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
     const wsBaseUrl = serverBaseUrl.replace(/^https/, 'wss').replace(/^http/, 'ws');
-    const creds = getSavedApiCredentials(selectedProviderState);
+    const provider = overrides?.provider ?? selectedProviderState;
+    const model = overrides?.model ?? selectedModelState;
+    const creds = getSavedApiCredentials(provider);
 
     const payload = {
       repo_url: repoUrl || getRepoUrl(effectiveRepoInfo),
@@ -2345,15 +2455,15 @@ IMPORTANT:
       owner: effectiveRepoInfo.owner,
       repo: effectiveRepoInfo.repo,
       language,
-      provider: selectedProviderState,
-      model: selectedModelState,
+      provider,
+      model,
       api_key: creds.api_key || undefined,
       api_endpoint: creds.api_endpoint || undefined,
       local_path: effectiveRepoInfo.localPath || undefined,
-      nvd_key: nvdKeyParam || undefined,
-      enable_client: vulnClientEnabled,
-      enable_server: vulnServerEnabled,
-      enable_deps: vulnDepsEnabled,
+      nvd_key: (overrides?.nvdKey ?? nvdKeyParam) || undefined,
+      enable_client: overrides?.vulnClient ?? vulnClientEnabled,
+      enable_server: overrides?.vulnServer ?? vulnServerEnabled,
+      enable_deps: overrides?.vulnDeps ?? vulnDepsEnabled,
       run_llm: true,
       excluded_dirs: modelExcludedDirs,
       excluded_files: modelExcludedFiles,
@@ -2386,6 +2496,8 @@ IMPORTANT:
               setVulnReport(msg.report as VulnReport);
               setVulnStatus('done');
               setVulnProgressPercent(100);
+              const newVersion = typeof msg.version === 'number' ? msg.version : undefined;
+              loadVulnReleases(newVersion);
               try { ws.close(); } catch {}
               resolve();
             } else if (msg.type === 'error') {
@@ -2428,7 +2540,7 @@ IMPORTANT:
     }
   }, [repoUrl, repoType, effectiveRepoInfo, language, selectedProviderState, selectedModelState,
       nvdKeyParam, vulnClientEnabled, vulnServerEnabled, vulnDepsEnabled,
-      modelExcludedDirs, modelExcludedFiles]);
+      modelExcludedDirs, modelExcludedFiles, loadVulnReleases]);
 
   // Load a previously-saved vuln report (if any) so the Security tab is
   // populated when opening an already-scanned repo, without re-scanning.
@@ -2462,12 +2574,78 @@ IMPORTANT:
   // Keep the ref pointing at the latest runVulnScan closure.
   useEffect(() => { runVulnScanRef.current = runVulnScan; }, [runVulnScan]);
 
+  // Release history for the website security scan -- same versioned pattern
+  // as loadVulnReleases/loadVulnRelease/deleteVulnRelease above.
+  const loadWebVulnReleases = useCallback(async (autoSelectVersion?: number) => {
+    try {
+      const params = new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language,
+      });
+      const response = await fetch(`/api/web_vuln_cache/releases?${params.toString()}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      const releases: ScanRelease[] = Array.isArray(data?.releases) ? data.releases : [];
+      setWebVulnReleases(releases);
+      if (autoSelectVersion != null) {
+        setSelectedWebVulnVersion(autoSelectVersion);
+      } else if (releases.length > 0) {
+        setSelectedWebVulnVersion(prev => (prev == null ? releases[0].version : prev));
+      }
+    } catch (err) {
+      console.warn('Error loading web vuln releases:', err);
+    }
+  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language]);
+
+  const loadWebVulnRelease = useCallback(async (version: number) => {
+    if (!version) return;
+    try {
+      const params = new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language, version: version.toString(),
+      });
+      const response = await fetch(`/api/web_vuln_cache?${params.toString()}`);
+      if (!response.ok) throw new Error(`Failed to load release v${version}: ${response.status}`);
+      const data = (await response.json()) as WebVulnReport;
+      setWebVulnReport(data);
+      setWebVulnStatus('done');
+      setSelectedWebVulnVersion(version);
+    } catch (err) {
+      console.warn('Error loading web vuln release:', err);
+    }
+  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language]);
+
+  const deleteWebVulnRelease = useCallback(async (version: number) => {
+    if (!version) return;
+    if (!window.confirm(`Delete website security scan release v${version}? This cannot be undone.`)) return;
+    try {
+      const params = new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language, version: version.toString(),
+      });
+      const response = await fetch(`/api/web_vuln_cache?${params.toString()}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(`Failed to delete release v${version}: ${response.status}`);
+      const relRes = await fetch(`/api/web_vuln_cache/releases?${new URLSearchParams({
+        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language,
+      }).toString()}`);
+      const relData = relRes.ok ? await relRes.json() : { releases: [] };
+      const remaining: ScanRelease[] = Array.isArray(relData?.releases) ? relData.releases : [];
+      setWebVulnReleases(remaining);
+      if (remaining.length > 0) {
+        await loadWebVulnRelease(remaining[0].version);
+      } else {
+        setSelectedWebVulnVersion(null);
+        setWebVulnReport(null);
+        setWebVulnStatus('idle');
+      }
+    } catch (err) {
+      console.warn('Error deleting web vuln release:', err);
+    }
+  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language, loadWebVulnRelease]);
+
   // 🌐 Website vulnerability scan -- mirrors runVulnScan above but talks to
   // /ws/web_vuln_scan and stores a WebVulnReport. Only meaningful when
   // effectiveRepoInfo.type === 'website'; the site must already be crawled
   // (the wiki-save effect triggers this after the crawl+wiki generation
   // finishes, same sequencing runVulnScan uses for repos).
-  const runWebVulnScan = useCallback(async () => {
+  const runWebVulnScan = useCallback(async (overrides?: WebVulnScanOverrides) => {
     if (webVulnScanStartedRef.current) return;
     webVulnScanStartedRef.current = true;
     setWebVulnStatus('running');
@@ -2478,19 +2656,21 @@ IMPORTANT:
 
     const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
     const wsBaseUrl = serverBaseUrl.replace(/^https/, 'wss').replace(/^http/, 'ws');
-    const creds = getSavedApiCredentials(selectedProviderState);
+    const provider = overrides?.provider ?? selectedProviderState;
+    const model = overrides?.model ?? selectedModelState;
+    const creds = getSavedApiCredentials(provider);
 
     const payload = {
       site_url: repoUrl || getRepoUrl(effectiveRepoInfo),
       owner: effectiveRepoInfo.owner,
       repo: effectiveRepoInfo.repo,
       language,
-      provider: selectedProviderState,
-      model: selectedModelState,
+      provider,
+      model,
       api_key: creds.api_key || undefined,
       api_endpoint: creds.api_endpoint || undefined,
       run_llm: true,
-      enable_deep_scan: deepScanEnabled,
+      enable_deep_scan: overrides?.enableDeepScan ?? deepScanEnabled,
     };
 
     try {
@@ -2525,6 +2705,8 @@ IMPORTANT:
               setWebVulnReport(msg.report as WebVulnReport);
               setWebVulnStatus('done');
               setWebVulnProgressPercent(100);
+              { const newVersion = typeof msg.version === 'number' ? msg.version : undefined;
+                loadWebVulnReleases(newVersion); }
               try { ws.close(); } catch {}
               resolve();
             } else if (msg.type === 'error') {
@@ -2564,7 +2746,7 @@ IMPORTANT:
     } finally {
       webVulnScanStartedRef.current = false;
     }
-  }, [repoUrl, effectiveRepoInfo, language, selectedProviderState, selectedModelState, deepScanEnabled]);
+  }, [repoUrl, effectiveRepoInfo, language, selectedProviderState, selectedModelState, deepScanEnabled, loadWebVulnReleases]);
 
   const loadWebVulnCache = useCallback(async () => {
     try {
@@ -2591,6 +2773,21 @@ IMPORTANT:
   }, [effectiveRepoInfo.type, loadWebVulnCache]);
 
   useEffect(() => { runWebVulnScanRef.current = runWebVulnScan; }, [runWebVulnScan]);
+
+  // Populate the release-history dropdowns for both scan types on mount, so
+  // a returning visit shows every past scan even before (or without ever)
+  // triggering a fresh one.
+  useEffect(() => {
+    if (effectiveRepoInfo.type !== 'website') {
+      loadVulnReleases();
+    }
+  }, [effectiveRepoInfo.type, loadVulnReleases]);
+
+  useEffect(() => {
+    if (effectiveRepoInfo.type === 'website') {
+      loadWebVulnReleases();
+    }
+  }, [effectiveRepoInfo.type, loadWebVulnReleases]);
 
   const exportWiki = useCallback(async (format: 'markdown' | 'json' | 'obsidian') => {
     if (!wikiStructure || Object.keys(generatedPages).length === 0) {
@@ -3236,15 +3433,25 @@ IMPORTANT:
               cacheLoadedSuccessfully.current = true;
               // 🔐 Kick off the vulnerability scan now that the wiki is
               // generated and the repo clone is on disk -- only if the user
-              // opted in. Runs once; the ref inside runVulnScan guards repeats.
-              if (vulnScanRequested) {
+              // opted in, AND only if a report isn't already loaded (from a
+              // prior scan or the persisted cache). Without the !vulnReport
+              // guard, this fires on every wiki-save cycle (including a plain
+              // page reload that re-saves the same cached wiki), and
+              // runVulnScan() nulls the report the instant it starts --
+              // wiping out a perfectly good cached scan the user had just
+              // gotten back, which read as "scans aren't persistent."
+              if (vulnScanRequested && !vulnReport) {
                 try { runVulnScanRef.current?.(); } catch (e) { console.warn('vuln scan trigger failed', e); }
               }
-              // 🌐 For website wikis, always run the (separate) website
-              // security scan once the site is crawled and the wiki is
-              // generated -- headers/cookies/TLS/exposure checks are basic
-              // hygiene, not an opt-in the way the deep dependency CVE scan is.
-              if (effectiveRepoInfo.type === 'website') {
+              // 🌐 For website wikis, run the (separate) website security
+              // scan once the site is crawled and the wiki is generated --
+              // headers/cookies/TLS/exposure checks are basic hygiene, not an
+              // opt-in the way the deep dependency CVE scan is. But only for
+              // the first scan: same !webVulnReport guard as above, so a
+              // reload that hits the wiki cache (and loadWebVulnCache already
+              // restored the persisted report) doesn't blow it away by
+              // starting a redundant fresh scan.
+              if (effectiveRepoInfo.type === 'website' && !webVulnReport) {
                 try { runWebVulnScanRef.current?.(); } catch (e) { console.warn('web vuln scan trigger failed', e); }
               }
               // The backend assigns and returns the new release version number.
@@ -3274,7 +3481,7 @@ IMPORTANT:
     };
 
     saveCache();
-  }, [isLoading, error, wikiStructure, generatedPages, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, effectiveRepoInfo.repoUrl, repoUrl, language, isComprehensiveView, pageCount, selectedProviderState, selectedModelState, loadWikiReleases]);
+  }, [isLoading, error, wikiStructure, generatedPages, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, effectiveRepoInfo.repoUrl, repoUrl, language, isComprehensiveView, pageCount, selectedProviderState, selectedModelState, loadWikiReleases, vulnReport, webVulnReport]);
 
   const handlePageSelect = (pageId: string) => {
     if (currentPageId != pageId) {
@@ -3665,7 +3872,7 @@ IMPORTANT:
                   </button>
                   {viewMode === 'security' && vulnStatus !== 'running' && (
                     <button
-                      onClick={() => runVulnScan()}
+                      onClick={() => setIsVulnRescanModalOpen(true)}
                       className="mt-2 flex items-center w-full text-[11px] px-3 py-1.5 bg-[var(--background)] text-[var(--muted)] rounded-md border border-[var(--border-color)] hover:text-[var(--foreground)] transition-colors"
                     >
                       <FaSync className="mr-2" />
@@ -3702,7 +3909,7 @@ IMPORTANT:
                   </button>
                   {viewMode === 'security' && webVulnStatus !== 'running' && (
                     <button
-                      onClick={() => runWebVulnScan()}
+                      onClick={() => setIsWebVulnRescanModalOpen(true)}
                       className="mt-2 flex items-center w-full text-[11px] px-3 py-1.5 bg-[var(--background)] text-[var(--muted)] rounded-md border border-[var(--border-color)] hover:text-[var(--foreground)] transition-colors"
                     >
                       <FaSync className="mr-2" />
@@ -3808,7 +4015,11 @@ IMPORTANT:
                     progressMessage={webVulnProgressMessage}
                     progressPercent={webVulnProgressPercent}
                     errorMessage={webVulnError || undefined}
-                    onRetry={runWebVulnScan}
+                    onRetry={() => setIsWebVulnRescanModalOpen(true)}
+                    releases={webVulnReleases}
+                    selectedVersion={selectedWebVulnVersion}
+                    onSelectVersion={loadWebVulnRelease}
+                    onDeleteVersion={deleteWebVulnRelease}
                   />
                 </div>
               ) : viewMode === 'security' ? (
@@ -3831,7 +4042,11 @@ IMPORTANT:
                     progressMessage={vulnProgressMessage}
                     progressPercent={vulnProgressPercent}
                     errorMessage={vulnError || undefined}
-                    onRetry={runVulnScan}
+                    onRetry={() => setIsVulnRescanModalOpen(true)}
+                    releases={vulnReleases}
+                    selectedVersion={selectedVulnVersion}
+                    onSelectVersion={loadVulnRelease}
+                    onDeleteVersion={deleteVulnRelease}
                   />
                 </div>
               ) : currentPageId && generatedPages[currentPageId] ? (
@@ -4003,6 +4218,51 @@ IMPORTANT:
         vulnServer={vulnServerEnabled}
         vulnDeps={vulnDepsEnabled}
         nvdKey={nvdKeyParam}
+      />
+
+      {/* 🔐/🌐 "Rerun scan" floating config modals -- pick a provider/model
+          (and scan-specific options) before kicking off a rescan, same idea
+          as ModelSelectionModal above but scoped to just a scan instead of a
+          full wiki refresh. */}
+      <RescanConfigModal
+        isOpen={isVulnRescanModalOpen}
+        onClose={() => setIsVulnRescanModalOpen(false)}
+        variant="dependency"
+        provider={selectedProviderState}
+        model={selectedModelState}
+        isCustomModel={isCustomSelectedModelState}
+        customModel={customSelectedModelState}
+        vulnClient={vulnClientEnabled}
+        vulnServer={vulnServerEnabled}
+        vulnDeps={vulnDepsEnabled}
+        nvdKey={nvdKeyParam}
+        onSubmit={(selection: RescanSelection) => {
+          runVulnScan({
+            provider: selection.provider,
+            model: selection.model,
+            vulnClient: selection.vulnClient,
+            vulnServer: selection.vulnServer,
+            vulnDeps: selection.vulnDeps,
+            nvdKey: selection.nvdKey,
+          });
+        }}
+      />
+      <RescanConfigModal
+        isOpen={isWebVulnRescanModalOpen}
+        onClose={() => setIsWebVulnRescanModalOpen(false)}
+        variant="website"
+        provider={selectedProviderState}
+        model={selectedModelState}
+        isCustomModel={isCustomSelectedModelState}
+        customModel={customSelectedModelState}
+        enableDeepScan={deepScanEnabled}
+        onSubmit={(selection: RescanSelection) => {
+          runWebVulnScan({
+            provider: selection.provider,
+            model: selection.model,
+            enableDeepScan: selection.enableDeepScan,
+          });
+        }}
       />
     </div>
   );

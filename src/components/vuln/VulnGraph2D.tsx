@@ -24,7 +24,7 @@ export default function VulnGraph2D({ graph, height = 460 }: Props) {
     return (
       <div className="flex items-center justify-center text-[var(--muted)] text-sm"
            style={{ height }}>
-        No vulnerable dependencies to graph.
+        No graph data available.
       </div>
     );
   }
@@ -42,24 +42,22 @@ function sanitizeId(id: string): string {
 
 function buildMermaid(graph: GraphData): string {
   // Rank CVE nodes by severity, keep only the worst MAX_CVE_NODES to avoid
-  // exploding mermaid on huge reports.
+  // exploding mermaid on huge reports. Every other node type (site/category/
+  // finding/technology/package/cwe/fix/file) is structural, not per-CVE, so
+  // it's always kept -- capping only CVEs is what keeps a website scan's
+  // graph (mostly non-CVE header/cookie/TLS findings) from being reduced to
+  // near-nothing, since most of it has no 'cve' node to hang off of.
   const sevRank: Record<Severity, number> = {
     CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, UNKNOWN: 4,
   };
-  const cveNodes = graph.nodes
+  const cveNodesKept = graph.nodes
     .filter((n) => n.type === 'cve')
     .sort((a, b) => (sevRank[a.severity || 'UNKNOWN'] - sevRank[b.severity || 'UNKNOWN']))
     .slice(0, MAX_CVE_NODES);
-  const keepIds = new Set<string>(cveNodes.map((n) => n.id));
+  const keepIds = new Set<string>(graph.nodes.filter((n) => n.type !== 'cve').map((n) => n.id));
+  for (const n of cveNodesKept) keepIds.add(n.id);
 
-  // also keep package/cwe/fix/file nodes adjacent to kept CVEs
-  const keepLinks = graph.links.filter(
-    (l) => keepIds.has(l.source) || keepIds.has(l.target),
-  );
-  for (const l of keepLinks) {
-    keepIds.add(l.source);
-    keepIds.add(l.target);
-  }
+  const keepLinks = graph.links.filter((l) => keepIds.has(l.source) && keepIds.has(l.target));
   const keepNodes = graph.nodes.filter((n) => keepIds.has(n.id));
 
   const lines: string[] = ['graph LR'];
@@ -83,12 +81,16 @@ function buildMermaid(graph: GraphData): string {
   lines.push(`  classDef cwe fill:#a855f7,color:#fff,stroke:#581c87;`);
   lines.push(`  classDef fix fill:#22c55e,color:#fff,stroke:#14532d;`);
   lines.push(`  classDef file fill:#94a3b8,color:#000,stroke:#334155;`);
+  lines.push(`  classDef site fill:#e2e8f0,color:#000,stroke:#334155;`);
+  lines.push(`  classDef tech fill:#3b82f6,color:#fff,stroke:#1e3a8a;`);
+  lines.push(`  classDef cat fill:#a855f7,color:#fff,stroke:#581c87;`);
+  lines.push(`  classDef finding fill:#f59e0b,color:#000,stroke:#78350f;`);
 
   // assign classes
   const classAssign: string[] = [];
   for (const node of keepNodes) {
     const sid = sanitizeId(node.id);
-    if (node.type === 'cve') {
+    if (node.type === 'cve' || node.type === 'finding') {
       const cls = node.severity === 'CRITICAL' ? 'crit'
         : node.severity === 'HIGH' ? 'high'
         : node.severity === 'MEDIUM' ? 'med'
@@ -98,6 +100,9 @@ function buildMermaid(graph: GraphData): string {
     else if (node.type === 'cwe') classAssign.push(`class ${sid} cwe;`);
     else if (node.type === 'fix') classAssign.push(`class ${sid} fix;`);
     else if (node.type === 'file') classAssign.push(`class ${sid} file;`);
+    else if (node.type === 'site') classAssign.push(`class ${sid} site;`);
+    else if (node.type === 'technology') classAssign.push(`class ${sid} tech;`);
+    else if (node.type === 'category') classAssign.push(`class ${sid} cat;`);
   }
   lines.push(...classAssign);
 
@@ -112,9 +117,16 @@ function nodeLine(node: GraphNode): string {
     const cvss = node.cvss_score != null ? ` ${node.cvss_score.toFixed(1)}` : '';
     return `${sid}["🔴 ${label}<br/>${sev}${cvss}"]`;
   }
+  if (node.type === 'finding') {
+    const sev = node.severity || 'UNKNOWN';
+    return `${sid}["⚠️ ${label}<br/>${sev}"]`;
+  }
   if (node.type === 'package') return `${sid}["📦 ${label}"]`;
   if (node.type === 'cwe') return `${sid}["🏷️ ${label}"]`;
   if (node.type === 'fix') return `${sid}["🛡️ ${label}"]`;
+  if (node.type === 'site') return `${sid}["🌐 ${label}"]`;
+  if (node.type === 'technology') return `${sid}["🧩 ${label}"]`;
+  if (node.type === 'category') return `${sid}["🗂️ ${label}"]`;
   return `${sid}["📁 ${label}"]`;
 }
 
