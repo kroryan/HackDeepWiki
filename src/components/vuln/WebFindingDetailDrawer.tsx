@@ -21,7 +21,10 @@ export default function WebFindingDetailDrawer({ finding, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex justify-end bg-black/40"
+      // z-[110]: above the graph's fullscreen overlay (z-[100] in VulnGraph3D)
+      // -- clicking a node while the graph is maximized must still open the
+      // drawer on top of it, not behind it.
+      className="fixed inset-0 z-[110] flex justify-end bg-black/40"
       onClick={onClose}
     >
       <div
