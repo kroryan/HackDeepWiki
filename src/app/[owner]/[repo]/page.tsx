@@ -2563,13 +2563,21 @@ IMPORTANT:
     }
   }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language]);
 
-  // On mount: if the user didn't request a fresh scan, try to load an
-  // existing vuln report from cache so the Security tab works on re-open.
+  // On mount: always try to restore a saved vuln report from cache, so the
+  // Security tab works on re-open. This used to be skipped whenever
+  // vulnScanRequested was true ("a fresh scan is about to run anyway, don't
+  // bother") -- but vulnScanRequested reads the `vuln_scan=1` URL param,
+  // which the wiki-save effect writes into the browser's address bar via
+  // history.replaceState the first time a scan ever runs. That makes it
+  // permanently "true" for this repo's URL from then on, which permanently
+  // skipped this restore on every future visit -- the report looked like it
+  // never persisted, when it was actually saved correctly on disk the whole
+  // time. If a fresh scan really is about to run (saveCache's
+  // vulnScanRequested && !vulnReport trigger), it overwrites whatever this
+  // loads within moments -- a harmless brief flash, not a bug.
   useEffect(() => {
-    if (!vulnScanRequested) {
-      loadVulnCache();
-    }
-  }, [vulnScanRequested, loadVulnCache]);
+    loadVulnCache();
+  }, [loadVulnCache]);
 
   // Keep the ref pointing at the latest runVulnScan closure.
   useEffect(() => { runVulnScanRef.current = runVulnScan; }, [runVulnScan]);
