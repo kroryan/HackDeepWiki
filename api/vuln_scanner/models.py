@@ -172,8 +172,12 @@ class VulnReport:
     all_findings: List[Dict[str, Any]] = field(default_factory=list)
     # The deps that were scanned (name@version, for transparency)
     scanned_dependencies: List[Dict[str, Any]] = field(default_factory=list)
-    # Interactive graph
-    graph: Dict[str, Any] = field(default_factory=dict)
+    # Interactive graph. Defaults to an empty (not missing) nodes/links shape
+    # -- the frontend types this as required GraphData and reads graph.nodes
+    # unconditionally, so a report saved before this field existed (or any
+    # other malformed/legacy record) must still produce something it can
+    # render instead of crashing the whole Security Analysis panel.
+    graph: Dict[str, Any] = field(default_factory=lambda: {"nodes": [], "links": []})
     # Whether LLM analysis was run
     ai_analyzed: bool = False
     # Optional Docker-toolkit pass over the repo (gitleaks secret detection +

@@ -809,10 +809,17 @@ def read_vuln_cache(repo_type: str, owner: str, repo: str, language: str,
                 return None
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
     except Exception as exc:
         logger.warning("Failed to read vuln cache %s: %s", path, exc)
         return None
+
+    # Route through the dataclass so a report saved before a field existed
+    # (e.g. an older `graph` shape) comes back with defaults instead of
+    # missing keys -- the frontend types several of these as required, so an
+    # absent key would crash the Security Analysis panel on old reports.
+    from api.vuln_scanner.models import VulnReport
+    return VulnReport.from_dict(data).to_dict()
 
 
 def list_vuln_cache_releases(repo_type: str, owner: str, repo: str, language: str) -> List[dict]:

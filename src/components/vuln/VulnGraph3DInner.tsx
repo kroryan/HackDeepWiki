@@ -15,7 +15,7 @@ import { GRAPH_CONFIG, CAMERA_DISTANCE } from './config/graph';
 interface Props {
   graph: GraphData;
   onNodeClick?: (node: GraphNode) => void;
-  height?: number;
+  height?: number | string;
 }
 
 // Minimal local typings for the force-graph runtime objects (the library's
@@ -181,7 +181,11 @@ const HARD_NODE_CAP = 400;
 // important -- dropping them would gut the graph rather than just declutter it).
 const DROP_PRIORITY: string[] = ['file', 'cwe', 'fix', 'finding', 'package'];
 
-function prepareData(graph: GraphData) {
+function prepareData(graphIn: GraphData) {
+  // Defensive: a malformed/legacy report could theoretically still reach
+  // here without nodes/links (the backend now backfills both, but this is
+  // the last line of defense against crashing the whole panel over it).
+  const graph: GraphData = { nodes: graphIn?.nodes ?? [], links: graphIn?.links ?? [] };
   // Cap CVE nodes to the worst MAX_NODES_3D for perf; every other node type
   // (site/category/finding/technology/package/cwe/fix/file) is structural,
   // not per-CVE, so it's always kept -- capping only CVEs is what keeps a

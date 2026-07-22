@@ -7,7 +7,7 @@ import { SEVERITY_COLORS } from './config/colors';
 
 interface Props {
   graph: GraphData;
-  height?: number;
+  height?: number | string;
 }
 
 const MAX_CVE_NODES = 40; // keep the mermaid diagram readable
@@ -17,7 +17,11 @@ const MAX_CVE_NODES = 40; // keep the mermaid diagram readable
  * no extra deps). Used both as a standalone "2D" view and as the automatic
  * fallback when the 3D view can't load.
  */
-export default function VulnGraph2D({ graph, height = 460 }: Props) {
+export default function VulnGraph2D({ graph: graphIn, height = 460 }: Props) {
+  // Defensive: a malformed/legacy report could theoretically still reach
+  // here without nodes/links (the backend now backfills both, but this is
+  // the last line of defense against crashing the whole panel over it).
+  const graph: GraphData = useMemo(() => ({ nodes: graphIn?.nodes ?? [], links: graphIn?.links ?? [] }), [graphIn]);
   const chart = useMemo(() => buildMermaid(graph), [graph]);
 
   if (!graph.nodes.length) {
