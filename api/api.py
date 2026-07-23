@@ -1754,6 +1754,35 @@ async def ws_website_crawl(websocket: WebSocket):
 
         result = await run_site_crawl(start_url, scope, on_progress, fresh=fresh)
 
+        if result["page_count"] == 0:
+            # Silently "succeeding" with an empty crawl used to sail straight
+            # into wiki-structure planning against a 0-document RAG index,
+            # surfacing as a baffling "No valid XML found in response" several
+            # steps later with nothing pointing back at the real cause. Fail
+            # here instead, with the most likely reason from crawl_site's own
+            # diagnostics (see its docstring) -- bot challenge (Cloudflare
+            # "Just a moment..." and similar are common on fan wikis/Fandom
+            # sites and cannot be solved by a plain headless browser) is
+            # called out specifically since it's both the most common cause
+            # and the least obvious to a user who just sees "0 pages".
+            diag = result.get("diagnostics") or {}
+            if diag.get("bot_challenge"):
+                reason = ("El sitio parece estar protegido por un desafío anti-bots (p. ej. Cloudflare "
+                           "\"Just a moment...\"), que un navegador headless no puede superar automáticamente.")
+            elif diag.get("robots_blocked"):
+                reason = "El robots.txt del sitio no permite el rastreo (puedes desactivar \"respetar robots.txt\" si tienes permiso para rastrearlo)."
+            elif diag.get("http_error"):
+                reason = "El sitio devolvió un error HTTP al intentar acceder a él."
+            elif diag.get("fetch_failed"):
+                reason = "No se pudo conectar con el sitio (¿la URL es correcta y está accesible?)."
+            else:
+                reason = "No se encontró contenido de página válido en el sitio."
+            await websocket.send_json({
+                "type": "error",
+                "message": f"El rastreo no encontró ninguna página. {reason}",
+            })
+            return
+
         from api.data_pipeline import _walk_repo_tree
         tree, _ = await asyncio.to_thread(_walk_repo_tree, result["local_dir"])
 

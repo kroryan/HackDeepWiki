@@ -74,6 +74,23 @@ def _looks_skippable(url: str) -> bool:
     return any(path.endswith(ext) for ext in _SKIP_EXTENSIONS)
 
 
+# Signatures of an interactive bot-challenge page (Cloudflare's "Just a
+# moment..." managed/Turnstile challenge is the overwhelmingly common case,
+# but the "__cf_chl"/"cf-chl" tokens also catch its older JS-challenge form).
+# Checked only against the first few KB of a response -- these always appear
+# very early in a challenge page's <head>, and skipping the scan for a full
+# multi-hundred-KB real page keeps this cheap.
+_BOT_CHALLENGE_SIGNATURES = (
+    "just a moment", "cf-chl", "__cf_chl", "challenges.cloudflare.com",
+    "enable javascript and cookies to continue", "cf-browser-verification",
+)
+
+
+def _is_bot_challenge(html: str) -> bool:
+    lowered = html[:4000].lower()
+    return any(sig in lowered for sig in _BOT_CHALLENGE_SIGNATURES)
+
+
 async def _ensure_chromium(on_progress: Optional[ProgressCb]) -> None:
     """Self-heals a missing Playwright Chromium install by downloading it,
     once, the first time a crawl needs it.
@@ -196,6 +213,7 @@ async def crawl_site(
     scope: CrawlScope,
     on_page,  # async callback: (CrawlPage) -> None, called as each page completes
     on_progress: Optional[ProgressCb] = None,
+    diagnostics: Optional[dict] = None,
 ) -> int:
     """Crawl breadth-first from ``start_url`` within ``scope``, calling
     ``on_page`` for each fetched page as it completes (so the caller can
@@ -206,7 +224,21 @@ async def crawl_site(
     followed. "Same site" includes subdomains when the crawl was seeded from
     a bare domain (not a specific subdomain), matching how a user would
     intuitively describe "example.com" as one site.
+
+    ``diagnostics``, if given, is filled in with counters (``robots_blocked``,
+    ``http_error``, ``fetch_failed``, ``empty_content``, ``bot_challenge``)
+    so a caller that ends up with 0 pages can tell a Cloudflare-style bot
+    challenge apart from a robots.txt block or a genuinely empty/unreachable
+    site instead of just reporting "no pages found" -- see ws_website_crawl
+    in api/api.py, which was previously the only thing standing between a
+    silent 0-page crawl and a deeply confusing "No valid XML found in
+    response" several steps later (the wiki-structure LLM call failing on
+    an empty RAG index, with nothing pointing back at the real cause).
     """
+    if diagnostics is None:
+        diagnostics = {}
+    diagnostics.update(robots_blocked=0, http_error=0, fetch_failed=0,
+                        empty_content=0, bot_challenge=0)
     from playwright.async_api import async_playwright  # heavy import, keep lazy
 
     root_parsed = urlparse(start_url)
@@ -278,6 +310,7 @@ async def crawl_site(
                     continue
                 if not robots.allowed(url):
                     logger.debug("robots.txt disallows %s", url)
+                    diagnostics["robots_blocked"] += 1
                     continue
 
                 page = await context.new_page()
@@ -286,16 +319,24 @@ async def crawl_site(
                     status = resp.status if resp else 0
                     content_type = (resp.headers.get("content-type", "") if resp else "") or "text/html"
                     if status >= 400 or "text/html" not in content_type:
+                        diagnostics["http_error"] += 1
                         continue
                     html = await page.content()
                 except Exception as exc:  # noqa: BLE001 - one bad page must never abort the crawl
                     logger.debug("Failed to fetch %s: %s", url, exc)
+                    diagnostics["fetch_failed"] += 1
                     continue
                 finally:
                     await page.close()
 
+                if _is_bot_challenge(html):
+                    logger.debug("Bot-challenge page detected at %s", url)
+                    diagnostics["bot_challenge"] += 1
+                    continue
+
                 title, markdown = _page_to_markdown(html, url)
                 if not markdown.strip():
+                    diagnostics["empty_content"] += 1
                     continue
 
                 soup_links = BeautifulSoup(html, "html.parser")

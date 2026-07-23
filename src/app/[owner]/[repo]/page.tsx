@@ -372,7 +372,7 @@ async function fetchWebsiteStructureViaCrawl(
   const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
   const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws');
 
-  return new Promise<WebsiteCrawlResult | null>((resolve) => {
+  return new Promise<WebsiteCrawlResult | null>((resolve, reject) => {
     const ws = new WebSocket(`${wsBaseUrl}/ws/website/crawl`);
     let settled = false;
     // Crawls can legitimately take minutes for large scopes -- much longer
@@ -418,7 +418,12 @@ async function fetchWebsiteStructureViaCrawl(
           settled = true;
           clearTimeout(timeout);
           console.warn('Website crawl failed:', msg.message);
-          resolve(null);
+          // Reject (not resolve(null)) so the specific backend reason (bot
+          // challenge / robots.txt / HTTP error / unreachable -- see
+          // ws_website_crawl in api.py) reaches the user instead of being
+          // discarded in favor of a generic "crawl failed or returned no
+          // pages" at the call site.
+          reject(new Error(msg.message || 'Website crawl failed.'));
           ws.close();
         }
       } catch {

@@ -54,8 +54,9 @@ async def run_site_crawl(
             "depth": page.depth,
         })
 
-    page_count = await crawl_site(start_url, scope, _on_page, on_progress)
+    diagnostics: Dict = {}
+    page_count = await crawl_site(start_url, scope, _on_page, on_progress, diagnostics=diagnostics)
     write_site_meta(local_dir, start_url, manifest)
 
     logger.info("Crawled %d page(s) from %s into %s", page_count, start_url, local_dir)
-    return {"local_dir": local_dir, "page_count": page_count, "pages": manifest}
+    return {"local_dir": local_dir, "page_count": page_count, "pages": manifest, "diagnostics": diagnostics}
