@@ -517,6 +517,13 @@ export default function RepoWikiPage() {
   // isComprehensiveView is wired (editable via WikiTypeSelector, persisted
   // to the URL) rather than technicalAnalysisEnabled's read-only pattern.
   const isUserFocusedParam = searchParams.get('audience') === 'user';
+  // Free-text guidance on which topics deserve more/less depth, so the
+  // structure-planning LLM doesn't split attention evenly across topics of
+  // wildly different real complexity (e.g. a game's core simulation systems
+  // vs. a one-line install step) just for lack of any other signal.
+  const focusInstructionsParam = searchParams.get('focus')
+    ? decodeURIComponent(searchParams.get('focus') || '')
+    : '';
   const repoHost = (() => {
     if (!repoUrl) return '';
     try {
@@ -706,6 +713,7 @@ export default function RepoWikiPage() {
   // Wiki type state - default to comprehensive view
   const [isComprehensiveView, setIsComprehensiveView] = useState(isComprehensiveParam);
   const [isUserFocusedView, setIsUserFocusedView] = useState(isUserFocusedParam);
+  const [focusInstructions, setFocusInstructions] = useState(focusInstructionsParam);
   const [pageCount, setPageCount] = useState(pageCountParam);
   // Using useRef for activeContentRequests to maintain a single instance across renders
   // This map tracks which pages are currently being processed to prevent duplicate requests
@@ -875,6 +883,17 @@ export default function RepoWikiPage() {
           ? `\n\nCRITICAL STRUCTURE REQUIREMENT: This is the introduction/overview page, so it MUST include a "## Project Structure" section presenting the COMPLETE file/page tree below, verbatim, inside a single fenced code block (do not summarize, reorder, or omit any entries) -- this is the one authoritative place in the whole wiki where the full tree is shown:\n\`\`\`\n${repoFileTree}\n\`\`\`\n`
           : '';
 
+        // Same signal as determineWikiStructure's userPriorityNote, but
+        // reinforced at the individual-page level: the structure step
+        // decides how many PAGES a topic gets, this decides how much DEPTH
+        // this one page itself goes into, so a page covering something
+        // flagged (or judged) as especially complex/central doesn't end up
+        // just as long as a page covering something minor.
+        const pagePriorityNoun = isRepoPage ? 'repository' : 'website';
+        const pagePriorityNote = focusInstructions.trim()
+          ? `\n\nDEPTH GUIDANCE: The user said the following matters most for this wiki -- if "${page.title}" relates to it, go deeper and more thorough than a typical page; if it's clearly minor/trivial by comparison, keep it appropriately concise instead of padding it out.\n<user_priorities>\n${focusInstructions.trim()}\n</user_priorities>`
+          : `\n\nDEPTH GUIDANCE: Judge for yourself how central/complex "${page.title}" actually is within the ${pagePriorityNoun}. If it's a core subsystem or major feature, go deeper and more thorough than a typical page; if it's a minor, boilerplate, or one-off topic, keep it appropriately concise instead of padding it out to match other pages.`;
+
         // Store the initially generated content BEFORE rendering/potential modification
         setGeneratedPages(prev => ({
           ...prev,
@@ -950,7 +969,7 @@ Based ONLY on the content of the \`[RELEVANT_PAGES]\` and what can be observed i
 5.  **Citations:** Cite the specific crawled page path(s) each claim is drawn from, e.g. \`Sources: [path/to/page.md]()\`. Cite as many of the provided pages as are actually relevant -- do not pad citations to hit an arbitrary count.
 6.  **Accuracy:** Only state what's actually evidenced in the provided pages. If something can't be determined from crawled HTML/Markdown alone (e.g. backend logic), say so rather than inventing it.
 7.  **Conclusion:** End with a brief summary if appropriate for "${page.title}".
-${introStructureBlock}
+${introStructureBlock}${pagePriorityNote}
 IMPORTANT: Generate the content in ${pageLanguageLine} language.` : `You are an expert wiki writer creating a content wiki about a website's subject matter (not its technical implementation).
 Your task is to generate a comprehensive and accurate wiki page in Markdown format about a specific topic within the site's content, the way the site itself organizes that topic.
 
@@ -979,7 +998,7 @@ Based ONLY on the content of the \`[RELEVANT_PAGES]\`:
 4.  **Citations:** Cite the specific crawled page path(s) each claim is drawn from, e.g. \`Sources: [path/to/page.md]()\`. Cite as many of the provided pages as are actually relevant -- do not pad citations to hit an arbitrary count.
 5.  **Accuracy:** Do not invent facts beyond what the source pages state. Do NOT analyze the site's own technical implementation (no HTML/CSS/framework talk) -- write about the subject matter itself.
 6.  **Conclusion:** End with a brief summary if appropriate for "${page.title}".
-${introStructureBlock}
+${introStructureBlock}${pagePriorityNote}
 IMPORTANT: Generate the content in ${pageLanguageLine} language.`) : (isUserFocusedView ? `You are an expert technical writer creating END-USER documentation for a software product.
 Your audience has NO interest in source code -- they just want to install, configure, and use this software effectively. Never discuss architecture, internal implementation, source code organization, or anything a user would never need to know to use the product.
 
@@ -1019,7 +1038,7 @@ Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
 8.  **Tone:** Clear, friendly, and precise -- written for someone who downloaded/installed this software and wants to get value out of it quickly, not someone evaluating its codebase.
 
 9.  **Conclusion:** End with a brief summary or "next steps" pointer if appropriate for "${page.title}".
-${introStructureBlock}
+${introStructureBlock}${pagePriorityNote}
 IMPORTANT: Generate the content in ${pageLanguageLine} language.
 
 Remember:
@@ -1116,7 +1135,7 @@ Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
 8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project. Avoid unnecessary jargon, but use correct technical terms where appropriate.
 
 9.  **Conclusion/Summary:** End with a brief summary paragraph if appropriate for "${page.title}", reiterating the key aspects covered and their significance within the project.
-${introStructureBlock}
+${introStructureBlock}${pagePriorityNote}
 IMPORTANT: Generate the content in ${pageLanguageLine} language.
 
 Remember:
@@ -1328,7 +1347,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, isUserFocusedView, language, activeContentRequests, generateFileUrl, wikiStructure, repoFileTree]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, isUserFocusedView, focusInstructions, language, activeContentRequests, generateFileUrl, wikiStructure, repoFileTree]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string, force: boolean = false) => {
@@ -1461,6 +1480,18 @@ Each section should contain relevant pages. For example, the "Frontend Component
           : 'Each page should focus on a specific aspect of the codebase (e.g., architecture, key features, setup)';
       const wikiForNoun = isWebsite ? 'website' : 'repository';
 
+      // Real projects/sites are rarely uniform in complexity -- a game's
+      // core simulation systems, a library's central API, or a site's main
+      // feature area usually deserve far more depth than a one-line install
+      // step or a boilerplate config file, but the model previously had no
+      // signal to weigh that by and could easily give both equal space.
+      // Prefer the user's own stated priorities when given; otherwise tell
+      // the model explicitly to judge relative complexity/importance itself
+      // rather than defaulting to even coverage.
+      const userPriorityNote = focusInstructions.trim()
+        ? `\n\nUSER-SPECIFIED PRIORITIES -- the user has given the following guidance on what deserves the most attention in this wiki. Weight page count, section depth, and content length accordingly: give substantially more space to topics they flag as important/complex, and keep topics they flag as minor/trivial brief (a short section or a single concise page, not a full page each). If something isn't mentioned, use your own judgment.\n<user_priorities>\n${focusInstructions.trim()}\n</user_priorities>`
+        : `\n\nNo specific priorities were given. Analyze the ${wikiForNoun} yourself: identify which subsystems/topics are the most complex, central, or heavily used, and allocate noticeably more pages/depth to those. Keep simple, boilerplate, or one-off topics (e.g. basic installation, a trivial config file) brief -- a short section or a single concise page, not the same depth as a core subsystem. Not every topic deserves equal space.`;
+
       // Prepare request body
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const requestBody: Record<string, any> = {
@@ -1488,6 +1519,7 @@ When designing the wiki structure, include pages that would benefit from visual 
 - Process workflows
 - State machines
 - Class hierarchies
+${userPriorityNote}
 
 ${isComprehensiveView ? `
 ${comprehensiveSections}
@@ -2082,7 +2114,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, messages.loading, isComprehensiveView, isUserFocusedView, pageCount]);
+  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, messages.loading, isComprehensiveView, isUserFocusedView, focusInstructions, pageCount]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async (force: boolean = false) => {
@@ -3164,6 +3196,7 @@ IMPORTANT:
     const refreshCustomModel = selection?.customModel ?? customSelectedModelState;
     const refreshComprehensive = selection?.isComprehensiveView ?? isComprehensiveView;
     const refreshUserFocused = selection?.isUserFocusedView ?? isUserFocusedView;
+    const refreshFocusInstructions = selection?.focusInstructions ?? focusInstructions;
     const refreshPageCount = normalizeWikiPageCount(
       selection?.pageCount ?? pageCount,
       refreshComprehensive,
@@ -3199,6 +3232,11 @@ IMPORTANT:
     const currentUrl = new URL(window.location.href);
     currentUrl.searchParams.set('comprehensive', refreshComprehensive.toString());
     currentUrl.searchParams.set('audience', refreshUserFocused ? 'user' : 'developer');
+    if (refreshFocusInstructions.trim()) {
+      currentUrl.searchParams.set('focus', encodeURIComponent(refreshFocusInstructions));
+    } else {
+      currentUrl.searchParams.delete('focus');
+    }
     currentUrl.searchParams.set('pages', refreshPageCount.toString());
     // Keep provider/model in the URL in sync with the user's selection so a full page
     // reload uses the same model they chose in the modal (and the server-cache match check
@@ -3288,7 +3326,7 @@ IMPORTANT:
     // For now, we rely on the standard loadData flow initiated by resetting effectRan and dependencies.
     // This will re-trigger the main data loading useEffect.
     // No direct call to fetchRepositoryStructure here, let the useEffect handle it based on effectRan.current = false.
-  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, isUserFocusedView, pageCount, authCode, authRequired]);
+  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, isUserFocusedView, focusInstructions, pageCount, authCode, authRequired]);
 
   // Start wiki generation when component mounts
   useEffect(() => {
@@ -4536,6 +4574,8 @@ IMPORTANT:
         setIsComprehensiveView={setIsComprehensiveView}
         isUserFocusedView={isUserFocusedView}
         setIsUserFocusedView={setIsUserFocusedView}
+        focusInstructions={focusInstructions}
+        setFocusInstructions={setFocusInstructions}
         pageCount={pageCount}
         setPageCount={setPageCount}
         showFileFilters={true}

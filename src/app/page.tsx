@@ -104,6 +104,7 @@ export default function Home() {
           setSelectedLanguage(config.selectedLanguage || language);
           setIsComprehensiveView(cachedComprehensive);
           setIsUserFocusedView(config.isUserFocusedView === undefined ? false : config.isUserFocusedView);
+          setFocusInstructions(config.focusInstructions || '');
           setPageCount(
             normalizeWikiPageCount(config.pageCount, cachedComprehensive),
           );
@@ -164,6 +165,9 @@ export default function Home() {
   // Wiki audience - default to the developer-focused wiki (current/original
   // behavior); orthogonal to comprehensive/concise, see WikiTypeSelector.
   const [isUserFocusedView, setIsUserFocusedView] = useState<boolean>(false);
+  // Free-text guidance on which topics deserve more/less depth -- see
+  // userPriorityNote/pagePriorityNote in [owner]/[repo]/page.tsx.
+  const [focusInstructions, setFocusInstructions] = useState<string>('');
   const [pageCount, setPageCount] = useState<number>(
     getDefaultWikiPageCount(true),
   );
@@ -661,6 +665,7 @@ export default function Home() {
           selectedLanguage,
           isComprehensiveView,
           isUserFocusedView,
+          focusInstructions,
           pageCount,
           provider,
           model,
@@ -702,6 +707,9 @@ export default function Home() {
       params.append('language', selectedLanguage);
       params.append('comprehensive', isComprehensiveView.toString());
       params.append('audience', isUserFocusedView ? 'user' : 'developer');
+      if (focusInstructions.trim()) {
+        params.append('focus', encodeURIComponent(focusInstructions.trim()));
+      }
       params.append('pages', pageCount.toString());
       if (enableVulnScan) {
         params.append('vuln_scan', '1');
@@ -777,6 +785,9 @@ export default function Home() {
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
     params.append('audience', isUserFocusedView ? 'user' : 'developer');
+    if (focusInstructions.trim()) {
+      params.append('focus', encodeURIComponent(focusInstructions.trim()));
+    }
     params.append('pages', pageCount.toString());
 
     // 🔐 Security Analysis (vulnerability scan) parameters
@@ -1166,6 +1177,8 @@ export default function Home() {
             setIsComprehensiveView={setIsComprehensiveView}
             isUserFocusedView={isUserFocusedView}
             setIsUserFocusedView={setIsUserFocusedView}
+            focusInstructions={focusInstructions}
+            setFocusInstructions={setFocusInstructions}
             pageCount={pageCount}
             setPageCount={setPageCount}
             provider={provider}

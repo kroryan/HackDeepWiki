@@ -13,6 +13,7 @@ export interface AppliedModelSelection {
   customModel: string;
   isComprehensiveView: boolean;
   isUserFocusedView?: boolean;
+  focusInstructions?: string;
   pageCount?: number;
   excludedDirs: string;
   excludedFiles: string;
@@ -45,6 +46,8 @@ interface ModelSelectionModalProps {
   setIsComprehensiveView: (value: boolean) => void;
   isUserFocusedView?: boolean;
   setIsUserFocusedView?: (value: boolean) => void;
+  focusInstructions?: string;
+  setFocusInstructions?: (value: string) => void;
   pageCount?: number;
   setPageCount?: (value: number) => void;
 
@@ -96,6 +99,8 @@ export default function ModelSelectionModal({
   setIsComprehensiveView,
   isUserFocusedView = false,
   setIsUserFocusedView,
+  focusInstructions = '',
+  setFocusInstructions,
   pageCount,
   setPageCount,
   excludedDirs = '',
@@ -130,6 +135,7 @@ export default function ModelSelectionModal({
   const [localCustomModel, setLocalCustomModel] = useState(customModel);
   const [localIsComprehensiveView, setLocalIsComprehensiveView] = useState(isComprehensiveView);
   const [localIsUserFocusedView, setLocalIsUserFocusedView] = useState(isUserFocusedView);
+  const [localFocusInstructions, setLocalFocusInstructions] = useState(focusInstructions);
   const [localPageCount, setLocalPageCount] = useState(pageCount);
   const [localExcludedDirs, setLocalExcludedDirs] = useState(excludedDirs);
   const [localExcludedFiles, setLocalExcludedFiles] = useState(excludedFiles);
@@ -157,6 +163,7 @@ export default function ModelSelectionModal({
       setLocalCustomModel(customModel);
       setLocalIsComprehensiveView(isComprehensiveView);
       setLocalIsUserFocusedView(isUserFocusedView);
+      setLocalFocusInstructions(focusInstructions);
       setLocalPageCount(pageCount);
       setLocalExcludedDirs(excludedDirs);
       setLocalExcludedFiles(excludedFiles);
@@ -171,7 +178,7 @@ export default function ModelSelectionModal({
       setLocalVulnDeps(vulnDeps);
       setLocalNvdKey(nvdKey);
     }
-  }, [isOpen, provider, model, isCustomModel, customModel, isComprehensiveView, isUserFocusedView, pageCount, excludedDirs, excludedFiles, includedDirs, includedFiles, repositoryType, showTokenInput, enableVulnScan, vulnClient, vulnServer, vulnDeps, nvdKey]);
+  }, [isOpen, provider, model, isCustomModel, customModel, isComprehensiveView, isUserFocusedView, focusInstructions, pageCount, excludedDirs, excludedFiles, includedDirs, includedFiles, repositoryType, showTokenInput, enableVulnScan, vulnClient, vulnServer, vulnDeps, nvdKey]);
 
   // Handler for applying changes
   const handleApply = () => {
@@ -181,6 +188,7 @@ export default function ModelSelectionModal({
     setCustomModel(localCustomModel);
     setIsComprehensiveView(localIsComprehensiveView);
     setIsUserFocusedView?.(localIsUserFocusedView);
+    setFocusInstructions?.(localFocusInstructions);
     if (localPageCount !== undefined) setPageCount?.(localPageCount);
     if (setExcludedDirs) setExcludedDirs(localExcludedDirs);
     if (setExcludedFiles) setExcludedFiles(localExcludedFiles);
@@ -196,6 +204,7 @@ export default function ModelSelectionModal({
       customModel: localCustomModel,
       isComprehensiveView: localIsComprehensiveView,
       isUserFocusedView: localIsUserFocusedView,
+      focusInstructions: localFocusInstructions,
       pageCount: localPageCount,
       excludedDirs: localExcludedDirs,
       excludedFiles: localExcludedFiles,
@@ -248,6 +257,8 @@ export default function ModelSelectionModal({
                     setPageCount={setLocalPageCount}
                     isUserFocusedView={setIsUserFocusedView ? localIsUserFocusedView : undefined}
                     setIsUserFocusedView={setIsUserFocusedView ? setLocalIsUserFocusedView : undefined}
+                    focusInstructions={setFocusInstructions ? localFocusInstructions : undefined}
+                    setFocusInstructions={setFocusInstructions ? setLocalFocusInstructions : undefined}
                 />
             }
 

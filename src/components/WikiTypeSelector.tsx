@@ -20,6 +20,15 @@ interface WikiTypeSelectorProps {
   // their own technical/content-mode toggle) can simply omit the props.
   isUserFocusedView?: boolean;
   setIsUserFocusedView?: (value: boolean) => void;
+  // Free-text guidance on which topics deserve more/less depth -- e.g. so a
+  // sprawling game's core simulation systems don't get the same page count
+  // as a one-line install step just because the structure-planning LLM has
+  // no other signal to weigh importance by. Optional (omit both props to
+  // hide the field) and purely a hint: left blank, the prompt itself still
+  // tells the model to judge relative complexity/centrality on its own --
+  // see determineWikiStructure/generatePageContent in page.tsx.
+  focusInstructions?: string;
+  setFocusInstructions?: (value: string) => void;
 }
 
 const WikiTypeSelector: React.FC<WikiTypeSelectorProps> = ({
@@ -29,6 +38,8 @@ const WikiTypeSelector: React.FC<WikiTypeSelectorProps> = ({
   setPageCount,
   isUserFocusedView,
   setIsUserFocusedView,
+  focusInstructions,
+  setFocusInstructions,
 }) => {
   const { messages: t } = useLanguage();
   const selectWikiType = (isComprehensive: boolean) => {
@@ -179,6 +190,31 @@ const WikiTypeSelector: React.FC<WikiTypeSelectorProps> = ({
               )}
             </button>
           </div>
+        </div>
+      )}
+      {focusInstructions !== undefined && setFocusInstructions && (
+        <div className="mt-4">
+          <label
+            htmlFor="wiki-focus-instructions"
+            className="block text-sm font-medium text-[var(--foreground)] mb-1"
+          >
+            {t.form?.focusInstructions || 'What deserves the most attention? (optional)'}
+          </label>
+          <textarea
+            id="wiki-focus-instructions"
+            rows={3}
+            value={focusInstructions}
+            onChange={(event) => setFocusInstructions(event.target.value)}
+            placeholder={
+              t.form?.focusInstructionsPlaceholder ||
+              "E.g.: \"The dynasty and inheritance system is the most complex part of this project -- give it the most depth. Installation is trivial, keep it brief.\" Leave blank and the AI will analyze the project itself to judge what deserves more depth."
+            }
+            className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)] resize-y"
+          />
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            {t.form?.focusInstructionsHelp ||
+              "Tell the AI which topics matter most so it gives them more pages/depth, and keeps minor topics brief -- instead of splitting attention evenly regardless of actual complexity."}
+          </p>
         </div>
       )}
     </div>

@@ -23,6 +23,8 @@ interface ConfigurationModalProps {
   setIsComprehensiveView: (value: boolean) => void;
   isUserFocusedView: boolean;
   setIsUserFocusedView: (value: boolean) => void;
+  focusInstructions: string;
+  setFocusInstructions: (value: string) => void;
   pageCount: number;
   setPageCount: (value: number) => void;
 
@@ -105,6 +107,8 @@ export default function ConfigurationModal({
   setIsComprehensiveView,
   isUserFocusedView,
   setIsUserFocusedView,
+  focusInstructions,
+  setFocusInstructions,
   pageCount,
   setPageCount,
   provider,
@@ -220,6 +224,8 @@ export default function ConfigurationModal({
               setPageCount={setPageCount}
               isUserFocusedView={isUserFocusedView}
               setIsUserFocusedView={setIsUserFocusedView}
+              focusInstructions={focusInstructions}
+              setFocusInstructions={setFocusInstructions}
             />
 
             {/* Model Selector */}
