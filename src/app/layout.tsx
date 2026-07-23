@@ -1,8 +1,37 @@
 import type { Metadata } from "next";
+import { Geist_Mono, Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import CyberBackground from "@/components/CyberBackground";
+
+// next/font self-hosts these at build time instead of the previous manual
+// <link> to Google Fonts, which only ever loaded them at runtime from
+// fonts.googleapis.com -- a real cost for an app that's meant to run fully
+// offline against a local Ollama install (see README). It also silences
+// @next/next/no-page-custom-font, though that rule is really aimed at the
+// Pages Router's per-page <Head>; this file is the App Router root layout,
+// so it already applied to every page regardless.
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  weight: ["400"],
+  variable: "--nf-geist-mono",
+  display: "swap",
+});
+
+const notoSansJP = Noto_Sans_JP({
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  variable: "--nf-noto-sans-jp",
+  display: "swap",
+});
+
+const notoSerifJP = Noto_Serif_JP({
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  variable: "--nf-noto-serif-jp",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "HackDeepWiki Open Source | Sheing Ng",
@@ -15,15 +44,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Geist+Mono&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@400;500;700&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${geistMono.variable} ${notoSansJP.variable} ${notoSerifJP.variable}`}
+    >
       <body className="antialiased relative min-h-screen">
         <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
           <LanguageProvider>

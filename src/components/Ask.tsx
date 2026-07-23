@@ -164,6 +164,12 @@ const Ask: React.FC<AskProps> = ({
   }, [storageKey]);
 
   // Restore the selected session without writing stale state into it.
+  // Deliberately excludes `sessions`: the effect below (persist-as-it-streams)
+  // writes conversationHistory/response back into `sessions` on every token,
+  // so depending on `sessions` here would re-fire this restore on every
+  // streamed chunk and stomp the in-progress response with what was just
+  // persisted a moment earlier -- this should only run when the user
+  // actually switches to a different session.
   useEffect(() => {
     if (!activeSessionId) return;
     const session = sessions.find(item => item.id === activeSessionId);
@@ -181,6 +187,7 @@ const Ask: React.FC<AskProps> = ({
       loadedSessionIdRef.current = activeSessionId;
     }, 0);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]);
 
   // Persist the active conversation as it streams.

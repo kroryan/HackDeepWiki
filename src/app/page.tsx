@@ -131,10 +131,19 @@ export default function Home() {
     }
   };
 
+  // Intentionally mount-only: this loads the cached config for whatever the
+  // *default* repositoryInput is before the user has typed anything.
+  // handleRepositoryInputChange already calls loadConfigFromCache on every
+  // subsequent edit (see above), so depending on repositoryInput here would
+  // just re-run the same lookup a second time on every keystroke.
+  // loadConfigFromCache itself isn't memoized (redefined each render), so it
+  // can't be added as a dependency either without turning this into a
+  // run-every-render effect.
   useEffect(() => {
     if (repositoryInput) {
       loadConfigFromCache(repositoryInput);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Provider-based model selection state
