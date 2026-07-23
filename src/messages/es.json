@@ -83,7 +83,13 @@
     "hideDefault": "Ocultar Predeterminados",
     "viewDefault": "Ver Predeterminados",
     "authorizationCode": "Código de Autorización",
-    "authorizationRequired": "Generar Wiki requiere código de autorización"
+    "authorizationRequired": "Generar Wiki requiere código de autorización",
+    "fanwikiErrorPath": "Introduce la ruta absoluta a un XML de exportación de MediaWiki.",
+    "fanwikiProgressInit": "Iniciando importación...",
+    "fanwikiRegisterError": "La importación terminó, pero no se pudo registrar la wiki.",
+    "fanwikiWsError": "Error de WebSocket durante la importación",
+    "fanwikiCloseError": "La conexión se cerró antes de terminar la importación",
+    "fanwikiSuccess": "Importadas {pages} página(s), {images} imagen(es), {links} enlace(s) resueltos."
   },
   "footer": {
     "copyright": "HackDeepWiki - Documentación impulsada por IA para repositorios de código"
@@ -142,7 +148,15 @@
     "relatedFiles": "Archivos Relacionados:",
     "relatedPages": "Páginas Relacionadas:",
     "selectPagePrompt": "Seleccione una página de la navegación para ver su contenido",
-    "askAboutRepo": "Hacer preguntas sobre este repositorio"
+    "askAboutRepo": "Hacer preguntas sobre este repositorio",
+    "attachImagesPathError": "Introduce la carpeta de imágenes.",
+    "attachImagesFailed": "Fallo al adjuntar imágenes",
+    "modelTimeoutError": "El modelo dejó de responder (sin datos nuevos durante 5 minutos).",
+    "modelTimeoutRetryError": "El modelo dejó de responder (sin datos nuevos durante 5 minutos). Vuelve a intentar la generación.",
+    "modelNoPagesError": "El modelo no devolvió ninguna página para esta wiki. Vuelve a intentar la generación.",
+    "backendConnectionError": "Se interrumpió la conexión con el backend de HackDeepWiki. El repositorio es válido; vuelve a intentar la generación.",
+    "analysisConnectionError": "La conexión con el servicio se interrumpió durante el análisis. Puedes volver a intentarlo sin cambiar la URL del repositorio.",
+    "generationErrorRetry": "El repositorio o sitio se leyó correctamente; el problema ocurrió generando el contenido con el modelo de IA. Vuelve a intentarlo -- cambiar de modelo o reducir el número de páginas también puede ayudar."
   },
   "nav": {
     "wikiProjects": "Lista de Proyectos"
@@ -159,5 +173,31 @@
     "browseExisting": "Explorar Proyectos Existentes",
     "existingProjects": "Proyectos Existentes",
     "recentProjects": "Proyectos Recientes"
+  },
+  "fanwiki": {
+    "loadError": "No se pudo cargar el artículo.",
+    "selectImageFolderFirst": "Selecciona primero una carpeta de imágenes.",
+    "imagesAttachError": "No se pudieron añadir las imágenes.",
+    "articles": "artículos",
+    "mediawikiXml": "XML de MediaWiki",
+    "addImagesFolder": "Añadir carpeta de imágenes",
+    "repairing": "Reparando...",
+    "repairInternalLinks": "Reparar enlaces internos",
+    "exportObsidian": "Exportar Obsidian",
+    "exportHDWReader": "Exportar HDWReader",
+    "exportZIM": "Exportar ZIM",
+    "initialRepairNote": "La reparación inicial se ejecuta automáticamente al importar.",
+    "searchPlaceholder": "Buscar artículos...",
+    "searching": "Buscando...",
+    "noResults": "No hay resultados.",
+    "loadingArticle": "Cargando artículo...",
+    "source": "Fuente",
+    "selectArticle": "Selecciona un artículo para leerlo.",
+    "addImagesTo": "Añadir imágenes a",
+    "addImagesDesc": "Selecciona una carpeta local. Se buscarán por nombre las imágenes que el XML referencia, se copiarán dentro de la wiki y se actualizarán sus artículos sin repetir la importación.",
+    "browse": "Examinar",
+    "adding": "Añadiendo...",
+    "addImages": "Añadir imágenes",
+    "selectImageFolder": "Seleccionar carpeta de imágenes"
   }
 }

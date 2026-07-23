@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { FaWikipediaW, FaGithub, FaMobileAlt } from 'react-icons/fa';
+import LanguageSelector from '@/components/LanguageSelector';
 import ThemeToggle from '@/components/theme-toggle';
 import Mermaid from '../components/Mermaid';
 import ConfigurationModal from '@/components/ConfigurationModal';
@@ -279,7 +280,7 @@ export default function Home() {
   const handleInspectFanwiki = async () => {
     const path = fanwikiXmlPath.trim();
     if (!path) {
-      setFanwikiError('Introduce la ruta absoluta a un XML de exportación de MediaWiki.');
+      setFanwikiError(messages.form?.fanwikiErrorPath || 'Please provide an absolute path to a MediaWiki export XML.');
       return;
     }
     setFanwikiInspecting(true);
@@ -311,7 +312,7 @@ export default function Home() {
     if (!path || !fanwikiInfo) return;
     setFanwikiImporting(true);
     setFanwikiError(null);
-    setFanwikiProgressMsg('Iniciando importación…');
+    setFanwikiProgressMsg(messages.form?.fanwikiProgressInit || 'Starting import...');
     setFanwikiProgressPercent(0);
     try {
       const importWebSocketUrl = await getBackendWebSocketUrl('/ws/fanwiki/import');
@@ -336,7 +337,7 @@ export default function Home() {
               if (msg.percent != null) setFanwikiProgressPercent(msg.percent);
             } else if (msg.type === 'done') {
               if (!msg.id) {
-                reject(new Error('La importación terminó, pero no se pudo registrar la wiki.'));
+                reject(new Error(messages.form?.fanwikiRegisterError || 'Import finished, but failed to register the wiki.'));
               } else {
                 resolve(msg);
               }
@@ -349,15 +350,20 @@ export default function Home() {
             // ignore unparsable frames
           }
         };
-        ws.onerror = () => reject(new Error('Error de WebSocket durante la importación'));
+        ws.onerror = () => reject(new Error(messages.form?.fanwikiWsError || 'WebSocket error during import'));
         ws.onclose = (event) => {
-          if (event.code !== 1000) reject(new Error('La conexión se cerró antes de terminar la importación'));
+          if (event.code !== 1000) reject(new Error(messages.form?.fanwikiCloseError || 'Connection closed before import finished'));
         };
       });
 
       setFanwikiProgressPercent(100);
       setFanwikiProgressMsg(
-        `Importadas ${result.page_count} página(s), ${result.image_count} imagen(es), ${result.links_resolved} enlace(s) resueltos.`
+        messages.form?.fanwikiSuccess 
+          ? messages.form.fanwikiSuccess
+              .replace('{pages}', result.page_count.toString())
+              .replace('{images}', result.image_count.toString())
+              .replace('{links}', result.links_resolved.toString())
+          : `Imported ${result.page_count} page(s), ${result.image_count} image(s), ${result.links_resolved} link(s) resolved.`
       );
       setProjectsListKey((k) => k + 1);
       setIsFanwikiModalOpen(false);
@@ -1345,6 +1351,7 @@ export default function Home() {
                 <FaMobileAlt className="text-xl" />
               </a>
             </div>
+            <LanguageSelector />
             <ThemeToggle />
           </div>
         </div>

@@ -79,7 +79,13 @@
     "changeModel": "修改模型",
     "defaultNote": "這些預設設定已經被套用。請在上方新增您的自訂排除項目。",
     "hideDefault": "隱藏預設設定",
-    "viewDefault": "檢視預設設定"
+    "viewDefault": "檢視預設設定",
+    "fanwikiErrorPath": "Please provide an absolute path to a MediaWiki export XML.",
+    "fanwikiProgressInit": "Starting import...",
+    "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
+    "fanwikiWsError": "WebSocket error during import",
+    "fanwikiCloseError": "Connection closed before import finished",
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
   },
   "footer": {
     "copyright": "HackDeepWiki - 為程式碼儲存庫提供 AI 驅動的文件"
@@ -115,7 +121,15 @@
     "relatedFiles": "相關檔案：",
     "relatedPages": "相關頁面：",
     "selectPagePrompt": "從導覽中選擇一個頁面以檢視其內容",
-    "askAboutRepo": "詢問關於此儲存庫的問題"
+    "askAboutRepo": "詢問關於此儲存庫的問題",
+    "attachImagesPathError": "Please enter an image folder path.",
+    "attachImagesFailed": "Failed to attach images",
+    "modelTimeoutError": "Model stopped responding (no new data for 5 minutes).",
+    "modelTimeoutRetryError": "Model stopped responding (no new data for 5 minutes). Try generating again.",
+    "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
+    "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
+    "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
   },
   "nav": {
     "wikiProjects": "專案清單"
@@ -132,5 +146,31 @@
     "browseExisting": "瀏覽現有專案",
     "existingProjects": "現有專案",
     "recentProjects": "最近專案"
+  },
+  "fanwiki": {
+    "loadError": "Article load failed.",
+    "selectImageFolderFirst": "Select an image folder first.",
+    "imagesAttachError": "Failed to attach images.",
+    "articles": "articles",
+    "mediawikiXml": "MediaWiki XML",
+    "addImagesFolder": "Add image folder",
+    "repairing": "Repairing...",
+    "repairInternalLinks": "Repair internal links",
+    "exportObsidian": "Export Obsidian",
+    "exportHDWReader": "Export HDWReader",
+    "exportZIM": "Export ZIM",
+    "initialRepairNote": "Initial repair runs automatically on import.",
+    "searchPlaceholder": "Search articles...",
+    "searching": "Searching...",
+    "noResults": "No results.",
+    "loadingArticle": "Loading article...",
+    "source": "Source",
+    "selectArticle": "Select an article to read.",
+    "addImagesTo": "Add images to",
+    "addImagesDesc": "Select a local folder. Images referenced by the XML will be copied and articles updated.",
+    "browse": "Browse",
+    "adding": "Adding...",
+    "addImages": "Add images",
+    "selectImageFolder": "Select image folder"
   }
-} 
+}

@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
 from api.chat_models import ChatCompletionRequest, ChatMessage  # noqa: F401 (ChatMessage re-exported for callers)
 from api.config import get_model_config, configs, OPENROUTER_API_KEY, OPENAI_API_KEY, LITELLM_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+from api.context_budget import summarize_file_tree_in_query
 from api.data_pipeline import count_tokens, get_file_content
 from api.rag import RAG
 from api import search_tool
@@ -27,6 +28,37 @@ from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Character budget for `query` in the token-limit fallback path below.
+# Mirrors MAX_FALLBACK_QUERY_CHARS in websocket_wiki.py's
+# handle_websocket_chat so the two transports can't drift on this.
+MAX_FALLBACK_QUERY_CHARS = 8000
+
+# Substrings that indicate a provider rejected the request for being too
+# long, checked case-insensitively against the exception message. Mirrors
+# CONTEXT_LIMIT_ERROR_PHRASES / _is_context_limit_error in websocket_wiki.py
+# so the two transports can't drift on this -- this used to only match
+# "maximum context length" (OpenAI's exact wording), which missed Ollama's
+# own phrasing ("...exceeded max context length by N tokens"), so an
+# oversized prompt against a local Ollama model always fell through to the
+# generic "Error: ..." branch below instead of retrying with a simplified,
+# truncated prompt.
+CONTEXT_LIMIT_ERROR_PHRASES = (
+    "maximum context length",
+    "max context length",
+    "context length",
+    "context_length_exceeded",
+    "token limit",
+    "too many tokens",
+    "prompt is too long",
+    "prompt too long",
+    "input is too long",
+)
+
+
+def _is_context_limit_error(error_message: str) -> bool:
+    lowered = error_message.lower()
+    return any(phrase in lowered for phrase in CONTEXT_LIMIT_ERROR_PHRASES)
 
 
 # Initialize FastAPI app
@@ -183,6 +215,25 @@ async def chat_completions_stream(request: ChatCompletionRequest):
 
         # Get the query from the last message
         query = last_message.content
+
+        # Proactively cap the <file_tree> block (the wiki-structure-planning
+        # prompt built by determineWikiStructure in page.tsx embeds the
+        # COMPLETE, unfiltered file tree with no size limit) to what the
+        # selected model's context window can actually hold. Mirrors the same
+        # block in websocket_wiki.py's handle_websocket_chat so both chat
+        # transports can't drift on this. The CONTEXT_LIMIT_ERROR_PHRASES
+        # fallback below stays in place as a defense-in-depth backstop for
+        # whatever this estimate misses.
+        try:
+            _budget_model_kwargs = get_model_config(request.provider, request.model)["model_kwargs"]
+            query = summarize_file_tree_in_query(
+                query,
+                provider=request.provider,
+                model_config_kwargs=_budget_model_kwargs,
+                count_tokens_fn=count_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - never let budgeting itself break a chat
+            logger.warning(f"File tree budgeting skipped (non-fatal): {exc}")
 
         # Pages actually consulted while answering (initial context +
         # anything looked up via a SEARCH_WIKI tool call), shown as a

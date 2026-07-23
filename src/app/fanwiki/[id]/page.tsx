@@ -163,14 +163,14 @@ export default function FanwikiReaderPage() {
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
-          throw new Error(body.detail || body.error || 'No se pudo cargar el artículo.');
+          throw new Error(body.detail || body.error || messages.fanwiki?.loadError || 'Article load failed.');
         }
         return body as FanwikiPage;
       })
       .then(setCurrentPage)
       .catch((reason) => {
         setCurrentPage(null);
-        setError(reason instanceof Error ? reason.message : 'No se pudo cargar el artículo.');
+        setError(reason instanceof Error ? reason.message : messages.fanwiki?.loadError || 'Article load failed.');
       })
       .finally(() => setIsPageLoading(false));
   }, [fanwikiId, currentPath, pageRevision]);
@@ -248,7 +248,7 @@ export default function FanwikiReaderPage() {
     if (!metadata || toolRunning) return;
     const selectedDir = imagesDir.trim();
     if (!selectedDir) {
-      setToolError('Selecciona primero una carpeta de imágenes.');
+      setToolError(messages.fanwiki?.selectImageFolderFirst || 'Select an image folder first.');
       return;
     }
     setToolRunning('attach');
@@ -265,7 +265,7 @@ export default function FanwikiReaderPage() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(body.detail || body.error || 'No se pudieron añadir las imágenes.');
+        throw new Error(body.detail || body.error || messages.fanwiki?.imagesAttachError || 'Failed to attach images.');
       }
       setToolMessage(
         `Imágenes revisadas: ${Number(body.files_scanned || 0).toLocaleString()} páginas, ` +
@@ -275,7 +275,7 @@ export default function FanwikiReaderPage() {
       setIsAttachModalOpen(false);
       setPageRevision((value) => value + 1);
     } catch (reason) {
-      setToolError(reason instanceof Error ? reason.message : 'No se pudieron añadir las imágenes.');
+      setToolError(reason instanceof Error ? reason.message : messages.fanwiki?.imagesAttachError || 'Failed to attach images.');
     } finally {
       setToolRunning(null);
     }
@@ -299,7 +299,7 @@ export default function FanwikiReaderPage() {
             </h1>
             {metadata && (
               <p className="text-xs text-[var(--muted)]">
-                {metadata.page_count.toLocaleString()} artículos · XML de MediaWiki
+                {metadata.page_count.toLocaleString()} {messages.fanwiki?.articles || 'articles'} · {messages.fanwiki?.mediawikiXml || 'MediaWiki XML'}
               </p>
             )}
           </div>
@@ -326,7 +326,7 @@ export default function FanwikiReaderPage() {
             data-testid="fanwiki-attach-images"
           >
             <FaFolderOpen />
-            Añadir carpeta de imágenes
+            {messages.fanwiki?.addImagesFolder || 'Add image folder'}
           </button>
           <button
             type="button"
@@ -337,7 +337,7 @@ export default function FanwikiReaderPage() {
             data-testid="fanwiki-repair-links"
           >
             <FaLink />
-            {toolRunning === 'repair' ? 'Reparando…' : 'Reparar enlaces internos'}
+            {toolRunning === 'repair' ? (messages.fanwiki?.repairing || 'Repairing...') : (messages.fanwiki?.repairInternalLinks || 'Repair internal links')}
           </button>
           <a
             href={`/api/fanwiki/${encodeURIComponent(fanwikiId)}/export/obsidian`}
@@ -346,7 +346,7 @@ export default function FanwikiReaderPage() {
             data-testid="fanwiki-export-obsidian"
           >
             <FaBookOpen />
-            Exportar Obsidian
+            {messages.fanwiki?.exportObsidian || 'Export Obsidian'}
           </a>
           <a
             href={`/api/fanwiki/${encodeURIComponent(fanwikiId)}/export/hdwreader`}
@@ -355,7 +355,7 @@ export default function FanwikiReaderPage() {
             data-testid="fanwiki-export-hdwreader"
           >
             <FaMobileAlt />
-            Exportar HDWReader
+            {messages.fanwiki?.exportHDWReader || 'Export HDWReader'}
           </a>
           <a
             href={`/api/fanwiki/${encodeURIComponent(fanwikiId)}/export/zim`}
@@ -364,10 +364,10 @@ export default function FanwikiReaderPage() {
             data-testid="fanwiki-export-zim"
           >
             <FaArchive />
-            Exportar ZIM
+            {messages.fanwiki?.exportZIM || 'Export ZIM'}
           </a>
           <span className="ml-auto text-[11px] text-[var(--muted)]">
-            La reparación inicial se ejecuta automáticamente al importar.
+            {messages.fanwiki?.initialRepairNote || 'Initial repair runs automatically on import.'}
           </span>
         </div>
       )}
@@ -397,18 +397,18 @@ export default function FanwikiReaderPage() {
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Buscar artículos…"
-                aria-label="Buscar artículos"
+                placeholder={messages.fanwiki?.searchPlaceholder || 'Search articles...'}
+                aria-label={messages.fanwiki?.searchPlaceholder || 'Search articles'}
                 className="input-japanese w-full pl-9 pr-3 py-2 rounded-lg border-[var(--border-color)] bg-transparent text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
           </div>
           <div className="flex-1 overflow-y-auto" data-testid="fanwiki-index">
             {isSearching && (
-              <p className="p-3 text-xs text-[var(--muted)]">Buscando…</p>
+              <p className="p-3 text-xs text-[var(--muted)]">{messages.fanwiki?.searching || 'Searching...'}</p>
             )}
             {!isSearching && query && visibleEntries.length === 0 && (
-              <p className="p-3 text-xs text-[var(--muted)]">No hay resultados.</p>
+              <p className="p-3 text-xs text-[var(--muted)]">{messages.fanwiki?.noResults || 'No results.'}</p>
             )}
             {visibleEntries.map((entry) => (
               <button
@@ -435,7 +435,7 @@ export default function FanwikiReaderPage() {
         <main id="fanwiki-content" className="flex-1 min-w-0 overflow-y-auto">
           {isPageLoading && (
             <div className="h-full flex items-center justify-center text-sm text-[var(--muted)]">
-              Cargando artículo…
+              {messages.fanwiki?.loadingArticle || 'Loading article...'}
             </div>
           )}
           {!isPageLoading && currentPage && (
@@ -452,7 +452,7 @@ export default function FanwikiReaderPage() {
                       rel="noopener noreferrer"
                       className="shrink-0 text-xs text-[var(--muted)] hover:text-[var(--accent-primary)] flex items-center gap-1.5"
                     >
-                      Fuente <FaExternalLinkAlt className="h-3 w-3" />
+                      {messages.fanwiki?.source || 'Source'} <FaExternalLinkAlt className="h-3 w-3" />
                     </a>
                   )}
                 </div>
@@ -481,7 +481,7 @@ export default function FanwikiReaderPage() {
           )}
           {!isPageLoading && !currentPage && !error && (
             <div className="h-full flex items-center justify-center text-sm text-[var(--muted)]">
-              Selecciona un artículo para leerlo.
+              {messages.fanwiki?.selectArticle || 'Select an article to read.'}
             </div>
           )}
         </main>
@@ -491,19 +491,18 @@ export default function FanwikiReaderPage() {
         repoInfo={repoInfo}
         language={language}
         currentPageId={currentPath || undefined}
-        title={messages.ask?.title || 'Chat con la wiki'}
-        fabAriaLabel={messages.ask?.title || 'Preguntar a esta wiki'}
+        title={messages.ask?.title || 'Wiki chat'}
+        fabAriaLabel={messages.ask?.title || 'Ask this wiki'}
       />
 
       {isAttachModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
           <div className="w-full max-w-lg rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] p-5 shadow-custom">
             <h2 className="text-lg font-semibold text-[var(--foreground)]">
-              Añadir imágenes a {metadata?.name}
+              {messages.fanwiki?.addImagesTo || 'Add images to'} {metadata?.name}
             </h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              Selecciona una carpeta local. Se buscarán por nombre las imágenes que el XML referencia,
-              se copiarán dentro de la wiki y se actualizarán sus artículos sin repetir la importación.
+              {messages.fanwiki?.addImagesDesc || 'Select a local folder. Images referenced by the XML will be copied and articles updated.'}
             </p>
             <div className="mt-4 flex gap-2">
               <input
@@ -519,7 +518,7 @@ export default function FanwikiReaderPage() {
                 onClick={() => setIsImagesBrowserOpen(true)}
                 className="px-3 py-2 text-sm rounded-md border border-[var(--border-color)] text-[var(--foreground)] hover:border-[var(--accent-primary)]"
               >
-                Examinar
+                {messages.fanwiki?.browse || 'Browse'}
               </button>
             </div>
             {toolError && (
@@ -532,7 +531,7 @@ export default function FanwikiReaderPage() {
                 disabled={toolRunning === 'attach'}
                 className="px-4 py-2 text-sm rounded-md text-[var(--foreground)] hover:bg-[var(--background)] disabled:opacity-50"
               >
-                Cancelar
+                {messages.common?.cancel || 'Cancel'}
               </button>
               <button
                 type="button"
@@ -540,7 +539,7 @@ export default function FanwikiReaderPage() {
                 disabled={toolRunning === 'attach' || !imagesDir.trim()}
                 className="btn-japanese px-4 py-2 text-sm rounded-md disabled:opacity-50"
               >
-                {toolRunning === 'attach' ? 'Añadiendo…' : 'Añadir imágenes'}
+                {toolRunning === 'attach' ? (messages.fanwiki?.adding || 'Adding...') : (messages.fanwiki?.addImages || 'Add images')}
               </button>
             </div>
           </div>
@@ -553,7 +552,7 @@ export default function FanwikiReaderPage() {
         onSelect={setImagesDir}
         mode="directory"
         initialPath={imagesDir || undefined}
-        title="Seleccionar carpeta de imágenes"
+        title={messages.fanwiki?.selectImageFolder || 'Select image folder'}
       />
     </div>
   );

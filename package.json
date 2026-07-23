@@ -26,7 +26,8 @@
     "remark-math": "^6.0.0",
     "svg-pan-zoom": "^3.6.2",
     "three": "^0.180.0",
-    "three-spritetext": "^1.10.0"
+    "three-spritetext": "^1.10.0",
+    "undici": "^8.8.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

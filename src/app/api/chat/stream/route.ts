@@ -1,8 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Agent } from 'undici';
 
 // The target backend server base URL, derived from environment variable or defaulted.
 // This should match the logic in your frontend's page.tsx for consistency.
 const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:8001';
+
+// The backend blocks on api.simple_chat.chat_completions_stream's
+// request_rag.prepare_retriever(...) call -- which runs the full RAG/
+// embedding pipeline synchronously -- BEFORE it returns the
+// StreamingResponse, so this proxy's fetch() receives zero response bytes
+// (not even headers) until that finishes. For a large repo with a slow
+// local embedder (Ollama, CPU-bound, one batch at a time), that can easily
+// exceed undici's default 5-minute headersTimeout, throwing
+// UND_ERR_HEADERS_TIMEOUT even though the backend is still working fine.
+// This is the HTTP fallback path only (the primary path is the WebSocket
+// handler in websocket_wiki.py, which has no such headers-timeout concept),
+// but it should still succeed rather than fail on a slow embedder.
+const longHeadersTimeoutAgent = new Agent({
+  headersTimeout: 30 * 60 * 1000, // 30 minutes
+  bodyTimeout: 0, // no limit once the stream starts
+});
 
 // This is a fallback HTTP implementation that will be used if WebSockets are not available
 // or if there's an error with the WebSocket connection
@@ -25,6 +42,11 @@ export async function POST(req: NextRequest) {
         'Accept': 'text/event-stream', // Indicate that we expect a stream
       },
       body: JSON.stringify(requestBody),
+      // @ts-expect-error -- `dispatcher` is a Node/undici-specific fetch
+      // extension not present in the standard lib.dom fetch types, but
+      // Next.js's server-side fetch is undici under the hood and does
+      // respect it.
+      dispatcher: longHeadersTimeoutAgent,
     });
 
     // If the backend service returned an error, forward that error to the client

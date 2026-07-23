@@ -15,6 +15,7 @@ from api.config import (
 )
 from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
 from api.chat_models import ChatCompletionRequest, ChatMessage  # noqa: F401 (ChatMessage re-exported for callers)
+from api.context_budget import summarize_file_tree_in_query
 from api.data_pipeline import count_tokens, get_file_content
 from api.prompts import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
@@ -41,6 +42,32 @@ logger = logging.getLogger(__name__)
 # tokens -- generous enough for real questions, small enough to actually fit
 # after a "prompt too long" error, whatever the original size was.
 MAX_FALLBACK_QUERY_CHARS = 8000
+
+# Substrings that indicate a provider rejected the request for being too
+# long, across every provider/wording variant seen in practice -- checked
+# case-insensitively against the exception message to decide whether to
+# retry with a truncated prompt (see the except block below). This used to
+# only match "maximum context length" (OpenAI's exact wording), which missed
+# Ollama's own phrasing ("...exceeded max context length by N tokens") --
+# missing "maximum" vs "max" meant Ollama's oversized-prompt errors were
+# never caught here and always surfaced as a hard failure instead of falling
+# back to a truncated prompt, regardless of repo/model.
+CONTEXT_LIMIT_ERROR_PHRASES = (
+    "maximum context length",
+    "max context length",
+    "context length",
+    "context_length_exceeded",
+    "token limit",
+    "too many tokens",
+    "prompt is too long",
+    "prompt too long",
+    "input is too long",
+)
+
+
+def _is_context_limit_error(error_message: str) -> bool:
+    lowered = error_message.lower()
+    return any(phrase in lowered for phrase in CONTEXT_LIMIT_ERROR_PHRASES)
 
 
 async def handle_websocket_chat(websocket: WebSocket):
@@ -207,6 +234,26 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Get the query from the last message
         query = last_message.content
+
+        # Proactively cap the <file_tree> block (the wiki-structure-planning
+        # prompt built by determineWikiStructure in page.tsx embeds the
+        # COMPLETE, unfiltered file tree with no size limit) to what the
+        # selected model's context window can actually hold -- a large
+        # monorepo against a small-context local model would otherwise
+        # reliably blow the context window with a hard 500 error before ever
+        # reaching the CONTEXT_LIMIT_ERROR_PHRASES fallback below. That
+        # fallback stays in place as a defense-in-depth backstop for
+        # whatever this estimate misses (e.g. an oversized README).
+        try:
+            _budget_model_kwargs = get_model_config(request.provider, request.model)["model_kwargs"]
+            query = summarize_file_tree_in_query(
+                query,
+                provider=request.provider,
+                model_config_kwargs=_budget_model_kwargs,
+                count_tokens_fn=count_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - never let budgeting itself break a chat
+            logger.warning(f"File tree budgeting skipped (non-fatal): {exc}")
 
         # Pages actually consulted while answering (initial context +
         # anything looked up via a SEARCH_WIKI tool call), shown as a
@@ -590,7 +637,7 @@ async def handle_websocket_chat(websocket: WebSocket):
             error_message = str(e_outer)
 
             # Check for token limit errors
-            if "maximum context length" in error_message or "token limit" in error_message or "too many tokens" in error_message:
+            if _is_context_limit_error(error_message):
                 # If we hit a token limit error, try again without context
                 logger.warning("Token limit exceeded, retrying without context")
                 try:

@@ -90,7 +90,13 @@
     "excludeModeDescription": "Especificar caminhos a serem excluídos do processamento (comportamento padrão)",
     "includeModeDescription": "Especificar apenas os caminhos a serem incluídos, ignorando todos os outros",
     "authorizationCode": "Código de Autorização",
-    "authorizationRequired": "A autenticação é necessária para gerar a wiki."
+    "authorizationRequired": "A autenticação é necessária para gerar a wiki.",
+    "fanwikiErrorPath": "Please provide an absolute path to a MediaWiki export XML.",
+    "fanwikiProgressInit": "Starting import...",
+    "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
+    "fanwikiWsError": "WebSocket error during import",
+    "fanwikiCloseError": "Connection closed before import finished",
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
   },
   "footer": {
     "copyright": "HackDeepWiki - Documentação com IA para repositórios de código"
@@ -126,7 +132,15 @@
     "relatedFiles": "Arquivos Relacionados:",
     "relatedPages": "Páginas Relacionadas:",
     "selectPagePrompt": "Selecione uma página da navegação para ver seu conteúdo",
-    "askAboutRepo": "Faça perguntas sobre este repositório"
+    "askAboutRepo": "Faça perguntas sobre este repositório",
+    "attachImagesPathError": "Please enter an image folder path.",
+    "attachImagesFailed": "Failed to attach images",
+    "modelTimeoutError": "Model stopped responding (no new data for 5 minutes).",
+    "modelTimeoutRetryError": "Model stopped responding (no new data for 5 minutes). Try generating again.",
+    "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
+    "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
+    "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
   },
   "nav": {
     "wikiProjects": "Projetos Wiki"
@@ -143,5 +157,31 @@
     "browseExisting": "Navegar por Projetos Existentes",
     "existingProjects": "Projetos Existentes",
     "recentProjects": "Projetos Recentes"
+  },
+  "fanwiki": {
+    "loadError": "Article load failed.",
+    "selectImageFolderFirst": "Select an image folder first.",
+    "imagesAttachError": "Failed to attach images.",
+    "articles": "articles",
+    "mediawikiXml": "MediaWiki XML",
+    "addImagesFolder": "Add image folder",
+    "repairing": "Repairing...",
+    "repairInternalLinks": "Repair internal links",
+    "exportObsidian": "Export Obsidian",
+    "exportHDWReader": "Export HDWReader",
+    "exportZIM": "Export ZIM",
+    "initialRepairNote": "Initial repair runs automatically on import.",
+    "searchPlaceholder": "Search articles...",
+    "searching": "Searching...",
+    "noResults": "No results.",
+    "loadingArticle": "Loading article...",
+    "source": "Source",
+    "selectArticle": "Select an article to read.",
+    "addImagesTo": "Add images to",
+    "addImagesDesc": "Select a local folder. Images referenced by the XML will be copied and articles updated.",
+    "browse": "Browse",
+    "adding": "Adding...",
+    "addImages": "Add images",
+    "selectImageFolder": "Select image folder"
   }
 }

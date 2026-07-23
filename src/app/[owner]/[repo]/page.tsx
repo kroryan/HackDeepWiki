@@ -631,7 +631,7 @@ export default function RepoWikiPage() {
   const handleAttachImages = useCallback(async () => {
     const imagesDir = attachImagesDir.trim();
     if (!imagesDir) {
-      setAttachImagesError('Introduce la carpeta de imágenes.');
+      setAttachImagesError(messages.repoPage?.attachImagesPathError || 'Please enter an image folder path.');
       return;
     }
     setAttachImagesRunning(true);
@@ -645,11 +645,11 @@ export default function RepoWikiPage() {
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || data.error || 'Fallo al adjuntar imágenes');
+        throw new Error(data.detail || data.error || messages.repoPage?.attachImagesFailed || 'Failed to attach images');
       }
       setAttachImagesResult(data);
     } catch (e: unknown) {
-      setAttachImagesError(e instanceof Error ? e.message : 'Fallo al adjuntar imágenes');
+      setAttachImagesError(e instanceof Error ? e.message : (messages.repoPage?.attachImagesFailed || 'Failed to attach images'));
     } finally {
       setAttachImagesRunning(false);
     }
@@ -1153,7 +1153,7 @@ Remember:
                 try { ws.close(); } catch {}
                 reject(new Error(
                   language === 'es'
-                    ? 'El modelo dejó de responder (sin datos nuevos durante 5 minutos).'
+                    ? (messages.repoPage?.modelTimeoutError || 'Model stopped responding (no new data for 5 minutes).')
                     : 'The model stopped responding (no new data for 5 minutes).'
                 ));
               }, IDLE_TIMEOUT_MS);
@@ -1558,7 +1558,7 @@ IMPORTANT:
               setContentGenerationError(true);
               reject(new Error(
                 language === 'es'
-                  ? 'El modelo dejó de responder (sin datos nuevos durante 5 minutos). Vuelve a intentar la generación.'
+                  ? (messages.repoPage?.modelTimeoutRetryError || 'Model stopped responding (no new data for 5 minutes). Try generating again.')
                   : 'The model stopped responding (no new data for 5 minutes). Retry the generation.'
               ));
             }, IDLE_TIMEOUT_MS);
@@ -1904,7 +1904,7 @@ IMPORTANT:
         setContentGenerationError(true);
         throw new Error(
           language === 'es'
-            ? 'El modelo no devolvió ninguna página para esta wiki. Vuelve a intentar la generación.'
+            ? (messages.repoPage?.modelNoPagesError || 'The model did not return any pages for this wiki. Try generating again.')
             : 'The model did not return any pages for this wiki. Retry the generation.'
         );
       }
@@ -1994,7 +1994,7 @@ IMPORTANT:
       setError(
         disconnected
           ? language === 'es'
-            ? 'Se interrumpió la conexión con el backend de HackDeepWiki. El repositorio es válido; vuelve a intentar la generación.'
+            ? (messages.repoPage?.backendConnectionError || 'Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.')
             : 'The connection to the HackDeepWiki backend was interrupted. The repository is valid; retry the generation.'
           : message
       );
@@ -3918,7 +3918,7 @@ IMPORTANT:
             <p className="text-[var(--muted)] text-xs">
               {connectionError ? (
                 language === 'es'
-                  ? 'La conexión con el servicio se interrumpió durante el análisis. Puedes volver a intentarlo sin cambiar la URL del repositorio.'
+                  ? (messages.repoPage?.analysisConnectionError || 'The connection to the service was interrupted during analysis. You can try again without changing the repository URL.')
                   : 'The service connection was interrupted during analysis. You can retry without changing the repository URL.'
               ) : embeddingError ? (
                 messages.repoPage?.embeddingErrorDefault || 'This error is related to the document embedding system used for analyzing your repository. Please verify your embedding model configuration, API keys, and try again. If the issue persists, consider switching to a different embedding provider in the model settings.'
@@ -3928,7 +3928,7 @@ IMPORTANT:
                 // no pages, or stopped responding mid-stream), so the generic
                 // "check your repo exists" hint below would be actively wrong here.
                 language === 'es'
-                  ? 'El repositorio o sitio se leyó correctamente; el problema ocurrió generando el contenido con el modelo de IA. Vuelve a intentarlo -- cambiar de modelo o reducir el número de páginas también puede ayudar.'
+                  ? (messages.repoPage?.generationErrorRetry || 'The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.')
                   : 'The repository or site was read successfully; the problem happened while the AI model was generating content. Retry the generation -- switching models or reducing the page count can also help.'
               ) : (
                 messages.repoPage?.errorMessageDefault || 'Please check that your repository exists and is public. Valid formats are "owner/repo", "https://github.com/owner/repo", "https://gitlab.com/owner/repo", "https://bitbucket.org/owner/repo", or local folder paths like "C:\\path\\to\\folder" or "/path/to/folder".'
