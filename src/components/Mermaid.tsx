@@ -265,18 +265,25 @@ function forceMermaidReadable(root: HTMLElement | null) {
   //    beats mermaid's tspan rule (no !important) and the injected fdwStyle
   //    (#1a1a1a !important only matches <text>, not <tspan>). Message text has
   //    no `> tspan` rule so it already inherited white correctly.
-  if (forceWhiteText) {
-    svg.querySelectorAll('text, tspan').forEach((t) => {
-      (t as SVGTextElement).style.setProperty('fill', '#ffffff', 'important');
-      (t as SVGTextElement).style.setProperty('color', '#ffffff', 'important');
-      t.setAttribute('fill', '#ffffff');
-    });
-  } else {
-    svg.querySelectorAll('text').forEach((t) => {
-      t.setAttribute('fill', textColor);
-      (t as SVGTextElement).style.fill = textColor;
-    });
-  }
+  //
+  //    The two branches below MUST touch the exact same elements/properties
+  //    (text + tspan, fill + color) and always call setProperty with an
+  //    explicit priority. This component reuses the same rendered SVG DOM
+  //    across theme toggles (re-running only this function, not a fresh
+  //    mermaid.render), so if a diagram was ever painted once in dark mode
+  //    with the "important" branch, whatever property the light-mode branch
+  //    forgets to touch is left stuck at its last forced value. That used to
+  //    leave `color: #ffffff !important` behind on light mode (fill got
+  //    reset, color did not) — white text was then unreadable on light
+  //    backgrounds after switching themes.
+  svg.querySelectorAll('text, tspan').forEach((t) => {
+    const el = t as SVGTextElement;
+    const value = forceWhiteText ? '#ffffff' : textColor;
+    const priority = forceWhiteText ? 'important' : '';
+    el.style.setProperty('fill', value, priority);
+    el.style.setProperty('color', value, priority);
+    el.setAttribute('fill', value);
+  });
 
   // 2. Shape fills -> the theme's box fill so labels are legible on them.
   //    Includes the sequence-diagram boxes (.actor participant boxes, .note,
@@ -302,18 +309,12 @@ function forceMermaidReadable(root: HTMLElement | null) {
   //    mode, force white with !important (same reason as step 1 — beat the
   //    injected fdwStyle that forces #1a1a1a !important).
   svg.querySelectorAll('foreignObject').forEach((fo) => {
-    if (forceWhiteText) {
-      (fo as SVGElement).style.setProperty('color', '#ffffff', 'important');
-    } else {
-      (fo as SVGElement).style.color = textColor;
-    }
+    const value = forceWhiteText ? '#ffffff' : textColor;
+    const priority = forceWhiteText ? 'important' : '';
+    (fo as SVGElement).style.setProperty('color', value, priority);
     fo.querySelectorAll('*').forEach((child) => {
       const c = child as HTMLElement;
-      if (forceWhiteText) {
-        c.style.setProperty('color', '#ffffff', 'important');
-      } else {
-        c.style.color = textColor;
-      }
+      c.style.setProperty('color', value, priority);
       c.style.backgroundColor = 'transparent';
     });
   });
