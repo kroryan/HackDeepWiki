@@ -315,7 +315,16 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Determine repository type
         repo_type = request.type
-        is_website = repo_type == "website"
+        is_fanwiki = repo_type == "fanwiki"
+        # A fanwiki import is page-based content with no source code, same as
+        # a crawled website (see api.fanwiki_import's module docstring: it
+        # writes into the identical website_local_dir layout) -- it shares
+        # every bit of "website" treatment except the frontend's crawl
+        # trigger, which fanwiki must never hit. is_website therefore covers
+        # both here; subject_kind still distinguishes the two in wording so
+        # the model doesn't describe an imported dump as something it just
+        # crawled live.
+        is_website = repo_type == "website" or is_fanwiki
 
         # Wording used in the system prompt's <role> line below (and in the
         # DEEP_RESEARCH_* prompts' {subject} slot): a .zim is an offline wiki
@@ -331,6 +340,7 @@ async def handle_websocket_chat(websocket: WebSocket):
         # a title/description but zero <page> elements as a result.
         subject_kind = (
             "offline wiki archive" if is_zim
+            else "imported fan wiki" if is_fanwiki
             else "crawled website" if is_website
             else f"{repo_type} repository"
         )

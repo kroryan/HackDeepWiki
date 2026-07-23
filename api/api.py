@@ -141,8 +141,8 @@ class WikiExportRequest(BaseModel):
     """
     repo_url: str = Field(..., description="URL of the repository")
     pages: List[WikiPage] = Field(..., description="List of wiki pages to export")
-    format: Literal["markdown", "json", "obsidian", "hdwreader"] = Field(
-        ..., description="Export format (markdown, json, obsidian vault zip, or hdwreader portable bundle)")
+    format: Literal["markdown", "json", "obsidian", "hdwreader", "mediawiki_xml"] = Field(
+        ..., description="Export format (markdown, json, obsidian vault zip, hdwreader portable bundle, or MediaWiki-compatible XML)")
     title: Optional[str] = Field(None, description="Wiki title (used for the Obsidian vault name/index)")
     version: Optional[int] = Field(None, description="Wiki release version being exported (informational)")
     # 🔐 Security Analysis — optional vulnerability report to embed in the
@@ -513,6 +513,22 @@ async def export_wiki(request: WikiExportRequest):
             version_suffix = f"_v{request.version}" if request.version else ""
             filename = f"{repo_name}_wiki{version_suffix}_{timestamp}.hdwreader"
             media_type = "application/zip"
+        elif request.format == "mediawiki_xml":
+            # Standard MediaWiki export-0.11 XML -- the same format
+            # api.fanwiki_import reads on the way in, so a generated wiki can
+            # round-trip into a real MediaWiki instance (Special:Import) or
+            # any other tool that already speaks this format, not just this
+            # app's own hdwreader/Obsidian exports.
+            from api.fanwiki_import import export_mediawiki_xml
+            content = export_mediawiki_xml(
+                pages=request.pages,
+                sitename=request.title or f"{repo_name} Wiki",
+                base_url=request.repo_url,
+                language=request.language or "en",
+            )
+            version_suffix = f"_v{request.version}" if request.version else ""
+            filename = f"{repo_name}_wiki{version_suffix}_{timestamp}.xml"
+            media_type = "application/xml"
         else:  # JSON format
             # Generate JSON content
             content = generate_json_export(request.repo_url, request.pages)
@@ -1803,6 +1819,171 @@ async def ws_website_crawl(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+
+
+class FanwikiInspectRequest(BaseModel):
+    path: str = Field(..., description="Local path to a MediaWiki XML export (Special:Export) file")
+
+
+@app.post("/api/fanwiki/inspect")
+async def fanwiki_inspect(request: FanwikiInspectRequest):
+    """Reads just the <siteinfo> header of a MediaWiki XML export -- fast
+    even for a multi-GB dump, since it stops as soon as that (always small)
+    element closes -- so the import UI can show the wiki's namespaces for
+    the user to choose which ones to import. See api.fanwiki_import."""
+    path = request.path.strip()
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=400, detail=f"File not found: {path}")
+    from api.fanwiki_import import inspect_dump
+    try:
+        info = await asyncio.to_thread(inspect_dump, path)
+    except Exception as e:
+        logger.error(f"Error inspecting fanwiki dump {path}: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not read MediaWiki XML: {e}")
+    return {
+        "sitename": info.sitename,
+        "base_url": info.base_url,
+        "dbname": info.dbname,
+        "file_size": info.file_size,
+        "namespaces": [{"key": ns.key, "name": ns.name} for ns in info.namespaces],
+    }
+
+
+@app.websocket("/ws/fanwiki/import")
+async def ws_fanwiki_import(websocket: WebSocket):
+    """Streams a MediaWiki XML export dump into a local Markdown tree (see
+    api.fanwiki_import) -- the fanwiki-import counterpart of
+    /ws/website/crawl, sharing the exact same on-disk layout so the result
+    is generated exactly like a website wiki (see repo_type == "fanwiki"
+    handling throughout, and api.fanwiki_import's module docstring).
+
+    Inbound: one JSON message: {path, namespaces: [int]|null, images_dir,
+    fresh, max_pages}. `namespaces: null` means "import every namespace" --
+    the user's explicit choice, not a default (see
+    api.fanwiki_import.import_dump).
+    Outbound: {"type":"progress",...} frames, then a final
+    {"type":"done","local_dir","page_count","image_count","links_resolved",
+    "links_unresolved","tree","start_url"} (or {"type":"error","message"}).
+    """
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+        payload = json.loads(raw)
+
+        path = (payload.get("path") or "").strip()
+        if not path:
+            await websocket.send_json({"type": "error", "message": "path is required"})
+            return
+        if not os.path.isfile(path):
+            await websocket.send_json({"type": "error", "message": f"File not found: {path}"})
+            return
+
+        namespaces_payload = payload.get("namespaces")
+        allowed_namespaces = set(namespaces_payload) if namespaces_payload is not None else None
+        images_dir = (payload.get("images_dir") or "").strip() or None
+        fresh = bool(payload.get("fresh", False))
+        max_pages = payload.get("max_pages")
+
+        from api.fanwiki_import import inspect_dump, import_dump, ImportProgress
+
+        dump_info = await asyncio.to_thread(inspect_dump, path)
+
+        # import_dump is a long, purely synchronous loop (ElementTree.
+        # iterparse has no async form) so it runs in a worker thread; its
+        # progress callback is therefore called from that thread and must be
+        # bridged back onto this coroutine's own event loop to actually send
+        # a WebSocket frame.
+        loop = asyncio.get_running_loop()
+
+        def on_progress(p: "ImportProgress") -> None:
+            async def _send():
+                try:
+                    await websocket.send_json({
+                        "type": "progress", "message": p.message,
+                        "pages_done": p.pages_done, "percent": p.percent,
+                    })
+                except Exception:
+                    pass
+            asyncio.run_coroutine_threadsafe(_send(), loop)
+
+        result = await asyncio.to_thread(
+            import_dump, path, dump_info, allowed_namespaces,
+            on_progress, fresh, 25, max_pages, images_dir,
+        )
+
+        from api.data_pipeline import _walk_repo_tree
+        tree, _ = await asyncio.to_thread(_walk_repo_tree, result["local_dir"])
+
+        await websocket.send_json({
+            "type": "done",
+            "local_dir": result["local_dir"],
+            "page_count": result["page_count"],
+            "image_count": result["image_count"],
+            "links_resolved": result["links_resolved"],
+            "links_unresolved": result["links_unresolved"],
+            "start_url": result["start_url"],
+            "tree": tree,
+        })
+    except Exception as e:
+        logger.error(f"Error in /ws/fanwiki/import: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/fanwiki/structure")
+async def fanwiki_structure(start_url: str = Query(..., description="The fanwiki's synthetic start URL")):
+    """Read-only file tree of an already-imported fanwiki -- the fanwiki
+    counterpart of /local_repo/structure, and deliberately never crawls or
+    imports anything itself. fetchRepositoryStructure calls this on *every*
+    visit to a fanwiki wiki page (not just right after importing), so unlike
+    /ws/website/crawl it must never attempt any network/import side effect --
+    that's the whole reason repo_type == "fanwiki" exists as something
+    distinct from "website" in the first place (see _create_repo in
+    api/data_pipeline.py)."""
+    from api.web_crawler.site_store import website_local_dir
+    from api.data_pipeline import _walk_repo_tree
+    local_dir = website_local_dir(start_url)
+    if not os.path.isdir(local_dir):
+        raise HTTPException(status_code=404, detail=f"No imported fanwiki found for {start_url}")
+    tree, _ = await asyncio.to_thread(_walk_repo_tree, local_dir)
+    return {"tree": tree, "local_dir": local_dir}
+
+
+class FanwikiRepairLinksRequest(BaseModel):
+    start_url: str = Field(..., description="The fanwiki's synthetic start URL, as returned by /ws/fanwiki/import")
+
+
+@app.post("/api/fanwiki/repair_links")
+async def fanwiki_repair_links(request: FanwikiRepairLinksRequest):
+    """Re-runs internal-link resolution for an already-imported fanwiki
+    without re-importing the whole dump (see
+    api.fanwiki_import.repair_internal_links) -- exposed standalone, as
+    requested, so the user can re-trigger it later (e.g. after importing a
+    second batch of namespaces into the same site) without waiting through
+    a full re-import."""
+    from api.web_crawler.site_store import website_local_dir
+    from api.fanwiki_import import repair_internal_links
+
+    local_dir = website_local_dir(request.start_url)
+    if not os.path.isdir(local_dir):
+        raise HTTPException(status_code=404, detail=f"No imported fanwiki found for {request.start_url}")
+    try:
+        result = await asyncio.to_thread(repair_internal_links, local_dir)
+    except Exception as e:
+        logger.error(f"Error repairing fanwiki links for {request.start_url}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "files_scanned": result.files_scanned,
+        "links_resolved": result.links_resolved,
+        "links_unresolved": result.links_unresolved,
+    }
 
 
 @app.websocket("/ws/vuln_scan")

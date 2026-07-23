@@ -207,6 +207,118 @@ export default function Home() {
   const [authCode, setAuthCode] = useState<string>('');
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
+  // Fanwiki XML (MediaWiki export) import state. Two steps: inspect (reads
+  // just the <siteinfo> header -- fast even for a multi-GB dump -- to list
+  // namespaces) then import (streams the whole file, which can take a
+  // while). See api/fanwiki_import.py for why this needs its own repo_type
+  // ("fanwiki") distinct from 'website' despite sharing its storage layout.
+  const [isFanwikiModalOpen, setIsFanwikiModalOpen] = useState(false);
+  const [fanwikiXmlPath, setFanwikiXmlPath] = useState('');
+  const [fanwikiImagesDir, setFanwikiImagesDir] = useState('');
+  const [fanwikiInspecting, setFanwikiInspecting] = useState(false);
+  const [fanwikiInfo, setFanwikiInfo] = useState<{
+    sitename: string; base_url: string; namespaces: { key: number; name: string }[];
+  } | null>(null);
+  // Recommended default: main articles (0) + categories (14) only -- but the
+  // user explicitly gets to override this per-namespace or disable
+  // filtering entirely (fanwikiNoFilter), not have it hardcoded.
+  const [fanwikiSelectedNs, setFanwikiSelectedNs] = useState<Set<number>>(new Set([0, 14]));
+  const [fanwikiNoFilter, setFanwikiNoFilter] = useState(false);
+  const [fanwikiImporting, setFanwikiImporting] = useState(false);
+  const [fanwikiProgressMsg, setFanwikiProgressMsg] = useState<string | null>(null);
+  const [fanwikiError, setFanwikiError] = useState<string | null>(null);
+  // Set once import succeeds; handleGenerateWiki checks this first and, if
+  // set, builds params directly (type=fanwiki, repo_url=start_url) instead
+  // of running repositoryInput through parseRepositoryInput -- reusing the
+  // existing ConfigurationModal (provider/model/language/page count/vuln
+  // scan) for the actual generation step rather than duplicating all of it.
+  const [pendingFanwikiStartUrl, setPendingFanwikiStartUrl] = useState<string | null>(null);
+
+  const handleInspectFanwiki = async () => {
+    const path = fanwikiXmlPath.trim();
+    if (!path) {
+      setFanwikiError('Introduce la ruta absoluta a un XML de exportación de MediaWiki.');
+      return;
+    }
+    setFanwikiInspecting(true);
+    setFanwikiError(null);
+    try {
+      const response = await fetch('/api/fanwiki/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.error || 'No se pudo leer el XML');
+      }
+      setFanwikiInfo(data);
+      // Re-default the selection every time a new dump is inspected, rather
+      // than leaving a previous dump's namespace keys checked against one
+      // that may not have those same keys at all.
+      setFanwikiSelectedNs(new Set([0, 14].filter((k) => data.namespaces.some((ns: { key: number }) => ns.key === k))));
+    } catch (e: unknown) {
+      setFanwikiError(e instanceof Error ? e.message : 'No se pudo leer el XML');
+    } finally {
+      setFanwikiInspecting(false);
+    }
+  };
+
+  const handleImportFanwiki = async () => {
+    const path = fanwikiXmlPath.trim();
+    if (!path || !fanwikiInfo) return;
+    setFanwikiImporting(true);
+    setFanwikiError(null);
+    setFanwikiProgressMsg('Iniciando importación…');
+    try {
+      const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
+      const wsBaseUrl = serverBaseUrl.replace(/^https/, 'wss').replace(/^http/, 'ws');
+      const result = await new Promise<{ start_url: string; page_count: number; image_count: number; links_resolved: number }>((resolve, reject) => {
+        const ws = new WebSocket(`${wsBaseUrl}/ws/fanwiki/import`);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({
+            path,
+            namespaces: fanwikiNoFilter ? null : Array.from(fanwikiSelectedNs),
+            images_dir: fanwikiImagesDir.trim() || undefined,
+            fresh: true,
+          }));
+        };
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'progress') {
+              setFanwikiProgressMsg(`${msg.message}${msg.percent != null ? ` (${msg.percent}%)` : ''}`);
+            } else if (msg.type === 'done') {
+              resolve(msg);
+              ws.close();
+            } else if (msg.type === 'error') {
+              reject(new Error(msg.message || 'Fallo al importar el XML'));
+              ws.close();
+            }
+          } catch {
+            // ignore unparsable frames
+          }
+        };
+        ws.onerror = () => reject(new Error('Error de WebSocket durante la importación'));
+        ws.onclose = (event) => {
+          if (event.code !== 1000) reject(new Error('La conexión se cerró antes de terminar la importación'));
+        };
+      });
+
+      setFanwikiProgressMsg(
+        `Importadas ${result.page_count} página(s), ${result.image_count} imagen(es), ${result.links_resolved} enlace(s) resueltos.`
+      );
+      setPendingFanwikiStartUrl(result.start_url);
+      setDetectedInputType('fanwiki');
+      setIsFanwikiModalOpen(false);
+      setIsConfigModalOpen(true);
+    } catch (e: unknown) {
+      setFanwikiError(e instanceof Error ? e.message : 'Fallo al importar el XML');
+    } finally {
+      setFanwikiImporting(false);
+    }
+  };
+
   // .zim import state
   const [isZimModalOpen, setIsZimModalOpen] = useState(false);
   const [zimPath, setZimPath] = useState('');
@@ -511,6 +623,38 @@ export default function Home() {
 
     setIsSubmitting(true);
 
+    // A just-completed fanwiki XML import (see handleImportFanwiki) sets
+    // this instead of going through repositoryInput/parseRepositoryInput --
+    // there's no text the user typed to parse, the import step already
+    // resolved everything. Build params directly and skip straight to
+    // navigation, reusing the provider/model/language/page-count/vuln-scan
+    // config from this same ConfigurationModal instance.
+    if (pendingFanwikiStartUrl) {
+      const params = new URLSearchParams();
+      params.append('type', 'fanwiki');
+      params.append('repo_url', encodeURIComponent(pendingFanwikiStartUrl));
+      params.append('provider', provider);
+      params.append('model', (isCustomModel && customModel) ? customModel : model);
+      if (isCustomModel && customModel) params.append('custom_model', customModel);
+      params.append('language', selectedLanguage);
+      params.append('comprehensive', isComprehensiveView.toString());
+      params.append('pages', pageCount.toString());
+      if (enableVulnScan) {
+        params.append('vuln_scan', '1');
+        params.append('vuln_client', vulnClient ? '1' : '0');
+        params.append('vuln_server', vulnServer ? '1' : '0');
+        params.append('vuln_deps', vulnDeps ? '1' : '0');
+        if (nvdKey) params.append('nvd_key', encodeURIComponent(nvdKey));
+      }
+      const fanwikiOwner = 'fanwiki';
+      const fanwikiRepo = (() => {
+        try { return new URL(pendingFanwikiStartUrl).hostname; } catch { return 'import'; }
+      })();
+      setPendingFanwikiStartUrl(null);
+      router.push(`/${fanwikiOwner}/${fanwikiRepo}?${params.toString()}`);
+      return;
+    }
+
     // Parse repository input
     const parsedRepo = parseRepositoryInput(repositoryInput);
 
@@ -653,7 +797,7 @@ export default function Home() {
             </div>
           </form>
 
-          <div className="flex justify-center items-center gap-3 w-full max-w-3xl mt-3">
+          <div className="flex justify-center items-center gap-3 w-full max-w-3xl mt-3 flex-wrap">
             <button
               type="button"
               onClick={() => setIsZimModalOpen(true)}
@@ -670,6 +814,18 @@ export default function Home() {
               title="Scan the .zim drop folder for new files"
             >
               {isRescanningZim ? 'Rescanning…' : 'Rescan .zim folder'}
+            </button>
+            <span className="text-[var(--muted)] text-xs">•</span>
+            <button
+              type="button"
+              onClick={() => {
+                setIsFanwikiModalOpen(true);
+                setFanwikiInfo(null);
+                setFanwikiError(null);
+              }}
+              className="text-sm text-[var(--muted)] hover:text-[var(--accent-primary)] underline underline-offset-2 transition-colors"
+            >
+              Import fanwiki XML (MediaWiki export)
             </button>
           </div>
           {rescanMessage && (
@@ -730,6 +886,141 @@ export default function Home() {
                     {isZimImporting ? 'Importing...' : 'Import'}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {isFanwikiModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg shadow-custom w-full max-w-lg p-6 card-japanese max-h-[90vh] overflow-y-auto">
+                <h3 className="text-lg font-semibold text-[var(--foreground)] mb-2">
+                  Import fanwiki XML (MediaWiki export)
+                </h3>
+                <p className="text-xs text-[var(--muted)] mb-4">
+                  Enter the absolute path to a MediaWiki XML export dump (Special:Export -- the
+                  format Fandom/Wikia and any other MediaWiki-based fan wiki produce). Read in
+                  place, never uploaded or copied; only the converted pages (and any matched
+                  images) are written into this app&apos;s own portable data folder.
+                </p>
+
+                <label className="block text-xs font-medium text-[var(--foreground)] mb-1">XML file path</label>
+                <input
+                  type="text"
+                  value={fanwikiXmlPath}
+                  onChange={(e) => { setFanwikiXmlPath(e.target.value); setFanwikiInfo(null); }}
+                  placeholder="/home/user/forgottenrealms_pages_current.xml"
+                  className="input-japanese block w-full px-3 py-2.5 border-[var(--border-color)] rounded-lg bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)] mb-2"
+                  autoFocus
+                  disabled={fanwikiInspecting || fanwikiImporting}
+                />
+
+                <label className="block text-xs font-medium text-[var(--foreground)] mb-1">
+                  Images folder (optional)
+                </label>
+                <p className="text-xs text-[var(--muted)] mb-1">
+                  The XML dump never includes media -- point this at a local folder of images
+                  (same filenames as in the wiki, e.g. downloaded separately) to embed them.
+                  Leave empty to skip images.
+                </p>
+                <input
+                  type="text"
+                  value={fanwikiImagesDir}
+                  onChange={(e) => setFanwikiImagesDir(e.target.value)}
+                  placeholder="/home/user/forgottenrealms_images/"
+                  className="input-japanese block w-full px-3 py-2.5 border-[var(--border-color)] rounded-lg bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)] mb-3"
+                  disabled={fanwikiInspecting || fanwikiImporting}
+                />
+
+                {fanwikiError && (
+                  <div className="text-[var(--highlight)] text-xs mb-2">{fanwikiError}</div>
+                )}
+
+                {!fanwikiInfo && (
+                  <div className="flex justify-end gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setIsFanwikiModalOpen(false); setFanwikiError(null); }}
+                      className="px-4 py-2 rounded-lg text-sm text-[var(--foreground)] hover:bg-[var(--background)] transition-colors"
+                      disabled={fanwikiInspecting}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleInspectFanwiki}
+                      className="btn-japanese px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={fanwikiInspecting}
+                    >
+                      {fanwikiInspecting ? 'Reading namespaces…' : 'Inspect'}
+                    </button>
+                  </div>
+                )}
+
+                {fanwikiInfo && (
+                  <div className="mt-3 border-t border-[var(--border-color)] pt-3">
+                    <p className="text-sm text-[var(--foreground)] mb-2">
+                      <span className="text-[var(--accent-primary)]">{fanwikiInfo.sitename}</span>
+                      {' '}({(fanwikiInfo.namespaces?.length || 0)} namespaces found)
+                    </p>
+
+                    <label className="flex items-center gap-2 text-sm text-[var(--foreground)] cursor-pointer mb-2">
+                      <input
+                        type="checkbox"
+                        checked={fanwikiNoFilter}
+                        onChange={(e) => setFanwikiNoFilter(e.target.checked)}
+                        className="h-4 w-4 rounded border-[var(--border-color)] accent-[var(--accent-primary)]"
+                        disabled={fanwikiImporting}
+                      />
+                      Import every namespace, no filtering
+                    </label>
+
+                    {!fanwikiNoFilter && (
+                      <div className="max-h-48 overflow-y-auto rounded-md border border-[var(--border-color)] p-2 mb-2">
+                        {fanwikiInfo.namespaces.map((ns) => (
+                          <label key={ns.key} className="flex items-center gap-2 text-sm text-[var(--foreground)] cursor-pointer py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={fanwikiSelectedNs.has(ns.key)}
+                              onChange={(e) => {
+                                setFanwikiSelectedNs((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(ns.key); else next.delete(ns.key);
+                                  return next;
+                                });
+                              }}
+                              className="h-4 w-4 rounded border-[var(--border-color)] accent-[var(--accent-primary)]"
+                              disabled={fanwikiImporting}
+                            />
+                            {ns.name || '(Main/Articles)'} <span className="text-[var(--muted)]">#{ns.key}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {fanwikiProgressMsg && (
+                      <p className="text-xs text-[var(--accent-primary)] mb-2">{fanwikiProgressMsg}</p>
+                    )}
+
+                    <div className="flex justify-end gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => { setIsFanwikiModalOpen(false); setFanwikiError(null); }}
+                        className="px-4 py-2 rounded-lg text-sm text-[var(--foreground)] hover:bg-[var(--background)] transition-colors"
+                        disabled={fanwikiImporting}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleImportFanwiki}
+                        className="btn-japanese px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={fanwikiImporting || (!fanwikiNoFilter && fanwikiSelectedNs.size === 0)}
+                      >
+                        {fanwikiImporting ? 'Importing…' : 'Import'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -50,6 +50,12 @@ protobuf = ">=5.29.6"
 pyasn1 = ">=0.6.4"
 pygments = ">=2.20.0"
 pyjwt = ">=2.13.0"
+
+# Fanwiki XML import (api.fanwiki_import): converts MediaWiki export dumps
+# (Special:Export, the format Fandom/Wikia and any other MediaWiki-based fan
+# wiki produce) into wikitext ASTs so it can be turned into Markdown without
+# a hand-rolled wikitext parser.
+mwparserfromhell = ">=0.7.2"
 # Upper-bounded to match libzim's own supported Python range (<3.15); without
 # this poetry's solver fails outright since the project's own `python = "^3.11"`
 # is otherwise unbounded above 3.15.

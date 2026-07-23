@@ -398,7 +398,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                 from api.api import read_vuln_cache, read_web_vuln_cache
                 from api.vuln_common.chat_context import build_security_context_text
 
-                is_website_repo = repo_type == "website"
+                is_website_repo = repo_type in ("website", "fanwiki")
                 vuln_report = None if is_website_repo else read_vuln_cache(
                     repo_type, request.owner, request.repo, language_code)
                 web_vuln_report = read_web_vuln_cache(

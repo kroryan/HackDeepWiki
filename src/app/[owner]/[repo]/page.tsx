@@ -22,7 +22,7 @@ import { StreamParser } from '@/utils/streamParser';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaBitbucket, FaBookOpen, FaDownload, FaEdit, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHistory, FaHome, FaMagic, FaMobileAlt, FaSave, FaSync, FaTimes, FaTrash } from 'react-icons/fa';
+import { FaBitbucket, FaBookOpen, FaDownload, FaEdit, FaExclamationTriangle, FaFileCode, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHistory, FaHome, FaMagic, FaMobileAlt, FaSave, FaSync, FaTimes, FaTrash } from 'react-icons/fa';
 // Define the WikiSection and WikiStructure types directly in this file
 // since the imported types don't have the sections and rootSections properties
 interface WikiSection {
@@ -825,7 +825,12 @@ export default function RepoWikiPage() {
         // system-prompt fix in api/prompts.py/websocket_wiki.py); this
         // prompt has the same category of problem for the per-page content
         // step, so it gets the same treatment.
-        const isWebsitePage = effectiveRepoInfo.type === 'website';
+        // 'fanwiki' (an imported MediaWiki XML dump) is page-based content
+        // with no source code, exactly like a crawled website -- see
+        // api.fanwiki_import's module docstring, and the matching is_website
+        // reuse in api/websocket_wiki.py -- so it gets the same prompt
+        // template rather than the "software architect" one meant for git repos.
+        const isWebsitePage = effectiveRepoInfo.type === 'website' || effectiveRepoInfo.type === 'fanwiki';
         const pageLanguageLine = language === 'en' ? 'English' :
             language === 'ja' ? 'Japanese (日本語)' :
             language === 'zh' ? 'Mandarin Chinese (中文)' :
@@ -1235,7 +1240,10 @@ Remember:
       // (profiles/comments/forum posts -- flagged in the crawl manifest) are
       // always excluded entirely, never generated as wiki pages and never
       // mixed into the subject/technical wiki's sections.
-      const isWebsite = effectiveRepoInfo.type === 'website';
+      // 'fanwiki' (imported MediaWiki XML dump) gets the same treatment as
+      // 'website' here for the same reason as isWebsitePage above -- it's
+      // page-based fan/content wiki material already, not a codebase.
+      const isWebsite = effectiveRepoInfo.type === 'website' || effectiveRepoInfo.type === 'fanwiki';
 
       const languageLine = `${language === 'en' ? 'English' :
             language === 'ja' ? 'Japanese (日本語)' :
@@ -2007,6 +2015,39 @@ IMPORTANT:
           throw err;
         } finally {
           setCloneProgress(null);
+          setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching repository structure...');
+        }
+      }
+
+      // 📖 Imported fanwiki (MediaWiki XML export, see the "Import Fanwiki
+      // XML" flow on the home page): unlike 'website', this must NEVER try
+      // to crawl -- the pages are already on disk from the import step,
+      // under the exact same website_local_dir(start_url) layout a live
+      // crawl would use (see api.fanwiki_import's module docstring). Calling
+      // the website crawl path here would re-fetch the site live (likely
+      // failing against whatever originally made XML import worth doing --
+      // Cloudflare, a dead/moved site, ...) and, worse, could overwrite the
+      // carefully wikitext-converted import with much lower-quality raw
+      // HTML-to-Markdown from the crawler. This just reads the already-
+      // imported tree, the same way 'local' reads a live filesystem path.
+      if (effectiveRepoInfo.type === 'fanwiki') {
+        setLoadingMessage('Cargando wiki importada…');
+        try {
+          const startUrl = getRepoUrl(effectiveRepoInfo);
+          const response = await fetch(`/api/fanwiki/structure?start_url=${encodeURIComponent(startUrl)}`);
+          if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Fanwiki structure fetch failed (${response.status}): ${errorData}`);
+          }
+          const data = await response.json();
+          fileTreeData = treeToFileList(data.tree || []);
+          readmeContent = '';
+          setDefaultBranch('main');
+          structureFetchedViaBackendClone = true;
+        } catch (err) {
+          console.error('Failed to load imported fanwiki structure:', err);
+          throw err;
+        } finally {
           setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching repository structure...');
         }
       }
@@ -2868,7 +2909,7 @@ IMPORTANT:
     }
   }, [effectiveRepoInfo.type, loadWebVulnReleases]);
 
-  const exportWiki = useCallback(async (format: 'markdown' | 'json' | 'obsidian' | 'hdwreader') => {
+  const exportWiki = useCallback(async (format: 'markdown' | 'json' | 'obsidian' | 'hdwreader' | 'mediawiki_xml') => {
     if (!wikiStructure || Object.keys(generatedPages).length === 0) {
       setExportError('No wiki content to export');
       return;
@@ -2941,7 +2982,7 @@ IMPORTANT:
 
       // Get the filename from the Content-Disposition header if available
       const contentDisposition = response.headers.get('Content-Disposition');
-      const defaultExt = format === 'markdown' ? 'md' : format === 'obsidian' ? 'zip' : format === 'hdwreader' ? 'hdwreader' : 'json';
+      const defaultExt = format === 'markdown' ? 'md' : format === 'obsidian' ? 'zip' : format === 'hdwreader' ? 'hdwreader' : format === 'mediawiki_xml' ? 'xml' : 'json';
       let filename = `${effectiveRepoInfo.repo}_wiki.${defaultExt}`;
 
       if (contentDisposition) {
@@ -4074,6 +4115,15 @@ IMPORTANT:
                     >
                       <FaMobileAlt className="mr-2" />
                       Export for HackDeepWikiReader
+                    </button>
+                    <button
+                      onClick={() => exportWiki('mediawiki_xml')}
+                      disabled={isExporting}
+                      title="Download as a MediaWiki export-0.11 XML file -- importable into a real MediaWiki instance (Special:Import) or any tool that speaks the standard format, same as the fanwiki XML this app can import"
+                      className="flex items-center text-xs px-3 py-2 bg-[var(--background)] text-[var(--foreground)] rounded-md hover:bg-[var(--background)]/80 disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--border-color)] transition-colors"
+                    >
+                      <FaFileCode className="mr-2" />
+                      Export as MediaWiki XML
                     </button>
                     {(vulnReport || webVulnReport) && (
                       <div className="mt-1 p-2 rounded-md border border-[var(--border-color)] bg-[var(--background)]/40 text-xs space-y-1.5">

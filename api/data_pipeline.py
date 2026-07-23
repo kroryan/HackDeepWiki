@@ -455,7 +455,19 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
         Returns:
             bool: True if the file should be processed, False otherwise
         """
-        file_path_parts = os.path.normpath(file_path).split(os.sep)
+        # Relative to the repo root, not the raw absolute path -- otherwise
+        # any excluded-dir name (docs/tmp/bin/build/log/target/... -- ~35
+        # common names, see DEFAULT_EXCLUDED_DIRS) that happens to appear
+        # ANYWHERE in the repo's ancestor path (e.g. the app's own data root,
+        # or a local repo the user pointed at, living under a real directory
+        # literally named "tmp" or "build") silently excluded every single
+        # file in the entire repo -- verified live: a data root under
+        # /tmp/claude.../ matched the "./tmp/" exclusion pattern via the
+        # unrelated /tmp ancestor, not anything inside the repo itself, and
+        # read_all_documents returned zero documents for a perfectly normal
+        # repo as a result.
+        rel_path = os.path.relpath(file_path, path)
+        file_path_parts = os.path.normpath(rel_path).split(os.sep)
         file_name = os.path.basename(file_path)
 
         if use_inclusion:
@@ -1091,14 +1103,23 @@ class DatabaseManager:
             # /ws/website/crawl endpoint already produced (see
             # api.web_crawler.site_store.website_local_dir) -- there is
             # nothing to git-clone, so skip straight to using that directory.
-            if repo_type == "website":
+            #
+            # fanwiki: a MediaWiki XML export imported via api.fanwiki_import,
+            # which writes into the exact same website_local_dir(start_url)
+            # layout (front-matter Markdown pages + _site_meta.json) so it can
+            # share every bit of this "read pages from a local dir" handling
+            # -- the only thing that must stay repo_type-distinct is the
+            # frontend's *crawl* trigger (fetchRepositoryStructure), which
+            # must never re-crawl a fanwiki import's synthetic start_url.
+            if repo_type in ("website", "fanwiki"):
                 from api.web_crawler.site_store import website_local_dir, website_repo_name
                 repo_name = website_repo_name(repo_url_or_path)
                 save_repo_dir = website_local_dir(repo_url_or_path)
                 if not (os.path.isdir(save_repo_dir) and os.listdir(save_repo_dir)):
                     raise ValueError(
-                        f"No crawled data found for {repo_url_or_path} at {save_repo_dir}. "
-                        "The site must be crawled via /ws/website/crawl before generating a wiki."
+                        f"No crawled/imported data found for {repo_url_or_path} at {save_repo_dir}. "
+                        "The site must be crawled via /ws/website/crawl, or a fanwiki dump imported "
+                        "via /ws/fanwiki/import, before generating a wiki."
                     )
             # url
             elif repo_url_or_path.startswith("https://") or repo_url_or_path.startswith("http://"):
