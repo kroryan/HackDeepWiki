@@ -2940,7 +2940,7 @@ IMPORTANT:
   // a returning visit shows every past scan even before (or without ever)
   // triggering a fresh one.
   useEffect(() => {
-    if (effectiveRepoInfo.type !== 'website') {
+    if (effectiveRepoInfo.type !== 'website' && effectiveRepoInfo.type !== 'fanwiki') {
       loadVulnReleases();
     }
   }, [effectiveRepoInfo.type, loadVulnReleases]);
@@ -4046,8 +4046,11 @@ IMPORTANT:
               {/* 🔐 Security Analysis entry — swap the content panel for the
                   vulnerability section. Always visible (for non-website repos)
                   so the user can trigger a scan on demand even if none has run
-                  yet or a previous run never produced a cached report. */}
-              {effectiveRepoInfo.type !== 'website' && (
+                  yet or a previous run never produced a cached report. Not
+                  meaningful for 'fanwiki' either -- there's no dependency
+                  manifest on disk to scan (imported wiki pages, not code),
+                  and it isn't live-crawled like 'website' either. */}
+              {effectiveRepoInfo.type !== 'website' && effectiveRepoInfo.type !== 'fanwiki' && (
                 <div className="mb-5">
                   <button
                     onClick={() => setViewMode('security')}
@@ -4442,7 +4445,7 @@ IMPORTANT:
         authCode={authCode}
         setAuthCode={setAuthCode}
         isAuthLoading={isAuthLoading}
-        showVulnScan={effectiveRepoInfo.type !== 'website'}
+        showVulnScan={effectiveRepoInfo.type !== 'website' && effectiveRepoInfo.type !== 'fanwiki'}
         enableVulnScan={vulnScanRequested}
         vulnClient={vulnClientEnabled}
         vulnServer={vulnServerEnabled}
