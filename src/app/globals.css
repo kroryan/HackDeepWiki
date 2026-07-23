@@ -56,7 +56,13 @@ html[data-theme='dark'] {
   --font-mono:        var(--nf-geist-mono), monospace;
   --font-geist-sans:  var(--nf-noto-sans-jp), sans-serif;
   --font-geist-mono:  var(--nf-geist-mono), monospace;
-  --font-serif-jp:    var(--nf-noto-serif-jp), serif;
+  /* Must be named --font-serif (not --font-serif-jp): Tailwind v4 only maps
+     the "font-serif" utility class (used all over page.tsx/[repo]/page.tsx)
+     to a theme token of that exact name. The old --font-serif-jp name meant
+     `font-serif` silently fell back to Tailwind's built-in generic serif
+     stack, while Noto Serif JP was self-hosted/preloaded and never actually
+     rendered anywhere -- source of the "preloaded but not used" warning. */
+  --font-serif:       var(--nf-noto-serif-jp), serif;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

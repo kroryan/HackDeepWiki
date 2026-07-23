@@ -227,6 +227,10 @@ export default function Home() {
   const [fanwikiNoFilter, setFanwikiNoFilter] = useState(false);
   const [fanwikiImporting, setFanwikiImporting] = useState(false);
   const [fanwikiProgressMsg, setFanwikiProgressMsg] = useState<string | null>(null);
+  // Percent is separate from the message text so the bar can render even
+  // once import_dump starts sending link-repair progress (no percent, just a
+  // page count) after the streaming-parse phase finishes at 99%.
+  const [fanwikiProgressPercent, setFanwikiProgressPercent] = useState<number | null>(null);
   const [fanwikiError, setFanwikiError] = useState<string | null>(null);
   // Set once import succeeds; handleGenerateWiki checks this first and, if
   // set, builds params directly (type=fanwiki, repo_url=start_url) instead
@@ -282,6 +286,7 @@ export default function Home() {
     setFanwikiImporting(true);
     setFanwikiError(null);
     setFanwikiProgressMsg('Iniciando importación…');
+    setFanwikiProgressPercent(0);
     try {
       const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
       const wsBaseUrl = serverBaseUrl.replace(/^https/, 'wss').replace(/^http/, 'ws');
@@ -299,7 +304,11 @@ export default function Home() {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'progress') {
-              setFanwikiProgressMsg(`${msg.message}${msg.percent != null ? ` (${msg.percent}%)` : ''}`);
+              setFanwikiProgressMsg(msg.message);
+              // Link-repair/image-attach phases (after the streaming XML
+              // parse hits 99%) report page counts, not a percent -- keep
+              // showing the bar full rather than snapping it back to 0.
+              if (msg.percent != null) setFanwikiProgressPercent(msg.percent);
             } else if (msg.type === 'done') {
               resolve(msg);
               ws.close();
@@ -317,6 +326,7 @@ export default function Home() {
         };
       });
 
+      setFanwikiProgressPercent(100);
       setFanwikiProgressMsg(
         `Importadas ${result.page_count} página(s), ${result.image_count} imagen(es), ${result.links_resolved} enlace(s) resueltos.`
       );
@@ -1041,7 +1051,18 @@ export default function Home() {
                     )}
 
                     {fanwikiProgressMsg && (
-                      <p className="text-xs text-[var(--accent-primary)] mb-2">{fanwikiProgressMsg}</p>
+                      <div className="mb-2">
+                        <div className="h-1.5 w-full rounded-full bg-[var(--background)] border border-[var(--border-color)] overflow-hidden">
+                          <div
+                            className={`h-full bg-[var(--accent-primary)] rounded-full transition-[width] duration-300 ${fanwikiImporting ? 'animate-pulse' : ''}`}
+                            style={{ width: `${Math.max(2, fanwikiProgressPercent ?? 0)}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-[var(--accent-primary)] mt-1">
+                          {fanwikiProgressMsg}
+                          {fanwikiImporting && fanwikiProgressPercent != null && ` (${fanwikiProgressPercent}%)`}
+                        </p>
+                      </div>
                     )}
 
                     <div className="flex justify-end gap-2 mt-2">
