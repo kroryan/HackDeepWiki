@@ -179,6 +179,22 @@ jobs:
             echo "IS_PRERELEASE=true" >> $GITHUB_ENV
           fi
 
+      - name: Remove legacy FreeDeepWiki assets
+        # This repo used to be called FreeDeepWiki -- action-gh-release below
+        # only uploads/replaces the files it's given, it never deletes assets
+        # under a different name, so the old FreeDeepWiki-windows-x64.exe /
+        # FreeDeepWiki-x86_64.AppImage from before the rename kept sitting in
+        # the "continuous" pre-release release forever, alongside the current
+        # HackDeepWiki-named ones. `gh` is preinstalled on GitHub-hosted
+        # runners and already has GITHUB_TOKEN available. `|| true` on each:
+        # the asset may not exist (e.g. a tagged release that never had it),
+        # and that shouldn't fail the whole release step.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset "${{ env.TAG_NAME }}" "FreeDeepWiki-windows-x64.exe" --repo "${{ github.repository }}" --yes || true
+          gh release delete-asset "${{ env.TAG_NAME }}" "FreeDeepWiki-x86_64.AppImage" --repo "${{ github.repository }}" --yes || true
+
       - name: Create or update Github Release
         uses: softprops/action-gh-release@v2
         with:

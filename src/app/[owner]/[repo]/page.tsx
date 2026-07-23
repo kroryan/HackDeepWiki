@@ -2531,22 +2531,38 @@ IMPORTANT:
             /* ignore non-JSON frames */
           }
         };
+        // The browser's WebSocket `error` event carries no diagnostic
+        // information whatsoever (by spec) -- the actual close code/reason
+        // (e.g. 1006 abnormal closure, typically connection refused/reset;
+        // or a server-sent reason string) only ever arrives via the `close`
+        // event that always follows it. Settling here on `onerror` alone
+        // discarded that detail and left every failure indistinguishable as
+        // the same generic "WebSocket error during scan.", with nothing to
+        // go on to diagnose it. Just flag that an error happened and let
+        // `onclose` (below) produce the final message with real detail.
+        let hadError = false;
         ws.onerror = () => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            setVulnError('WebSocket error during scan.');
-            setVulnStatus('error');
-            reject(new Error('WebSocket error during scan.'));
-          }
+          hadError = true;
         };
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           if (!settled) {
             settled = true;
             clearTimeout(timeout);
-            // If we never got a done/error, treat as error only if still running.
-            setVulnStatus((prev) => prev === 'running' ? 'error' : prev);
-            resolve();
+            // Code 1000 (normal) / 1005 (no status, but not flagged as an
+            // error) with no prior onerror -> a clean close before a
+            // done/error frame arrived; treat as error only if still
+            // "running" (matches the previous behavior for that case).
+            const isAbnormalClose = hadError || (event.code !== 1000 && event.code !== 1005);
+            if (isAbnormalClose) {
+              const detail = event.reason ? `: ${event.reason}` : ` (code ${event.code})`;
+              const message = `WebSocket error during scan${detail}.`;
+              setVulnError(message);
+              setVulnStatus('error');
+              reject(new Error(message));
+            } else {
+              setVulnStatus((prev) => prev === 'running' ? 'error' : prev);
+              resolve();
+            }
           }
         };
       });
@@ -2748,21 +2764,28 @@ IMPORTANT:
             /* ignore non-JSON frames */
           }
         };
+        // See the equivalent comment in runVulnScan above: `onerror` carries
+        // no diagnostic info, the real close code/reason only arrives via
+        // the `close` event that always follows it.
+        let hadError = false;
         ws.onerror = () => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            setWebVulnError('WebSocket error during scan.');
-            setWebVulnStatus('error');
-            reject(new Error('WebSocket error during scan.'));
-          }
+          hadError = true;
         };
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           if (!settled) {
             settled = true;
             clearTimeout(timeout);
-            setWebVulnStatus((prev) => prev === 'running' ? 'error' : prev);
-            resolve();
+            const isAbnormalClose = hadError || (event.code !== 1000 && event.code !== 1005);
+            if (isAbnormalClose) {
+              const detail = event.reason ? `: ${event.reason}` : ` (code ${event.code})`;
+              const message = `WebSocket error during scan${detail}.`;
+              setWebVulnError(message);
+              setWebVulnStatus('error');
+              reject(new Error(message));
+            } else {
+              setWebVulnStatus((prev) => prev === 'running' ? 'error' : prev);
+              resolve();
+            }
           }
         };
       });
