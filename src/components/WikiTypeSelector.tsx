@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { FaBookOpen, FaList } from 'react-icons/fa';
+import { FaBookOpen, FaList, FaUserGraduate, FaCode } from 'react-icons/fa';
 import {
   getDefaultWikiPageCount,
   MAX_WIKI_PAGE_COUNT,
@@ -15,6 +15,11 @@ interface WikiTypeSelectorProps {
   setIsComprehensiveView: (value: boolean) => void;
   pageCount?: number;
   setPageCount?: (value: number) => void;
+  // Audience mode is orthogonal to comprehensive/concise (depth) -- optional
+  // so callers that don't offer it (e.g. website wikis, which already have
+  // their own technical/content-mode toggle) can simply omit the props.
+  isUserFocusedView?: boolean;
+  setIsUserFocusedView?: (value: boolean) => void;
 }
 
 const WikiTypeSelector: React.FC<WikiTypeSelectorProps> = ({
@@ -22,6 +27,8 @@ const WikiTypeSelector: React.FC<WikiTypeSelectorProps> = ({
   setIsComprehensiveView,
   pageCount,
   setPageCount,
+  isUserFocusedView,
+  setIsUserFocusedView,
 }) => {
   const { messages: t } = useLanguage();
   const selectWikiType = (isComprehensive: boolean) => {
@@ -114,6 +121,64 @@ const WikiTypeSelector: React.FC<WikiTypeSelectorProps> = ({
               .replace('{min}', String(MIN_WIKI_PAGE_COUNT))
               .replace('{max}', String(MAX_WIKI_PAGE_COUNT))}
           </p>
+        </div>
+      )}
+      {isUserFocusedView !== undefined && setIsUserFocusedView && (
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+            {t.form?.wikiAudience || 'Wiki Audience'}
+          </label>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={() => setIsUserFocusedView(false)}
+              className={`flex items-center justify-between p-3 rounded-md border transition-colors ${
+                !isUserFocusedView
+                  ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]'
+                  : 'bg-[var(--background)]/50 border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
+              }`}
+            >
+              <div className="flex items-center">
+                <FaCode className="mr-2" />
+                <div className="text-left">
+                  <div className="font-medium">{t.form?.audienceDeveloper || 'For Developers'}</div>
+                  <div className="text-xs opacity-80">
+                    {t.form?.audienceDeveloperDescription || 'Architecture, implementation, and code-level detail'}
+                  </div>
+                </div>
+              </div>
+              {!isUserFocusedView && (
+                <div className="ml-2 h-4 w-4 rounded-full bg-[var(--accent-primary)]/20 flex items-center justify-center">
+                  <div className="h-2 w-2 rounded-full bg-[var(--accent-primary)]"></div>
+                </div>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsUserFocusedView(true)}
+              className={`flex items-center justify-between p-3 rounded-md border transition-colors ${
+                isUserFocusedView
+                  ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]'
+                  : 'bg-[var(--background)]/50 border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
+              }`}
+            >
+              <div className="flex items-center">
+                <FaUserGraduate className="mr-2" />
+                <div className="text-left">
+                  <div className="font-medium">{t.form?.audienceUser || 'For End Users'}</div>
+                  <div className="text-xs opacity-80">
+                    {t.form?.audienceUserDescription || 'Installation, configuration, features, and usage -- no source code'}
+                  </div>
+                </div>
+              </div>
+              {isUserFocusedView && (
+                <div className="ml-2 h-4 w-4 rounded-full bg-[var(--accent-primary)]/20 flex items-center justify-center">
+                  <div className="h-2 w-2 rounded-full bg-[var(--accent-primary)]"></div>
+                </div>
+              )}
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -509,6 +509,14 @@ export default function RepoWikiPage() {
     searchParams.get('pages'),
     isComprehensiveParam,
   );
+  // Audience mode: 'developer' (default, current behavior -- architecture/
+  // implementation-focused) vs 'user' (an end-user guide: installation,
+  // configuration, features, workflows, troubleshooting -- no source-code
+  // analysis). Orthogonal to comprehensive/concise (which is about depth,
+  // not audience), so it's its own param/state, mirroring how
+  // isComprehensiveView is wired (editable via WikiTypeSelector, persisted
+  // to the URL) rather than technicalAnalysisEnabled's read-only pattern.
+  const isUserFocusedParam = searchParams.get('audience') === 'user';
   const repoHost = (() => {
     if (!repoUrl) return '';
     try {
@@ -697,6 +705,7 @@ export default function RepoWikiPage() {
 
   // Wiki type state - default to comprehensive view
   const [isComprehensiveView, setIsComprehensiveView] = useState(isComprehensiveParam);
+  const [isUserFocusedView, setIsUserFocusedView] = useState(isUserFocusedParam);
   const [pageCount, setPageCount] = useState(pageCountParam);
   // Using useRef for activeContentRequests to maintain a single instance across renders
   // This map tracks which pages are currently being processed to prevent duplicate requests
@@ -854,7 +863,14 @@ export default function RepoWikiPage() {
         // in the target language -- checking by position rather than an
         // English title match keeps this correct for every generation
         // language). No other page's prompt mentions the tree at all.
-        const isIntroPage = !!repoFileTree && wikiStructure?.pages?.[0]?.id === page.id;
+        // A raw source-code file tree is a developer artifact -- an
+        // end-user guide has no use for it, so this stays off entirely for
+        // user-focused repo wikis (websites/fanwikis never had
+        // isUserFocusedView branching in the first place, see
+        // determineWikiStructure).
+        const isRepoPage = effectiveRepoInfo.type !== 'website' && effectiveRepoInfo.type !== 'fanwiki';
+        const isIntroPage = !!repoFileTree && wikiStructure?.pages?.[0]?.id === page.id
+          && !(isRepoPage && isUserFocusedView);
         const introStructureBlock = isIntroPage
           ? `\n\nCRITICAL STRUCTURE REQUIREMENT: This is the introduction/overview page, so it MUST include a "## Project Structure" section presenting the COMPLETE file/page tree below, verbatim, inside a single fenced code block (do not summarize, reorder, or omit any entries) -- this is the one authoritative place in the whole wiki where the full tree is shown:\n\`\`\`\n${repoFileTree}\n\`\`\`\n`
           : '';
@@ -964,7 +980,53 @@ Based ONLY on the content of the \`[RELEVANT_PAGES]\`:
 5.  **Accuracy:** Do not invent facts beyond what the source pages state. Do NOT analyze the site's own technical implementation (no HTML/CSS/framework talk) -- write about the subject matter itself.
 6.  **Conclusion:** End with a brief summary if appropriate for "${page.title}".
 ${introStructureBlock}
-IMPORTANT: Generate the content in ${pageLanguageLine} language.`) : `You are an expert technical writer and software architect.
+IMPORTANT: Generate the content in ${pageLanguageLine} language.`) : (isUserFocusedView ? `You are an expert technical writer creating END-USER documentation for a software product.
+Your audience has NO interest in source code -- they just want to install, configure, and use this software effectively. Never discuss architecture, internal implementation, source code organization, or anything a user would never need to know to use the product.
+
+You will be given:
+1. The "[WIKI_PAGE_TOPIC]" for the page you need to create.
+2. A list of "[RELEVANT_SOURCE_FILES]" -- mostly documentation (README, docs/, examples, config samples) but occasionally a source file where a user-facing option is only documented in code (e.g. a CLI flags definition or a config schema). Use these as your sole basis for the content; you have access to their full text.
+
+CRITICAL STARTING INSTRUCTION:
+The very first thing on the page MUST be a \`<details>\` block listing the \`[RELEVANT_SOURCE_FILES]\` you used. Format it exactly like this:
+<details>
+<summary>Relevant source files</summary>
+
+Remember, do not provide any acknowledgements, disclaimers, apologies, or any other preface before the \`<details>\` block. JUST START with the \`<details>\` block.
+The following files were used as context for generating this wiki page:
+
+${filePaths.map(path => `- [${path}](${generateFileUrl(path)})`).join('\n')}
+</details>
+
+Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${page.title}\`.
+
+Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
+
+1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining what "${page.title}" lets the user do and why they'd want it, in plain language -- no jargon that assumes a developer background.
+
+2.  **Step-by-step instructions:** Break "${page.title}" down into clear, numbered steps or logical H2 (\`##\`)/H3 (\`###\`) sections a user can follow in order (e.g. "1. Install the CLI", "2. Set your API key"). Prefer concrete, actionable instructions ("Run \`x\` to do \`y\`", "Open Settings and toggle \`z\`") over abstract descriptions.
+
+3.  **Configuration/options:** If this topic has settings, flags, environment variables, or config file options, list them in a Markdown table: name, what it does, default value, and an example value -- described in terms of their EFFECT on the user's experience, not their internal handling.
+
+4.  **Diagrams (OPTIONAL, sparingly):** Only if it genuinely clarifies a multi-step USER workflow (e.g. "install -> configure -> run"), a simple Mermaid \`graph TD\` (top-down, never \`graph LR\`) with plain-language node labels is fine. Do NOT diagram code architecture, class hierarchies, or internal data flow -- that's not what this page is for. Quote any label containing punctuation, e.g. A["Settings (Advanced)"].
+
+5.  **Common issues / troubleshooting:** If the source files mention error messages, common mistakes, or requirements/prerequisites, call them out explicitly (e.g. "If you see X, it usually means Y -- fix it by Z").
+
+6.  **Source Citations:** Cite the specific file(s) each claim is drawn from, e.g. \`Sources: [README.md](), [docs/config.md]()\`. Whole-file citations are fine here (no line-number ranges needed) -- this is user-facing documentation, not a code walkthrough.
+
+7.  **Accuracy:** Only state what's actually evidenced in the provided files. Do not invent features, flags, or behavior that isn't documented. If something a user would want to know isn't covered by the provided files, say so rather than guessing.
+
+8.  **Tone:** Clear, friendly, and precise -- written for someone who downloaded/installed this software and wants to get value out of it quickly, not someone evaluating its codebase.
+
+9.  **Conclusion:** End with a brief summary or "next steps" pointer if appropriate for "${page.title}".
+${introStructureBlock}
+IMPORTANT: Generate the content in ${pageLanguageLine} language.
+
+Remember:
+- Ground every instruction in the provided files -- never invent a flag, setting, or behavior.
+- Write for someone using the software, not someone reading or modifying its source code.
+- Structure the document as a practical, actionable guide.
+` : `You are an expert technical writer and software architect.
 Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about a specific feature, system, or module within a given software project.
 
 You will be given:
@@ -1061,7 +1123,7 @@ Remember:
 - Ground every claim in the provided source files.
 - Prioritize accuracy and direct representation of the code's functionality and structure.
 - Structure the document logically for easy understanding by other developers.
-`;
+`);
 
         // Prepare request body
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1266,7 +1328,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, activeContentRequests, generateFileUrl, wikiStructure, repoFileTree]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, isUserFocusedView, language, activeContentRequests, generateFileUrl, wikiStructure, repoFileTree]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string, force: boolean = false) => {
@@ -1346,7 +1408,9 @@ ${fileTree}
 ${readme}
 </readme>
 
-I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.`;
+${isUserFocusedView
+  ? `I want to create an END-USER GUIDE for this software -- documentation for people who will INSTALL, CONFIGURE, and USE it, not people who will read or modify its source code. Use the file tree and README only to understand what the software does, how it's installed/configured (look for config files, CLI entry points, env vars, setup scripts), and what user-facing features exist. Determine the most logical structure for a user guide: installation/setup, configuration, features and how to use them, common workflows, and troubleshooting. Do NOT plan any pages about internal architecture, source code organization, or implementation details.`
+  : `I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.`}`;
 
       const comprehensiveSections = isWebsite
         ? (technicalAnalysisEnabled
@@ -1361,7 +1425,16 @@ Each section should contain relevant pages.`
             : `Create a structured wiki with sections that mirror how the site itself organizes its subject matter (do not force the generic repo-documentation sections below onto site content -- infer the sections from what the site is actually about).
 
 Each section should contain relevant pages.`)
-        : `Create a structured wiki with the following main sections:
+        : (isUserFocusedView
+            ? `Create a structured user guide with sections such as:
+- Getting Started (what the software does, requirements, installation/setup)
+- Configuration (config files, environment variables, CLI flags/options, settings)
+- Features (each major user-facing feature and what it's for)
+- Common Workflows (step-by-step guides for the most common tasks a user would want to do)
+- Troubleshooting & FAQ (common problems, error messages, and how to resolve them)
+
+Each section should contain relevant pages. Do NOT include sections about system architecture, source code structure, internal APIs, or how the software is implemented -- this wiki is for people USING the software, not developing it.`
+            : `Create a structured wiki with the following main sections:
 - Overview (general information about the project)
 - System Architecture (how the system is designed)
 - Core Features (key functionality)
@@ -1372,16 +1445,20 @@ Each section should contain relevant pages.`)
 - Deployment/Infrastructure (how to deploy, what's the infrastructure like)
 - Extensibility and Customization: If the project architecture supports it, explain how to extend or customize its functionality (e.g., plugins, theming, custom modules, hooks).
 
-Each section should contain relevant pages. For example, the "Frontend Components" section might include pages for "Home Page", "Repository Wiki Page", "Ask Component", etc.`;
+Each section should contain relevant pages. For example, the "Frontend Components" section might include pages for "Home Page", "Repository Wiki Page", "Ask Component", etc.`);
 
       const relevantFilesNote = isWebsite
         ? `The relevant_files should be actual crawled page file paths (from the file tree above) that would be used to generate that page. List at most ${MAX_RELEVANT_FILES_PER_PAGE} pages -- pick the most representative ones rather than every match`
-        : `The relevant_files should be actual files from the repository that would be used to generate that page. List at most ${MAX_RELEVANT_FILES_PER_PAGE} files -- pick the most representative ones rather than every match`;
+        : isUserFocusedView
+          ? `The relevant_files should be documentation/config files (README, docs/, config examples, CLI help, .env.example, etc.) that would be used to generate that page -- avoid pure source-code implementation files unless they're the only place a user-facing option is documented. List at most ${MAX_RELEVANT_FILES_PER_PAGE} files -- pick the most representative ones rather than every match`
+          : `The relevant_files should be actual files from the repository that would be used to generate that page. List at most ${MAX_RELEVANT_FILES_PER_PAGE} files -- pick the most representative ones rather than every match`;
       const pageFocusNote = isWebsite
         ? (technicalAnalysisEnabled
             ? 'Each page should focus on a specific technical aspect of the website (e.g., a page template, a subsystem, navigation)'
             : 'Each page should focus on a specific topic within the site\'s subject matter, the way the site itself would organize it')
-        : 'Each page should focus on a specific aspect of the codebase (e.g., architecture, key features, setup)';
+        : isUserFocusedView
+          ? 'Each page should focus on a specific end-user concern (e.g., a feature, a setup step, a workflow, a troubleshooting topic) -- never an internal implementation detail'
+          : 'Each page should focus on a specific aspect of the codebase (e.g., architecture, key features, setup)';
       const wikiForNoun = isWebsite ? 'website' : 'repository';
 
       // Prepare request body
@@ -2005,7 +2082,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, messages.loading, isComprehensiveView, pageCount]);
+  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, messages.loading, isComprehensiveView, isUserFocusedView, pageCount]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async (force: boolean = false) => {
@@ -3086,6 +3163,7 @@ IMPORTANT:
     const refreshIsCustomModel = selection?.isCustomModel ?? isCustomSelectedModelState;
     const refreshCustomModel = selection?.customModel ?? customSelectedModelState;
     const refreshComprehensive = selection?.isComprehensiveView ?? isComprehensiveView;
+    const refreshUserFocused = selection?.isUserFocusedView ?? isUserFocusedView;
     const refreshPageCount = normalizeWikiPageCount(
       selection?.pageCount ?? pageCount,
       refreshComprehensive,
@@ -3120,6 +3198,7 @@ IMPORTANT:
 
     const currentUrl = new URL(window.location.href);
     currentUrl.searchParams.set('comprehensive', refreshComprehensive.toString());
+    currentUrl.searchParams.set('audience', refreshUserFocused ? 'user' : 'developer');
     currentUrl.searchParams.set('pages', refreshPageCount.toString());
     // Keep provider/model in the URL in sync with the user's selection so a full page
     // reload uses the same model they chose in the modal (and the server-cache match check
@@ -3209,7 +3288,7 @@ IMPORTANT:
     // For now, we rely on the standard loadData flow initiated by resetting effectRan and dependencies.
     // This will re-trigger the main data loading useEffect.
     // No direct call to fetchRepositoryStructure here, let the useEffect handle it based on effectRan.current = false.
-  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, pageCount, authCode, authRequired]);
+  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, isUserFocusedView, pageCount, authCode, authRequired]);
 
   // Start wiki generation when component mounts
   useEffect(() => {
@@ -4455,6 +4534,8 @@ IMPORTANT:
         setCustomModel={setCustomSelectedModelState}
         isComprehensiveView={isComprehensiveView}
         setIsComprehensiveView={setIsComprehensiveView}
+        isUserFocusedView={isUserFocusedView}
+        setIsUserFocusedView={setIsUserFocusedView}
         pageCount={pageCount}
         setPageCount={setPageCount}
         showFileFilters={true}

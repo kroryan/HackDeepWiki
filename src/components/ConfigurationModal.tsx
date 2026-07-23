@@ -21,6 +21,8 @@ interface ConfigurationModalProps {
   // Wiki type options
   isComprehensiveView: boolean;
   setIsComprehensiveView: (value: boolean) => void;
+  isUserFocusedView: boolean;
+  setIsUserFocusedView: (value: boolean) => void;
   pageCount: number;
   setPageCount: (value: number) => void;
 
@@ -101,6 +103,8 @@ export default function ConfigurationModal({
   supportedLanguages,
   isComprehensiveView,
   setIsComprehensiveView,
+  isUserFocusedView,
+  setIsUserFocusedView,
   pageCount,
   setPageCount,
   provider,
@@ -214,6 +218,8 @@ export default function ConfigurationModal({
               setIsComprehensiveView={setIsComprehensiveView}
               pageCount={pageCount}
               setPageCount={setPageCount}
+              isUserFocusedView={isUserFocusedView}
+              setIsUserFocusedView={setIsUserFocusedView}
             />
 
             {/* Model Selector */}

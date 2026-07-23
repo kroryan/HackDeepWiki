@@ -103,6 +103,7 @@ export default function Home() {
               : config.isComprehensiveView;
           setSelectedLanguage(config.selectedLanguage || language);
           setIsComprehensiveView(cachedComprehensive);
+          setIsUserFocusedView(config.isUserFocusedView === undefined ? false : config.isUserFocusedView);
           setPageCount(
             normalizeWikiPageCount(config.pageCount, cachedComprehensive),
           );
@@ -160,6 +161,9 @@ export default function Home() {
 
   // Wiki type state - default to comprehensive view
   const [isComprehensiveView, setIsComprehensiveView] = useState<boolean>(true);
+  // Wiki audience - default to the developer-focused wiki (current/original
+  // behavior); orthogonal to comprehensive/concise, see WikiTypeSelector.
+  const [isUserFocusedView, setIsUserFocusedView] = useState<boolean>(false);
   const [pageCount, setPageCount] = useState<number>(
     getDefaultWikiPageCount(true),
   );
@@ -656,6 +660,7 @@ export default function Home() {
         const configToSave = {
           selectedLanguage,
           isComprehensiveView,
+          isUserFocusedView,
           pageCount,
           provider,
           model,
@@ -696,6 +701,7 @@ export default function Home() {
       if (isCustomModel && customModel) params.append('custom_model', customModel);
       params.append('language', selectedLanguage);
       params.append('comprehensive', isComprehensiveView.toString());
+      params.append('audience', isUserFocusedView ? 'user' : 'developer');
       params.append('pages', pageCount.toString());
       if (enableVulnScan) {
         params.append('vuln_scan', '1');
@@ -770,6 +776,7 @@ export default function Home() {
 
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
+    params.append('audience', isUserFocusedView ? 'user' : 'developer');
     params.append('pages', pageCount.toString());
 
     // 🔐 Security Analysis (vulnerability scan) parameters
@@ -1157,6 +1164,8 @@ export default function Home() {
             supportedLanguages={supportedLanguages}
             isComprehensiveView={isComprehensiveView}
             setIsComprehensiveView={setIsComprehensiveView}
+            isUserFocusedView={isUserFocusedView}
+            setIsUserFocusedView={setIsUserFocusedView}
             pageCount={pageCount}
             setPageCount={setPageCount}
             provider={provider}
