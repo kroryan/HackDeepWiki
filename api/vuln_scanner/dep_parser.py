@@ -424,6 +424,60 @@ def _parse_pyproject_regex(path: str) -> List[Tuple[str, str, bool]]:
     return out
 
 
+def _parse_poetry_lock(path: str) -> List[Tuple[str, str, bool]]:
+    """Poetry's lock file -- the actually-resolved versions, as opposed to
+    pyproject.toml's ">=" ranges (see _parse_pyproject). Without this parser
+    registered (see _FILE_HANDLERS' priority-3 entry for it), a project
+    pinned like `aiohttp = ">=3.8.4"` but actually resolved by poetry to a
+    much newer, unaffected version would still get reported as "3.8.4" and
+    checked against CVEs for a version nothing is actually running --
+    exactly the false-positive/false-negative failure mode this file's own
+    docstring says lockfiles exist to prevent.
+
+    [[package]] blocks look like:
+        [[package]]
+        name = "aiohttp"
+        version = "3.14.1"
+        ...
+        [package.extras]
+        ...
+    A dedicated (regex, not full TOML) reader keeps this robust across
+    poetry.lock schema versions without needing poetry's own lock-format
+    parser as a dependency, symmetric with _parse_pyproject_regex's fallback
+    for the same reason.
+    """
+    out: List[Tuple[str, str, bool]] = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except Exception as exc:
+        logger.debug("poetry.lock parse failed %s: %s", path, exc)
+        return out
+
+    dev_names: Set[str] = set()
+    try:
+        pyproject_path = os.path.join(os.path.dirname(path), "pyproject.toml")
+        if _HAS_TOMLLIB and os.path.isfile(pyproject_path):
+            with open(pyproject_path, "rb") as fh:
+                pdata = tomllib.load(fh)
+            groups = ((pdata.get("tool") or {}).get("poetry") or {}).get("group") or {}
+            for grp in groups.values():
+                if isinstance(grp, dict):
+                    dev_names.update(_norm(n) for n in (grp.get("dependencies") or {}).keys())
+            dev_names.update(_norm(n) for n in ((pdata.get("tool") or {}).get("poetry") or {})
+                              .get("dev-dependencies", {}).keys())
+    except Exception:
+        pass  # best-effort dev/main split; default to "main" (dev=False) below
+
+    for block in text.split("[[package]]")[1:]:
+        name_m = re.search(r'name\s*=\s*"([^"]+)"', block)
+        ver_m = re.search(r'version\s*=\s*"([^"]+)"', block)
+        if name_m and ver_m:
+            name = name_m.group(1)
+            out.append((name, ver_m.group(1), _norm(name) in dev_names))
+    return out
+
+
 _SETUP_PY_SPEC_RE = re.compile(r'''["']([A-Za-z0-9_.\-]+)\s*[=<>!~]=?\s*([0-9A-Za-z_.\-+*]+)["']''')
 
 
@@ -707,6 +761,7 @@ _FILE_HANDLERS: Dict[str, Tuple["callable", str, int]] = {
     "pyproject.toml": (_parse_pyproject, "PyPI", 2),
     "setup.py": (_parse_setup_py, "PyPI", 1),
     "pipfile.lock": (_parse_pipfile_lock, "PyPI", 3),
+    "poetry.lock": (_parse_poetry_lock, "PyPI", 3),
     "go.mod": (_parse_go_mod, "Go", 3),
     "cargo.toml": (_parse_cargo_toml, "crates.io", 1),
     "cargo.lock": (_parse_cargo_lock, "crates.io", 3),

@@ -27,13 +27,24 @@ app = FastAPI(
     description="API for streaming chat completions"
 )
 
-# Configure CORS
+# Configure CORS. HackDeepWiki is a local desktop app: the bundled Next.js
+# frontend talks to this backend almost entirely through its own server-side
+# route handlers (see src/app/api/**/route.ts) -- genuine cross-origin
+# browser fetches never happen, and WebSocket upgrades (the one thing that
+# *does* connect directly browser-to-backend, since WS can't go through a
+# Next.js route handler) aren't covered by CORSMiddleware at all. So
+# `allow_origins=["*"]` bought nothing functionally, while leaving the
+# backend port reachable from JavaScript on *any* website the user happens
+# to have open in a tab -- a classic "malicious site talks to your local
+# server" drive-by. Restrict to actual local origins; the frontend's port is
+# chosen dynamically at runtime (see next.config.ts), so this matches any
+# localhost/127.0.0.1 port rather than a single hardcoded one.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Helper function to get the (guaranteed-writable) adalflow root path
@@ -866,8 +877,15 @@ from api.websocket_wiki import handle_websocket_chat
 # Add the chat_completions_stream endpoint to the main app
 app.add_api_route("/chat/completions/stream", chat_completions_stream, methods=["POST"])
 
-# Add the WebSocket endpoint
-app.add_websocket_route("/ws/chat", handle_websocket_chat)
+# Add the WebSocket endpoint. Registered via a decorator wrapper rather than
+# FastAPI.add_websocket_route(handle_websocket_chat) -- that method (needed
+# because the handler lives in a separate module, so it can't be decorated
+# at its own definition site) was removed in newer FastAPI/Starlette. This
+# thin wrapper is the drop-in replacement: functionally identical route,
+# compatible with current and future versions.
+@app.websocket("/ws/chat")
+async def _ws_chat(websocket: WebSocket):
+    await handle_websocket_chat(websocket)
 
 # --- Wiki Cache Helper Functions ---
 

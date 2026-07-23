@@ -17,7 +17,7 @@ FROM python:3.11-slim AS py_deps
 WORKDIR /api
 COPY api/pyproject.toml .
 COPY api/poetry.lock .
-RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
+RUN python -m pip install poetry==2.4.1 --no-cache-dir && \
     poetry config virtualenvs.create true --local && \
     poetry config virtualenvs.in-project true --local && \
     poetry config virtualenvs.options.always-copy --local true && \

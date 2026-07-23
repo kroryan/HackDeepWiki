@@ -9,11 +9,15 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.11"
-# Upper-bounded: newer FastAPI/Starlette releases have removed
-# `FastAPI.add_websocket_route` (used to register /ws/chat), so an
-# unconstrained range can silently break the chat/wiki-generation feature
-# whenever the lock file is regenerated.
-fastapi = ">=0.95.0,<0.120.0"
+# Previously upper-bounded at <0.120.0: newer FastAPI/Starlette releases
+# removed `FastAPI.add_websocket_route` (used to register /ws/chat). That
+# route is now registered via a `@app.websocket(...)` decorator wrapper
+# instead (see api/api.py), which works on every version, so the cap is no
+# longer needed -- and had to go: the vulnerable Starlette range this
+# project was otherwise stuck on (see api/pyproject.toml's implicit pull via
+# fastapi's own dependency bound) only gets fully patched by Starlette
+# 1.3.1+, which no fastapi <0.120 release accepts.
+fastapi = ">=0.119.0"
 uvicorn = { extras = ["standard"], version = ">=0.21.1" }
 pydantic = ">=2.0.0"
 google-generativeai = ">=0.3.0"
@@ -22,16 +26,30 @@ adalflow = ">=0.1.0"
 numpy = ">=1.24.0"
 faiss-cpu = ">=1.7.4"
 langid = ">=1.1.6"
-requests = ">=2.28.0"
-jinja2 = ">=3.1.2"
-python-dotenv = ">=1.0.0"
+requests = ">=2.33.0"
+jinja2 = ">=3.1.6"
+python-dotenv = ">=1.2.2"
 openai = ">=1.76.2"
 ollama = ">=0.4.8"
-aiohttp = ">=3.8.4"
+aiohttp = ">=3.13.3"
 boto3 = ">=1.34.0"
 websockets = ">=11.0.3"
 azure-identity = ">=1.12.0"
-azure-core = ">=1.24.0"
+azure-core = ">=1.38.0"
+# Not imported directly -- these pin known-vulnerable *transitive*
+# dependencies (of requests/google-generativeai/boto3/azure-identity/pytest)
+# up to a patched version. Without an explicit floor here, poetry's resolver
+# is free to satisfy the graph with an older, still-technically-compatible
+# version that happens to carry a known CVE (verified via `pip-audit
+# --local` against a scratch install of this lock file -- these five showed
+# up with real, fixable advisories even though nothing in this project
+# imports them directly).
+urllib3 = ">=2.7.0"
+idna = ">=3.15"
+protobuf = ">=5.29.6"
+pyasn1 = ">=0.6.4"
+pygments = ">=2.20.0"
+pyjwt = ">=2.13.0"
 # Upper-bounded to match libzim's own supported Python range (<3.15); without
 # this poetry's solver fails outright since the project's own `python = "^3.11"`
 # is otherwise unbounded above 3.15.
@@ -54,4 +72,4 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
-pytest = ">=7.0.0"
+pytest = ">=9.0.3"
