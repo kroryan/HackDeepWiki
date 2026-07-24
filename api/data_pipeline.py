@@ -648,7 +648,13 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
     if embedder_type is None:
         embedder_type = get_embedder_type()
 
-    splitter = TextSplitter(**configs["text_splitter"])
+    # B18: code files must not be split mid-function. The plain word-splitter
+    # cuts a function body in half at the 500-word window; CodeAwareSplitter
+    # dispatches per document -- code is split on def/class/heading/paragraph
+    # boundaries, prose keeps the exact previous word-splitter behaviour.
+    from api.code_splitter import CodeAwareSplitter
+
+    splitter = CodeAwareSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()
 
     embedder = get_embedder(embedder_type=embedder_type)
