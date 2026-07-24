@@ -45,6 +45,7 @@ services:
       - PORT=${PORT:-8001}
       - NODE_ENV=production
       - SERVER_BASE_URL=http://localhost:${PORT:-8001}
+      - HACKDEEPWIKI_HOST=0.0.0.0
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE_PATH=${LOG_FILE_PATH:-api/logs/application.log}
       # For LiteLLM

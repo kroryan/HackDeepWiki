@@ -12,6 +12,10 @@ services:
       - PORT=${PORT:-8001}
       - NODE_ENV=production
       - SERVER_BASE_URL=http://localhost:${PORT:-8001}
+      # Containers bind all interfaces so the published port + same-container
+      # frontend can reach the backend. (Source/portable runs default to
+      # 127.0.0.1 for LAN safety -- see api/main.py.)
+      - HACKDEEPWIKI_HOST=0.0.0.0
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE_PATH=${LOG_FILE_PATH:-api/logs/application.log}
     volumes:

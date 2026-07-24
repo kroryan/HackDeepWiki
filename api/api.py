@@ -8,7 +8,7 @@ import tempfile
 import zipfile
 import logging
 import mimetypes
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import FastAPI, HTTPException, Query, WebSocket, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -251,6 +251,7 @@ from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE, DEFAULT_EXCLUDED
 from api.config import get_model_config as get_provider_model_config
 from api.provider_streaming import stream_provider_response
 from api.prompts import PAGE_EDIT_AI_SYSTEM_PROMPT
+from api.security import sanitize_error_message
 
 @app.get("/lang/config")
 async def get_lang_config():
@@ -269,10 +270,52 @@ async def validate_auth_code(request: AuthorizationConfig):
     Check authorization code using a constant-time comparison to avoid timing
     side-channels on the secret. An empty configured code can never match
     (matches the `not authorization_code` guard used by the write endpoints).
+
+    A simple in-memory sliding-window lockout rate-limits brute-force attempts
+    against the passcode: after _AUTH_MAX_FAILED_ATTEMPTS failed attempts in
+    the last _AUTH_LOCKOUT_WINDOW seconds, further attempts are rejected with
+    429 until the window clears. (Local single-user app; per-IP tracking isn't
+    meaningful here, so this is process-global -- sufficient to stop naive
+    brute force while the constant-time compare already closes the timing
+    channel.)
     """
+    import time
+
+    now = time.time()
+    _AUTH_FAILED_ATTEMPTS[:] = [t for t in _AUTH_FAILED_ATTEMPTS if now - t < _AUTH_LOCKOUT_WINDOW]
+    if len(_AUTH_FAILED_ATTEMPTS) >= _AUTH_MAX_FAILED_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+
     if not WIKI_AUTH_CODE or not request.code:
         return {"success": False}
-    return {"success": hmac.compare_digest(WIKI_AUTH_CODE, request.code)}
+    ok = hmac.compare_digest(WIKI_AUTH_CODE, request.code)
+    if not ok:
+        _AUTH_FAILED_ATTEMPTS.append(now)
+    return {"success": ok}
+
+
+# Sliding-window brute-force lockout for /auth/validate (process-global;
+# see validate_auth_code). Configurable via env so an operator can widen it.
+import time as _time  # noqa: E402
+_AUTH_LOCKOUT_WINDOW = int(os.environ.get("HACKDEEPWIKI_AUTH_LOCKOUT_WINDOW", "300"))
+_AUTH_MAX_FAILED_ATTEMPTS = int(os.environ.get("HACKDEEPWIKI_AUTH_MAX_FAILED", "10"))
+_AUTH_FAILED_ATTEMPTS: list = []
+
+
+def verify_authorization(authorization_code: Optional[str] = Query(None)):
+    """Shared auth gate. When WIKI_AUTH_MODE is on, require a valid
+    authorization_code (constant-time compare). Applied to read endpoints that
+    enumerate the filesystem (/api/fs/list, /local_repo/structure) and to
+    fanwiki inspect/attach_images -- these walk arbitrary local directories and
+    must not be reachable unauthenticated if the operator has enabled auth
+    (especially since the app may be exposed on the LAN). When auth is off
+    (the local-first default), this is a no-op so behavior is unchanged."""
+    if WIKI_AUTH_MODE and (
+        not authorization_code or not WIKI_AUTH_CODE
+        or not hmac.compare_digest(WIKI_AUTH_CODE, authorization_code)
+    ):
+        raise HTTPException(status_code=401, detail="Authorization code is invalid")
+    return True
 
 @app.get("/models/config", response_model=ModelConfig)
 async def get_model_config():
@@ -579,7 +622,7 @@ async def export_wiki(request: WikiExportRequest):
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
 
-@app.get("/local_repo/structure")
+@app.get("/local_repo/structure", dependencies=[Depends(verify_authorization)])
 async def get_local_repo_structure(path: str = Query(None, description="Path to local repository")):
     """Return the file tree and README content for a local repository."""
     if not path:
@@ -1783,7 +1826,7 @@ async def ws_repo_clone(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in /ws/repo/clone: {e}")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": sanitize_error_message(str(e))})
         except Exception:
             pass
     finally:
@@ -1886,7 +1929,7 @@ async def ws_website_crawl(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in /ws/website/crawl: {e}")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": sanitize_error_message(str(e))})
         except Exception:
             pass
     finally:
@@ -1896,7 +1939,7 @@ async def ws_website_crawl(websocket: WebSocket):
             pass
 
 
-@app.get("/api/fs/list")
+@app.get("/api/fs/list", dependencies=[Depends(verify_authorization)])
 async def fs_list(
     path: Optional[str] = Query(None, description="Absolute directory to list; defaults to the user's home directory"),
     extensions: Optional[str] = Query(None, description="Comma-separated file extensions to include (e.g. '.xml'); omit to list every file"),
@@ -1954,7 +1997,7 @@ class FanwikiInspectRequest(BaseModel):
     path: str = Field(..., description="Local path to a MediaWiki XML export (Special:Export) file")
 
 
-@app.post("/api/fanwiki/inspect")
+@app.post("/api/fanwiki/inspect", dependencies=[Depends(verify_authorization)])
 async def fanwiki_inspect(request: FanwikiInspectRequest):
     """Reads just the <siteinfo> header of a MediaWiki XML export -- fast
     even for a multi-GB dump, since it stops as soon as that (always small)
@@ -2056,7 +2099,7 @@ async def ws_fanwiki_import(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in /ws/fanwiki/import: {e}")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": sanitize_error_message(str(e))})
         except Exception:
             pass
     finally:
@@ -2144,7 +2187,7 @@ class FanwikiAttachImagesRequest(BaseModel):
     images_dir: str = Field(..., description="Local folder of images to match against unresolved [[File:...]] references")
 
 
-@app.post("/api/fanwiki/attach_images")
+@app.post("/api/fanwiki/attach_images", dependencies=[Depends(verify_authorization)])
 async def fanwiki_attach_images(request: FanwikiAttachImagesRequest):
     """Attaches images to an already-imported fanwiki after the fact (see
     api.fanwiki_import.attach_images) -- the images folder doesn't need to
@@ -2400,7 +2443,7 @@ async def ws_vuln_scan(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in /ws/vuln_scan: {e}")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": sanitize_error_message(str(e))})
         except Exception:
             pass
     finally:
@@ -2500,7 +2543,7 @@ async def ws_web_vuln_scan(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in /ws/web_vuln_scan: {e}")
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": sanitize_error_message(str(e))})
         except Exception:
             pass
     finally:
@@ -2966,6 +3009,22 @@ def _get_zim_entry_or_404(zim_id: str) -> zim_library.ZimEntry:
     return entry
 
 
+# Security headers for ZIM-rendered HTML. ZIM content is user-imported and
+# served from this backend's origin, so a malicious archive could ship a
+# script that, rendered in the browser, talks to the local /api/* endpoints
+# with the user's origin. We can't lock everything down (legit ZIMs need their
+# own images/CSS/scripts from the archive's /raw/ namespace) but we CAN close
+# the backend-call hole: connect-src 'none' blocks XHR/fetch to /api/*, and
+# base-uri 'self' prevents <base> hijacking beyond the injected same-origin
+# base. Other resource types stay permissive so archive rendering is intact.
+_ZIM_HTML_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'self' data:; img-src 'self' data: blob:; "
+    "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+    "connect-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+}
+
+
 def _open_zim_or_500(entry: zim_library.ZimEntry):
     try:
         return zim_reader.open_archive(entry["path"])
@@ -3049,7 +3108,7 @@ async def get_zim_entry(zim_id: str, path: str = Query(...)):
         return Response(content=content, media_type=mimetype)
 
     html = _rewrite_zim_html(zim_id, path, content)
-    return HTMLResponse(content=html, headers={"X-Content-Type-Options": "nosniff"})
+    return HTMLResponse(content=html, headers=_ZIM_HTML_HEADERS)
 
 
 @app.get("/api/zim/{zim_id}/raw/{entry_path:path}")
@@ -3074,7 +3133,7 @@ async def get_zim_raw(zim_id: str, entry_path: str):
 
     if mimetype.startswith("text/html"):
         html = _rewrite_zim_html(zim_id, entry_path, content)
-        return HTMLResponse(content=html, headers={"X-Content-Type-Options": "nosniff"})
+        return HTMLResponse(content=html, headers=_ZIM_HTML_HEADERS)
 
     return Response(
         content=content,

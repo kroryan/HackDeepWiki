@@ -43,12 +43,33 @@ if is_development:
 
 import uvicorn
 
-# Check for required environment variables
-required_env_vars = ['GOOGLE_API_KEY', 'OPENAI_API_KEY']
-missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
-if missing_vars:
-    logger.warning(f"Missing environment variables: {', '.join(missing_vars)}")
-    logger.warning("Some functionality may not work correctly without these variables.")
+# Warn about missing cloud provider keys ONLY when the configured default
+# provider actually needs them. The local-first, zero-API-key path (Ollama)
+# is the documented default, so warning "GOOGLE_API_KEY/OPENAI_API_KEY missing"
+# on every startup of a pure-Ollama install is noise that implies setup is
+# broken when it isn't.
+try:
+    from api.config import get_model_config, configs
+    _default_provider = configs.get("generator_config", {}).get("default_provider", "ollama")
+    _provider_needs_keys = {
+        "openai": ["OPENAI_API_KEY"],
+        "openrouter": ["OPENROUTER_API_KEY"],
+        "claude": [],  # api key optional (subscription token), warned at request time
+        "google": ["GOOGLE_API_KEY"],
+        "azure": ["AZURE_API_KEY"],
+        "bedrock": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+        "dashscope": ["DASHSCOPE_API_KEY"],
+        "litellm": ["LITELLM_API_KEY"],
+    }
+    _needed = _provider_needs_keys.get(_default_provider, [])
+    _missing = [v for v in _needed if not os.environ.get(v)]
+    if _missing:
+        logger.warning(
+            f"Default provider '{_default_provider}' is missing: {', '.join(_missing)}. "
+            "Some functionality may not work correctly without these variables."
+        )
+except Exception:  # noqa: BLE001 - never block startup on a warning
+    pass
 
 # Configure Google Generative AI
 import google.generativeai as genai
@@ -68,10 +89,16 @@ if __name__ == "__main__":
 
     logger.info(f"Starting Streaming API on port {port}")
 
+    # Bind loopback by default. The app exposes unauthenticated wiki-cache,
+    # vuln-cache and filesystem-listing endpoints; binding 0.0.0.0 by default
+    # would expose those to the LAN. Set HACKDEEPWIKI_HOST=0.0.0.0 explicitly
+    # (e.g. for a containerized/remote deploy) to override.
+    host = os.environ.get("HACKDEEPWIKI_HOST", "127.0.0.1")
+
     # Run the FastAPI app with uvicorn
     uvicorn.run(
         "api.api:app",
-        host="0.0.0.0",
+        host=host,
         port=port,
         reload=is_development,
         reload_excludes=["**/logs/*", "**/__pycache__/*", "**/*.pyc"] if is_development else None,
