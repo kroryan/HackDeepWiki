@@ -44,6 +44,15 @@ async def _build_lifespan(_app):
         logger.info("Job worker started (Fase 3)")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Job worker failed to start (jobs will not run): {e}")
+    # Fase 9.6 -- prune the wiki cache against configured caps on launch so a
+    # cache that accumulated past a cap (e.g. set after the fact) is reined in
+    # without waiting for the next save. Best-effort + no-op unless the
+    # operator opted in via env (see api.cache_eviction).
+    try:
+        from api.cache_eviction import prune_wiki_cache
+        prune_wiki_cache()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"wiki cache startup prune skipped: {e}")
     try:
         yield
     finally:
@@ -1591,6 +1600,17 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
         except Exception as idx_e:
             logger.warning(f"FTS wiki index update failed (cache saved anyway): {idx_e}")
 
+        # Fase 9.6 -- enforce the configured cache caps now that the cache
+        # just grew. Best-effort (a failure here must never roll back a
+        # successful save); only ever reclaims OLDER surplus releases, never a
+        # repo's newest. No-op unless the operator opts in via env (see
+        # api.cache_eviction).
+        try:
+            from api.cache_eviction import prune_wiki_cache
+            prune_wiki_cache()
+        except Exception as ev_e:  # noqa: BLE001
+            logger.warning(f"wiki cache prune skipped (cache saved anyway): {ev_e}")
+
         return next_version
     except IOError as e:
         logger.error(f"IOError saving wiki cache to {cache_path}: {e.strerror} (errno: {e.errno})", exc_info=True)
@@ -2706,6 +2726,24 @@ async def delete_wiki_cache(
             language,
         )
         raise HTTPException(status_code=404, detail="Wiki cache not found")
+
+
+@app.post("/api/wiki_cache/prune")
+async def prune_wiki_cache_endpoint(
+    max_age_days: Optional[int] = Query(None, ge=0, description="Override HACKDEEPWIKI_WIKI_CACHE_MAX_AGE_DAYS (0=off)"),
+    max_bytes: Optional[int] = Query(None, ge=0, description="Override HACKDEEPWIKI_WIKI_CACHE_MAX_BYTES (0=off)"),
+    max_files: Optional[int] = Query(None, ge=0, description="Override HACKDEEPWIKI_WIKI_CACHE_MAX_FILES (0=off)"),
+):
+    """Manually run the wiki-cache eviction (Fase 9.6) and report what was
+    reclaimed. Only ever removes OLDER surplus releases -- a repo's newest
+    release is always protected. Query params override the env-configured caps
+    for this run (0 = that cap disabled); omitted = use env / default."""
+    from api.cache_eviction import prune_wiki_cache
+    try:
+        return prune_wiki_cache(max_age_days=max_age_days, max_bytes=max_bytes, max_files=max_files)
+    except Exception as e:
+        logger.error(f"wiki cache prune failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
 
 
 @app.delete("/api/vuln_cache")

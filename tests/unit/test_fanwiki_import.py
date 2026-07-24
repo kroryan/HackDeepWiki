@@ -4,6 +4,14 @@ from pathlib import Path
 
 import pytest
 
+# fanwiki_import pulls in mwparserfromhell at module load. That dep is only
+# present in the full fanwiki-capable install (and in the hackdeepwiki:ollama
+# image), not in a minimal .venv used for the rest of the suite. Without this
+# guard, `pytest` (which discovers both `test/` and `tests/` per pytest.ini)
+# aborts collection entirely on a minimal install -- one missing optional dep
+# takes down the whole run. importorskip turns that into a clean skip instead.
+pytest.importorskip("mwparserfromhell")
+
 from api import fanwiki_library
 from api.fanwiki_import import attach_images, import_dump, inspect_dump
 

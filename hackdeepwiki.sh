@@ -462,14 +462,18 @@ case "${COMMAND}" in
 
     docker image inspect hackdeepwiki:ollama >/dev/null 2>&1 ||
       die "Falta la imagen. Ejecuta './hackdeepwiki.sh setup' primero."
+    # Run the pytest suite the way pytest itself discovers it (pytest.ini's
+    # testpaths = test, tests) instead of a hardcoded file list -- a new
+    # test file added under test/ or tests/ is picked up automatically, and
+    # optional-dep tests (e.g. fanwiki, which needs mwparserfromhell) skip
+    # cleanly via importorskip instead of breaking collection. Markers in
+    # pytest.ini (unit/integration/slow/network) stay available for
+    # `python -m pytest -m unit` etc. when a narrower run is wanted.
     docker run --rm \
       --volume "${ROOT_DIR}:/workspace" \
       --workdir /workspace \
       hackdeepwiki:ollama \
-      python -m pytest -q \
-        test/test_hackdeepwiki_config.py \
-        test/test_extract_repo_name.py \
-        test/test_ollama_batch.py
+      python -m pytest -q
     info "Pruebas reproducibles superadas"
     ;;
   config)
