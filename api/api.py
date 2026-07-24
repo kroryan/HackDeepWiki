@@ -8,7 +8,7 @@ import tempfile
 import zipfile
 import logging
 import mimetypes
-from fastapi import FastAPI, HTTPException, Query, WebSocket, Depends, Request
+from fastapi import FastAPI, HTTPException, Query, WebSocket, Depends, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -26,10 +26,44 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+# Fase 3: lifespan that starts/stops the SQLite-backed job worker. Defined
+# here (before app creation) so FastAPI can take it at construction. The
+# import is local so a failure in the jobs module never blocks app import.
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def _build_lifespan(_app):
+    """Start the background job worker on startup, stop it on shutdown.
+    Wrapped so an import/start error degrades gracefully (app still serves)
+    instead of crashing the whole process."""
+    started = False
+    try:
+        from api.jobs.queue import ensure_worker, stop_worker
+        await ensure_worker()
+        started = True
+        logger.info("Job worker started (Fase 3)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Job worker failed to start (jobs will not run): {e}")
+    try:
+        yield
+    finally:
+        if started:
+            try:
+                from api.jobs.queue import stop_worker
+                stop_worker()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Job worker stop failed: {e}")
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Streaming API",
-    description="API for streaming chat completions"
+    description="API for streaming chat completions",
+    # Fase 3: start the SQLite-backed job worker on startup, stop it on
+    # shutdown. The worker is an in-process asyncio task (no external process
+    # to supervise) -- the app's lifetime is the worker's, matching the
+    # local-first, no-services constraint.
+    lifespan=_build_lifespan,
 )
 
 # Configure CORS. HackDeepWiki is a local desktop app: the bundled Next.js
@@ -258,6 +292,7 @@ from api.storage.wiki_search import index_wiki_cache, search as wiki_fts_search,
 from api.storage.wiki_shares import (
     create_share, resolve_share, list_shares, delete_share,
 )
+from api.storage import repo_key as _repo_key
 
 @app.get("/lang/config")
 async def get_lang_config():
@@ -2940,6 +2975,68 @@ async def mindmap_endpoint(
         "description": ws.description or "",
         "tree": tree,
     }
+
+
+# ---- Fase 3: jobs queue endpoints -----------------------------------------
+
+@app.post("/api/jobs")
+async def enqueue_job_endpoint(
+    kind: str = Query(..., description="Job kind (e.g. 'wiki_regenerate', 'translate')"),
+    owner: Optional[str] = Query(None),
+    repo: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    payload: dict = Body(default={}),
+):
+    """Enqueue a background job. Returns the job id; the frontend polls
+    /api/jobs/{id} or /api/wiki_cache for the result. The worker dispatches
+    by ``kind`` to whatever handler has been registered (register_handler)."""
+    from api.jobs.queue import enqueue, _HANDLERS
+    if kind not in _HANDLERS:
+        # Don't 500 -- a request for a kind nobody registered is a client
+        # error (typo, stale UI), and 400 tells the caller exactly that.
+        raise HTTPException(status_code=400, detail=f"No handler registered for job kind '{kind}'")
+    rk = _repo_key(owner, repo, repo_type)
+    job_id = enqueue(kind, rk, payload)
+    return {"job_id": job_id, "status": "queued", "kind": kind}
+
+
+@app.get("/api/jobs")
+async def list_jobs_endpoint(
+    owner: Optional[str] = Query(None),
+    repo: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filter: queued/running/done/dead/cancelled"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List jobs, optionally scoped to a repo and/or status, newest first.
+    Used by a 'job history' / 'is my regenerate done yet' UI."""
+    from api.jobs.queue import list_jobs
+    rk = _repo_key(owner, repo, repo_type) if (owner or repo or repo_type) else None
+    return {"jobs": list_jobs(repo_key_value=rk, status=status, limit=limit)}
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job_endpoint(job_id: int):
+    """Poll one job's status/result. Returns done+result_json when complete,
+    'dead'+error when dead-lettered, or running/queued while in flight."""
+    from api.jobs.queue import list_jobs
+    jobs = list_jobs(limit=500)
+    job = next((j for j in jobs if j["id"] == job_id), None)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.delete("/api/jobs/{job_id}")
+async def cancel_job_endpoint(job_id: int):
+    """Cancel a QUEUED job. Running jobs can't be safely killed mid-handler,
+    so only queued ones are cancellable (returns 409 if running/done)."""
+    from api.jobs.queue import cancel
+    cancelled = cancel(job_id)
+    if not cancelled:
+        raise HTTPException(status_code=409, detail="Job is not queued (running/done/dead) and cannot be cancelled")
+    return {"cancelled": job_id}
+
 
 @app.get("/")
 async def root():

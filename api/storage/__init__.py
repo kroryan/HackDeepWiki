@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     payload_json  TEXT,
     result_json   TEXT,
     error         TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     started_at    TEXT,
     finished_at   TEXT
