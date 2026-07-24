@@ -581,6 +581,7 @@ Based ONLY on the content of the \`[RELEVANT_PAGES]\` and what can be observed i
 5.  **Citations:** Cite the specific crawled page path(s) each claim is drawn from, e.g. \`Sources: [path/to/page.md]()\`. Cite as many of the provided pages as are actually relevant -- do not pad citations to hit an arbitrary count.
 6.  **Accuracy:** Only state what's actually evidenced in the provided pages. If something can't be determined from crawled HTML/Markdown alone (e.g. backend logic), say so rather than inventing it.
 7.  **Conclusion:** End with a brief summary if appropriate for "${page.title}".
+8.  **Depth and length:** Be thorough and extensive, NOT terse. Aim for a rich, detailed page that fully explains this technical aspect of the site -- cover observable technology signals, structural patterns, and navigation in real depth with concrete examples drawn from the crawled pages. A longer, well-structured page is expected and desired.
 ${introStructureBlock}${relatedPagesBlock}${pagePriorityNote}
 IMPORTANT: Generate the content in ${pageLanguageLine} language.` : `${langInstructionTop}
 You are an expert wiki writer creating a content wiki about a website's subject matter (not its technical implementation).
@@ -612,6 +613,7 @@ Based ONLY on the content of the \`[RELEVANT_PAGES]\`:
 5.  **Citations:** Cite the specific crawled page path(s) each claim is drawn from, e.g. \`Sources: [path/to/page.md]()\`. Cite as many of the provided pages as are actually relevant -- do not pad citations to hit an arbitrary count.
 6.  **Accuracy:** Do not invent facts beyond what the source pages state. Do NOT analyze the site's own technical implementation (no HTML/CSS/framework talk) -- write about the subject matter itself.
 7.  **Conclusion:** End with a brief summary if appropriate for "${page.title}".
+8.  **Depth and length:** Be thorough and extensive, NOT terse. Aim for a rich, explanatory page that fully covers the topic as the site itself presents it -- develop the subject with concrete detail, examples, and context drawn from the source pages, not a thin summary. A longer, well-structured page is expected and desired.
 ${introStructureBlock}${relatedPagesBlock}${pagePriorityNote}
 IMPORTANT: Generate the content in ${pageLanguageLine} language.`) : (isUserFocusedView ? `${langInstructionTop}
 You are an expert technical writer creating END-USER documentation for a software product.
@@ -660,6 +662,7 @@ Remember:
 - Ground every instruction in the provided files -- never invent a flag, setting, or behavior.
 - Write for someone using the software, not someone reading or modifying its source code.
 - Structure the document as a practical, actionable guide.
+- Be thorough and explanatory, NOT terse: give enough context, rationale, concrete examples, and worked scenarios that a non-technical user can fully understand and confidently use the topic. Anticipate the questions a user would actually have and answer them. A longer, well-explained page is expected and desired here.
 ` : `${langInstructionTop}
 You are an expert technical writer and software architect.
 Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about a specific feature, system, or module within a given software project.
@@ -780,6 +783,7 @@ Remember:
 - Ground every claim in the provided source files.
 - Prioritize accuracy and direct representation of the code's functionality and structure.
 - Structure the document logically for easy understanding by other developers.
+- Be thorough and extensive, NOT terse: this is a developer-facing technical wiki, so aim for a rich, deeply detailed page that fully explains how the topic actually works -- not just a high-level summary that it exists. Go into real code-level depth: actual key functions/classes/signatures, control flow, data structures, request/response shapes, error-handling paths, edge cases, configuration knobs, and how the pieces interact, all drawn from the provided source files. A developer reading this should come away understanding the implementation well enough to work on it, not merely aware that it exists. Prefer concrete, specific technical detail over brevity; a longer, well-structured page is expected and desired here.
 `);
 
         // Prepare request body
@@ -1114,8 +1118,8 @@ Each section should contain relevant pages.`)
 - Troubleshooting & FAQ (common problems, error messages, and how to resolve them)
 
 Each section should contain relevant pages. Do NOT include sections about system architecture, source code structure, internal APIs, or how the software is implemented -- this wiki is for people USING the software, not developing it.`
-            : `Create a structured wiki with the following main sections:
-- Overview (general information about the project)
+            : `Create a structured wiki whose sections reflect THIS repository's actual domain and subject matter -- not generic boilerplate. The list below is a starting point to adapt, not a fixed checklist: keep the sections that apply, RENAME them to fit the repo's real subject (e.g. for a translation project, prefer sections like "Servicios de Traducción", "Modelos de Lenguaje", "Glosarios" over a generic "Core Features"), and drop or replace sections that don't apply to this repo.
+- Overview: a DEDICATED FIRST section holding the project's central-topic page(s) -- what the project IS, its purpose, scope, and the one thing it primarily does. This is the most important section and MUST come first.
 - System Architecture (how the system is designed)
 - Core Features (key functionality)
 - Data Management/Flow: If applicable, how data is stored, processed, accessed, and managed (e.g., database schema, data pipelines, state management).
@@ -1125,7 +1129,7 @@ Each section should contain relevant pages. Do NOT include sections about system
 - Deployment/Infrastructure (how to deploy, what's the infrastructure like)
 - Extensibility and Customization: If the project architecture supports it, explain how to extend or customize its functionality (e.g., plugins, theming, custom modules, hooks).
 
-Each section should contain relevant pages. For example, the "Frontend Components" section might include pages for "Home Page", "Repository Wiki Page", "Ask Component", etc.`);
+Each section should contain relevant pages. For example, the "Frontend Components" section might include pages for "Home Page", "Repository Wiki Page", "Ask Component", etc. Name EVERY section and page in the target wiki language. NEVER create an "Other", "Misc", "Miscellaneous", "Otros", "Varios", or any catch-all/uncategorized section -- every page MUST belong to a specific, meaningfully-named section that reflects what its pages are actually about; if a page doesn't fit an existing section, create a new specific section for it rather than dumping it into a generic bucket.`);
 
       const relevantFilesNote = isWebsite
         ? `The relevant_files should be actual crawled page file paths (from the file tree above) that would be used to generate that page. List at most ${MAX_RELEVANT_FILES_PER_PAGE} pages -- pick the most representative ones rather than every match`
@@ -1262,7 +1266,9 @@ IMPORTANT:
 1. Create exactly ${pageCount} pages that make a ${isComprehensiveView ? 'comprehensive' : 'concise'} wiki for this ${wikiForNoun}. Do not return more or fewer than ${pageCount} <page> elements.
 2. ${pageFocusNote}
 3. ${relevantFilesNote}
-4. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters`
+4. CLASSIFICATION IS MANDATORY: NEVER create an "Other", "Misc", "Miscellaneous", "Otros", "Varios", or any catch-all/uncategorized section. EVERY page MUST belong to a specific, meaningfully-named section that reflects what its pages are actually about. If a page does not fit an existing section, CREATE A NEW specific section for it -- never leave a page unclassified and never dump pages into a generic bucket.
+5. The FIRST section MUST be a dedicated Overview section (titled in the target wiki language, e.g. "Visión General" / "Overview" / "Introducción" / "Vue d'ensemble") holding the page(s) that describe the ${wikiForNoun}'s central topic -- what it is and its primary purpose. Adapt the remaining sections to the ${wikiForNoun}'s actual domain (not generic boilerplate), and write ALL section and page titles in the target wiki language.
+6. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters`
         }]
       };
 
@@ -3107,108 +3113,85 @@ IMPORTANT:
                 rootSections: cachedData.wiki_structure.rootSections || []
               };
 
-              // If sections or rootSections are missing, create intelligent ones based on page titles
+              // If sections or rootSections are missing, build them from the
+              // page titles themselves. This runs for legacy/imported wikis
+              // whose cached structure predates sections. The OLD behavior here
+              // matched page titles against a hardcoded ENGLISH keyword list and
+              // dumped anything that didn't match (Spanish "Visión General",
+              // "Servicios de Traducción", etc.) into a generic "Other" bucket.
+              // That violated two requirements: "Other" must never be an option,
+              // and the central/overview topic must get its own properly
+              // labeled section. The replacement is fully language-agnostic:
+              // it promotes the first page (conventionally the overview/
+              // central topic in the planner's output) to its own leading
+              // section named after the page itself, then groups every
+              // remaining page by the leading token of its title. Every page
+              // ends up in a specific, meaningfully-named, language-native
+              // section -- never a catch-all.
               if (!cachedStructure.sections.length || !cachedStructure.rootSections.length) {
                 const pages = cachedStructure.pages;
                 const sections: WikiSection[] = [];
                 const rootSections: string[] = [];
 
-                // Group pages by common prefixes or categories
-                const pageClusters = new Map<string, WikiPage[]>();
+                // Leading token of a title, language-neutral: the text before
+                // the first delimiter (: — – - | /), or the first word when
+                // there is no delimiter. Works for "API: Endpoints",
+                // "Servicios de Traducción", "Visión General", etc.
+                const leadingToken = (title: string): string => {
+                  const t = (title || '').trim();
+                  if (!t) return t;
+                  const idx = t.search(/[:—–\-|/]/);
+                  if (idx > 0) return t.slice(0, idx).trim();
+                  return t.split(/\s+/).find(w => w.length > 0) || t;
+                };
 
-                // Define common categories that might appear in page titles
-                const categories = [
-                  { id: 'overview', title: 'Overview', keywords: ['overview', 'introduction', 'about'] },
-                  { id: 'architecture', title: 'Architecture', keywords: ['architecture', 'structure', 'design', 'system'] },
-                  { id: 'features', title: 'Core Features', keywords: ['feature', 'functionality', 'core'] },
-                  { id: 'components', title: 'Components', keywords: ['component', 'module', 'widget'] },
-                  { id: 'api', title: 'API', keywords: ['api', 'endpoint', 'service', 'server'] },
-                  { id: 'data', title: 'Data Flow', keywords: ['data', 'flow', 'pipeline', 'storage'] },
-                  { id: 'models', title: 'Models', keywords: ['model', 'ai', 'ml', 'integration'] },
-                  { id: 'ui', title: 'User Interface', keywords: ['ui', 'interface', 'frontend', 'page'] },
-                  { id: 'setup', title: 'Setup & Configuration', keywords: ['setup', 'config', 'installation', 'deploy'] }
-                ];
+                if (pages.length > 0) {
+                  // Promote the first page to a dedicated leading section. In
+                  // the planner's output the first page is the central/overview
+                  // topic; label the section with the page's OWN native title so
+                  // the central topic is properly named (e.g. "Visión General")
+                  // rather than hidden inside a generic bucket.
+                  let nextId = 0;
+                  const overviewPage = pages[0] as WikiPage;
+                  const overviewSectionId = `section-${nextId++}`;
+                  sections.push({
+                    id: overviewSectionId,
+                    title: overviewPage.title,
+                    pages: [overviewPage.id]
+                  });
+                  rootSections.push(overviewSectionId);
+                  (overviewPage as WikiPage & { parentId?: string }).parentId = overviewSectionId;
 
-                // Initialize clusters with empty arrays
-                categories.forEach(category => {
-                  pageClusters.set(category.id, []);
-                });
-
-                // Add an "Other" category for pages that don't match any category
-                pageClusters.set('other', []);
-
-                // Assign pages to categories based on title keywords
-                pages.forEach((page: WikiPage) => {
-                  const title = page.title.toLowerCase();
-                  let assigned = false;
-
-                  // Try to find a matching category
-                  for (const category of categories) {
-                    if (category.keywords.some(keyword => title.includes(keyword))) {
-                      pageClusters.get(category.id)?.push(page);
-                      assigned = true;
-                      break;
+                  // Group the remaining pages by leading token (case-insensitive
+                  // key, display label from the first page in the group). A page
+                  // whose leading token is unique simply becomes its own
+                  // single-page section named after itself -- still a specific,
+                  // meaningful label, never "Other".
+                  const groups = new Map<string, { token: string; pages: WikiPage[] }>();
+                  for (let i = 1; i < pages.length; i++) {
+                    const page = pages[i] as WikiPage;
+                    const token = leadingToken(page.title);
+                    const key = token.toLowerCase() || page.id;
+                    const existing = groups.get(key);
+                    if (existing) {
+                      existing.pages.push(page);
+                    } else {
+                      groups.set(key, { token, pages: [page] });
                     }
                   }
 
-                  // If no category matched, put in "Other"
-                  if (!assigned) {
-                    pageClusters.get('other')?.push(page);
-                  }
-                });
-
-                // Create sections for non-empty categories
-                for (const [categoryId, categoryPages] of pageClusters.entries()) {
-                  if (categoryPages.length > 0) {
-                    const category = categories.find(c => c.id === categoryId) ||
-                                    { id: categoryId, title: categoryId === 'other' ? 'Other' : categoryId.charAt(0).toUpperCase() + categoryId.slice(1) };
-
-                    const sectionId = `section-${categoryId}`;
+                  for (const { token, pages: groupPages } of groups.values()) {
+                    const sectionId = `section-${nextId++}`;
+                    const label = token || groupPages[0].title;
                     sections.push({
                       id: sectionId,
-                      title: category.title,
-                      pages: categoryPages.map((p: WikiPage) => p.id)
+                      title: label.charAt(0).toUpperCase() + label.slice(1),
+                      pages: groupPages.map(p => p.id)
                     });
                     rootSections.push(sectionId);
-
-                    // Update page parentId
-                    categoryPages.forEach((page: WikiPage) => {
-                      page.parentId = sectionId;
+                    groupPages.forEach(p => {
+                      (p as WikiPage & { parentId?: string }).parentId = sectionId;
                     });
-                  }
-                }
-
-                // If we still have no sections (unlikely), fall back to importance-based grouping
-                if (sections.length === 0) {
-                  const highImportancePages = pages.filter((p: WikiPage) => p.importance === 'high').map((p: WikiPage) => p.id);
-                  const mediumImportancePages = pages.filter((p: WikiPage) => p.importance === 'medium').map((p: WikiPage) => p.id);
-                  const lowImportancePages = pages.filter((p: WikiPage) => p.importance === 'low').map((p: WikiPage) => p.id);
-
-                  if (highImportancePages.length > 0) {
-                    sections.push({
-                      id: 'section-high',
-                      title: 'Core Components',
-                      pages: highImportancePages
-                    });
-                    rootSections.push('section-high');
-                  }
-
-                  if (mediumImportancePages.length > 0) {
-                    sections.push({
-                      id: 'section-medium',
-                      title: 'Key Features',
-                      pages: mediumImportancePages
-                    });
-                    rootSections.push('section-medium');
-                  }
-
-                  if (lowImportancePages.length > 0) {
-                    sections.push({
-                      id: 'section-low',
-                      title: 'Additional Information',
-                      pages: lowImportancePages
-                    });
-                    rootSections.push('section-low');
                   }
                 }
 
