@@ -3032,6 +3032,111 @@ async def cancel_job_endpoint(job_id: int):
     return {"cancelled": job_id}
 
 
+# ---- Fase 4/5: accounting + pricing endpoints -----------------------------
+
+@app.get("/api/accounting")
+async def accounting_endpoint(since_days: Optional[int] = Query(None, ge=1, le=365)):
+    """Aggregate token usage + estimated cost, optionally within the last
+    N days. Breaks down by provider. Ollama (local) records $0 -- Ollama
+    Cloud is subscription/GPU-time based, not per-token, so per-token cost
+    isn't applicable; usage is still recorded for visibility."""
+    from api.storage import accounting
+    try:
+        return accounting.summary(since_days=since_days)
+    except Exception as e:
+        logger.error(f"accounting summary failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+
+
+@app.get("/api/pricing")
+async def list_pricing_endpoint():
+    """List the model_pricing table (editable at runtime via PUT). These are
+    USD per 1M tokens (input, output); a model not in the table costs $0
+    (usage still recorded). Seeded once; user edits persist across restarts."""
+    from api.storage import accounting
+    try:
+        return {"pricing": accounting.list_pricing()}
+    except Exception as e:
+        logger.error(f"list pricing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+
+
+@app.put("/api/pricing")
+async def set_pricing_endpoint(
+    model_pattern: str = Query(..., description="Substring matched against model name, e.g. 'gpt-4o'"),
+    input_per_m: Optional[float] = Query(None, description="USD per 1M input tokens (null=unknown->$0)"),
+    output_per_m: Optional[float] = Query(None, description="USD per 1M output tokens (null=unknown->$0)"),
+):
+    """Add or update a pricing row at runtime -- how prices stay current
+    without an AppImage rebuild. ``model_pattern`` is substring-matched
+    (lowercased), so 'gpt-4o' covers every gpt-4o-* variant."""
+    from api.storage import accounting
+    try:
+        accounting.set_price(model_pattern, input_per_m, output_per_m)
+        return {"set": model_pattern, "input_per_m": input_per_m, "output_per_m": output_per_m}
+    except Exception as e:
+        logger.error(f"set pricing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+
+
+@app.delete("/api/pricing")
+async def delete_pricing_endpoint(model_pattern: str = Query(...)):
+    """Remove a pricing row (the model then costs $0 going forward)."""
+    from api.storage import accounting
+    try:
+        deleted = accounting.delete_price(model_pattern)
+    except Exception as e:
+        logger.error(f"delete pricing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Pricing row not found")
+    return {"deleted": model_pattern}
+
+
+@app.get("/api/profiles")
+async def list_profiles_endpoint():
+    """List configured provider profiles (names + provider + endpoint only --
+    never returns API keys, even decrypted). For a 'manage providers' UI."""
+    from api.storage import provider_profiles
+    try:
+        return {"profiles": provider_profiles.list_all()}
+    except Exception as e:
+        logger.error(f"list profiles failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+
+
+@app.post("/api/profiles")
+async def upsert_profile_endpoint(
+    name: str = Query(...),
+    provider: str = Query(...),
+    api_key: Optional[str] = Query(None, description="Plaintext key; encrypted at rest if HACKDEEPWIKI_ENC_KEY is set"),
+    api_endpoint: Optional[str] = Query(None),
+):
+    """Create or update a provider profile. The api_key is encrypted at rest
+    via api.security (AES-256-GCM when HACKDEEPWIKI_ENC_KEY is set; plaintext
+    passthrough in the zero-config local-first default)."""
+    from api.storage import provider_profiles
+    try:
+        provider_profiles.upsert(name, provider, api_key=api_key, api_endpoint=api_endpoint)
+        return {"saved": name, "provider": provider, "encrypted_at_rest": bool(os.environ.get("HACKDEEPWIKI_ENC_KEY"))}
+    except Exception as e:
+        logger.error(f"upsert profile failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+
+
+@app.delete("/api/profiles/{name}")
+async def delete_profile_endpoint(name: str):
+    from api.storage import provider_profiles
+    try:
+        deleted = provider_profiles.delete(name)
+    except Exception as e:
+        logger.error(f"delete profile failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(str(e)))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"deleted": name}
+
+
 @app.get("/")
 async def root():
     """Root endpoint to check if the API is running and list available endpoints dynamically."""
