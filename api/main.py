@@ -84,6 +84,12 @@ if __name__ == "__main__":
     # Get port from environment variable or use default
     port = int(os.environ.get("PORT", 8001))
 
+    # Unambiguous backend-port export: the plain PORT env is overloaded (the
+    # launcher reuses it for the frontend in the Node child's env). The code
+    # agent uses this to point opencode's MCP client back at this API
+    # (api/code_agent/config.py::backend_port).
+    os.environ["HACKDEEPWIKI_BACKEND_PORT"] = str(port)
+
     # Import the app here to ensure environment variables are set first
     from api.api import app
 

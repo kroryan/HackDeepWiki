@@ -15,6 +15,12 @@ import ModelSelectionModal from './ModelSelectionModal';
 import { createChatWebSocket, closeWebSocket, ChatCompletionRequest } from '@/utils/websocketClient';
 import { getSavedApiCredentials } from '@/utils/apiCredentials';
 import { StreamParser, ProcessEvent } from '@/utils/streamParser';
+import {
+  ensureCodeSession,
+  createCodeChatWebSocket,
+  CodeSessionError,
+  CodeSessionInfo,
+} from '@/utils/codeAgentClient';
 
 interface Model {
   id: string;
@@ -52,7 +58,16 @@ interface ChatSession {
   currentStageIndex: number;
   researchIteration: number;
   researchComplete: boolean;
+  // ⚙ Code Editing mode: whether this chat drives the embedded opencode
+  // agent, and the opencode session id so reopening the chat resumes the
+  // same agent session (opencode persists sessions on disk).
+  codeMode?: boolean;
+  codeSessionId?: string;
 }
+
+/** Repo types that have real code on disk to edit. Website/fanwiki/zim
+ * sources have nothing for a coding agent to work on. */
+const CODE_MODE_REPO_TYPES = ['github', 'gitlab', 'bitbucket', 'local'];
 
 interface AskProps {
   repoInfo: RepoInfo;
@@ -67,6 +82,16 @@ interface AskProps {
   // the whole repo/archive when it's set.
   currentPageId?: string;
   onRef?: (ref: { clearConversation: () => void }) => void;
+  // ⚙ Code Editing mode (controlled by ChatWidget, which owns the split
+  // layout): messages go to the embedded opencode agent instead of the wiki
+  // RAG chat. onCodeSession reports the active agent session upward so the
+  // right-hand activity panel can subscribe to its events.
+  codeMode?: boolean;
+  onCodeModeChange?: (enabled: boolean) => void;
+  onCodeSession?: (session: CodeSessionInfo | null) => void;
+  // The wiki release the user has OPEN (version anchoring: the agent must
+  // not edit code based on a wiki describing another version).
+  wikiVersion?: number;
 }
 
 // Maximum deep-research iterations before we force a final synthesis round.
@@ -107,7 +132,11 @@ const Ask: React.FC<AskProps> = ({
   customModel = '',
   language = 'en',
   currentPageId,
-  onRef
+  onRef,
+  codeMode = false,
+  onCodeModeChange,
+  onCodeSession,
+  wikiVersion,
 }) => {
   const [question, setQuestion] = useState('');
   const [response, setResponse] = useState('');
@@ -118,6 +147,10 @@ const Ask: React.FC<AskProps> = ({
   // LLM can answer questions about vulnerabilities directly. Off by default
   // -- most questions aren't about security, and the report can be sizable.
   const [includeSecurityContext, setIncludeSecurityContext] = useState(false);
+  // ⚙ Code Editing mode: opencode session id for the ACTIVE chat session
+  // (persisted per ChatSession so reopening resumes the same agent session).
+  const [codeSessionId, setCodeSessionId] = useState<string | undefined>(undefined);
+  const codeModeAvailable = CODE_MODE_REPO_TYPES.includes(repoInfo.type) && Boolean(onCodeModeChange);
   // Behind-the-scenes events (tool calls, reasoning tokens) for the CURRENT
   // in-flight/most recent answer, extracted from the stream by StreamParser
   // (see src/utils/streamParser.ts) -- shown in a collapsible panel rather
@@ -213,6 +246,8 @@ const Ask: React.FC<AskProps> = ({
     setCurrentStageIndex(session.currentStageIndex || 0);
     setResearchIteration(session.researchIteration || 0);
     setResearchComplete(Boolean(session.researchComplete));
+    setCodeSessionId(session.codeSessionId);
+    onCodeModeChange?.(Boolean(session.codeMode) && CODE_MODE_REPO_TYPES.includes(repoInfo.type));
     const timer = window.setTimeout(() => {
       loadedSessionIdRef.current = activeSessionId;
     }, 0);
@@ -238,6 +273,8 @@ const Ask: React.FC<AskProps> = ({
             currentStageIndex,
             researchIteration,
             researchComplete,
+            codeMode,
+            codeSessionId,
           }
         : session
     ));
@@ -250,6 +287,8 @@ const Ask: React.FC<AskProps> = ({
     currentStageIndex,
     researchIteration,
     researchComplete,
+    codeMode,
+    codeSessionId,
   ]);
 
   useEffect(() => {
@@ -347,6 +386,11 @@ const Ask: React.FC<AskProps> = ({
     setResearchComplete(false);
     setResearchStages([]);
     setCurrentStageIndex(0);
+    // A cleared conversation starts a fresh agent session too -- the old
+    // opencode session (and its accumulated context) belongs to the history
+    // that was just discarded.
+    setCodeSessionId(undefined);
+    onCodeSession?.(null);
     if (inputRef.current) {
       inputRef.current.focus();
     }
@@ -802,8 +846,114 @@ const Ask: React.FC<AskProps> = ({
     handleConfirmAsk();
   };
 
+  // ⚙ Code Editing mode: route the message to the embedded opencode agent.
+  // Reuses the normal chat's wire format (plain answer text + sentinel-framed
+  // process events), so streaming/rendering/history behave identically --
+  // only the transport and endpoints differ. No HTTP fallback here: on error
+  // the user just resends (which also transparently respawns a crashed agent
+  // via the idempotent /api/code/session).
+  const handleCodeModeAsk = async () => {
+    setIsLoading(true);
+    setResponse('');
+    setProcessEvents([]);
+
+    const content = question;
+    const initialMessage: Message = { role: 'user', content };
+    const newHistory: Message[] = [...conversationHistory, initialMessage];
+    setConversationHistory(newHistory);
+    setQuestion('');
+    setSessions(previous => previous.map(session => {
+      if (session.id !== activeSessionId || session.messages.length > 0) {
+        return session;
+      }
+      return {
+        ...session,
+        title: content.trim().slice(0, 48) || session.title,
+        updatedAt: Date.now(),
+      };
+    }));
+
+    try {
+      const modelName = isCustomSelectedModel ? customSelectedModel : selectedModel;
+      const credentials = getSavedApiCredentials(selectedProvider);
+      const sessionInfo = await ensureCodeSession({
+        repo_url: getRepoUrl(repoInfo),
+        type: repoInfo.type,
+        owner: repoInfo.owner,
+        repo: repoInfo.repo,
+        provider: selectedProvider,
+        model: modelName,
+        language,
+        wiki_version: wikiVersion,
+        include_security_context: includeSecurityContext,
+        existing_session_id: codeSessionId,
+        ...credentials,
+      });
+      if (sessionInfo.session_id !== codeSessionId) {
+        setCodeSessionId(sessionInfo.session_id);
+      }
+      onCodeSession?.(sessionInfo);
+      if (sessionInfo.version_warning) {
+        setProcessEvents(prev => [...prev, {
+          kind: 'tool',
+          payload: { label: messages.ask?.codeVersionCheck || 'Version check', query: sessionInfo.version_warning },
+        }]);
+      }
+
+      closeWebSocket(webSocketRef.current);
+      let fullResponse = '';
+      const streamParser = new StreamParser();
+      webSocketRef.current = await createCodeChatWebSocket(
+        {
+          repo_key: sessionInfo.repo_key,
+          session_id: sessionInfo.session_id,
+          content,
+          provider: selectedProvider,
+          model: modelName,
+          ...credentials,
+        },
+        (message: string) => {
+          const { text, events } = streamParser.feed(message);
+          if (events.length > 0) {
+            setProcessEvents(prev => [...prev, ...events]);
+          }
+          fullResponse += text;
+          setResponse(fullResponse);
+        },
+        (error: Event) => {
+          console.error('Code chat WebSocket error:', error);
+          setResponse(prev => prev + `\n\n${messages.ask?.codeAgentConnectionError || 'Error: lost connection to the code agent. Send the message again to retry.'}`);
+          setIsLoading(false);
+        },
+        () => {
+          if (fullResponse) {
+            setConversationHistory([
+              ...newHistory,
+              { role: 'assistant', content: fullResponse },
+            ]);
+            setResponse('');
+            setProcessEvents([]);
+          }
+          setIsLoading(false);
+        }
+      );
+    } catch (error) {
+      console.error('Error starting code session:', error);
+      const detail = error instanceof CodeSessionError
+        ? (error.code === 'repo_not_cloned'
+            ? (messages.ask?.codeRepoNotCloned || 'The repository has no local clone yet. Generate the wiki first so the repo is cloned locally.')
+            : error.message)
+        : String(error);
+      setResponse(prev => prev + `\n\n**${messages.ask?.codeAgentError || 'Code agent error'}:** ${detail}`);
+      setIsLoading(false);
+    }
+  };
+
   // Handle confirm and send request
   const handleConfirmAsk = async () => {
+    if (codeMode) {
+      return handleCodeModeAsk();
+    }
     setIsLoading(true);
     setResponse('');
     setProcessEvents([]);
@@ -1068,12 +1218,13 @@ const Ask: React.FC<AskProps> = ({
           <div className="flex items-center mt-2 justify-between flex-wrap gap-y-2">
             <div className="flex items-center gap-4">
               <div className="group relative">
-                <label className="flex items-center cursor-pointer">
+                <label className={`flex items-center ${codeMode ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
                   <span className="text-xs text-[var(--muted)] mr-2">Deep Research</span>
                   <div className="relative">
                     <input
                       type="checkbox"
                       checked={deepResearch}
+                      disabled={codeMode}
                       onChange={() => setDeepResearch(!deepResearch)}
                       className="sr-only"
                     />
@@ -1122,6 +1273,38 @@ const Ask: React.FC<AskProps> = ({
                   </div>
                 </div>
               </div>
+
+              {codeModeAvailable && (
+                <div className="group relative">
+                  <label className="flex items-center cursor-pointer">
+                    <span className="text-xs text-[var(--muted)] mr-2">⚙ {messages.ask?.codeMode || 'Code editing'}</span>
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={codeMode}
+                        onChange={() => {
+                          const next = !codeMode;
+                          if (next) setDeepResearch(false);
+                          if (!next) onCodeSession?.(null);
+                          onCodeModeChange?.(next);
+                        }}
+                        className="sr-only"
+                      />
+                      <div className={`w-10 h-5 rounded-full transition-colors ${codeMode ? 'bg-[var(--accent-primary)]' : 'bg-[var(--muted)]/30'}`}></div>
+                      <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${codeMode ? 'translate-x-5' : ''}`}></div>
+                    </div>
+                  </label>
+                  <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-[var(--card-bg)] text-[var(--foreground)] border border-[var(--border-color)] text-xs rounded p-2 w-72 z-10 shadow-lg">
+                    <div className="relative">
+                      <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[var(--card-bg)]"></div>
+                      <p>
+                        {messages.ask?.codeModeTooltip ||
+                          'A coding agent (opencode) works directly on the local checkout of this repository: it can read, edit, run commands, and build. Its edits, diffs and commands appear live in the right-hand panel while it answers you here. Uses the same model selected for the chat.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             {deepResearch && (
               <div className="text-xs text-[var(--accent-primary)]">

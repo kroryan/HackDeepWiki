@@ -100,7 +100,13 @@
     "continueResearch": "調査を続ける",
     "viewPlan": "計画を見る",
     "viewUpdates": "更新を見る",
-    "viewConclusion": "結論を見る"
+    "viewConclusion": "結論を見る",
+    "codeMode": "コード編集",
+    "codeModeTooltip": "コーディングエージェント（opencode）がこのリポジトリのローカルチェックアウトを直接操作します。読み取り、編集、コマンド実行、ビルドが可能です。編集内容・差分・コマンドは右側のパネルにリアルタイムで表示され、ここで応答します。チャットで選択したモデルを使用します。",
+    "codeVersionCheck": "バージョン確認",
+    "codeAgentError": "コードエージェントエラー",
+    "codeAgentConnectionError": "エラー：コードエージェントとの接続が切断されました。もう一度メッセージを送信してください。",
+    "codeRepoNotCloned": "リポジトリのローカルクローンがまだありません。先にウィキを生成してリポジトリをローカルにクローンしてください。"
   },
   "repoPage": {
     "refreshWiki": "Wikiを更新",
@@ -174,5 +180,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "アクティビティ",
+    "diffsTab": "差分",
+    "abort": "停止",
+    "abortTooltip": "エージェントの現在の操作を停止",
+    "refresh": "更新",
+    "filesChanged": "個のファイルが変更されました",
+    "noChanges": "このセッションにはまだ変更がありません。",
+    "noPatchBody": "内容が変更されました（テキスト差分はありません）。",
+    "noActivity": "このセッションにはまだエージェントのアクティビティがありません。",
+    "waitingForSession": "チャットでメッセージを送信するとコードエージェントが起動します。編集・差分・コマンドがここにリアルタイムで表示されます。",
+    "localEditWarning": "ローカルディレクトリを直接編集しています",
+    "multiSession": "このリポジトリで {n} 件のセッションがアクティブ",
+    "crashed": "エージェントプロセスが終了しました。チャットでメッセージを送信して再起動してください。",
+    "update": "エージェントを更新",
+    "updating": "更新中…",
+    "updated": "更新済み:",
+    "updateTooltip": "最新のopencodeリリースをアプリのデータフォルダにダウンロードします（アプリ更新後も保持）"
   }
 }

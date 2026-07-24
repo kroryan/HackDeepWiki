@@ -91,6 +91,10 @@ class WikiCacheData(BaseModel):
     # update never overwrites the previous wiki. Legacy caches without a version
     # are treated as v0.
     version: Optional[int] = None
+    # HEAD commit of the local clone at save time. Lets Code Editing mode
+    # verify the open wiki release actually describes the code on disk before
+    # the agent edits it (api/code_agent/context.py). Legacy caches: None.
+    repo_commit: Optional[str] = None
 
 
 class WikiCacheRequest(BaseModel):

@@ -140,7 +140,13 @@
     "continueResearch": "Continue Research",
     "viewPlan": "View Plan",
     "viewUpdates": "View Updates",
-    "viewConclusion": "View Conclusion"
+    "viewConclusion": "View Conclusion",
+    "codeMode": "Code editing",
+    "codeModeTooltip": "A coding agent (opencode) works directly on the local checkout of this repository: it can read, edit, run commands and build. Its edits, diffs and commands appear live in the right-hand panel while it answers you here. Uses the same model selected for the chat.",
+    "codeVersionCheck": "Version check",
+    "codeAgentError": "Code agent error",
+    "codeAgentConnectionError": "Error: lost connection to the code agent. Send the message again to retry.",
+    "codeRepoNotCloned": "The repository has no local clone yet. Generate the wiki first so the repo is cloned locally."
   },
   "repoPage": {
     "refreshWiki": "Refresh Wiki",
@@ -218,5 +224,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "Activity",
+    "diffsTab": "Diffs",
+    "abort": "Stop",
+    "abortTooltip": "Stop the agent's current operation",
+    "refresh": "Refresh",
+    "filesChanged": "file(s) changed",
+    "noChanges": "No changes in this session yet.",
+    "noPatchBody": "Content changed (no textual diff available).",
+    "noActivity": "No agent activity yet in this session.",
+    "waitingForSession": "Send a message in the chat to start the code agent. Its edits, diffs and commands will appear here live.",
+    "localEditWarning": "Editing your local directory in place",
+    "multiSession": "{n} active sessions on this repo",
+    "crashed": "The agent process exited. Send a message in the chat to restart it.",
+    "update": "Update agent",
+    "updating": "Updating…",
+    "updated": "Updated to",
+    "updateTooltip": "Download the latest opencode release into the app data folder (survives app updates)"
   }
 }

@@ -20,6 +20,7 @@ _REQUIRED_IMPORTS = [
     "boto3", "botocore", "requests", "jinja2", "aiohttp", "langid", "numpy",
     "openai", "ollama", "faiss", "libzim",
     "mwparserfromhell", "playwright", "bs4", "markdownify", "neo4j",
+    "httpx",  # api/code_agent (embedded opencode agent)
 ]
 _missing = [m for m in _REQUIRED_IMPORTS if importlib.util.find_spec(m) is None]
 if _missing:
@@ -57,6 +58,16 @@ if os.path.exists(node_source_path):
     datas.append((node_source_path, 'bin'))
 else:
     print(f"Warning: Node.js executable not found at {node_source_path}. Make sure it is downloaded before running PyInstaller.")
+
+# Package the opencode coding agent (Code Editing mode) if present. Warning,
+# not error: the app lazy-downloads it into DATABASE/opencode/bin at runtime
+# (api/code_agent/binary.py), so dev builds work without prebundling.
+opencode_bin_name = 'opencode.exe' if is_win else 'opencode'
+opencode_source_path = os.path.abspath(os.path.join('bin', opencode_bin_name))
+if os.path.exists(opencode_source_path):
+    datas.append((opencode_source_path, 'bin'))
+else:
+    print(f"Warning: opencode binary not found at {opencode_source_path}; Code Editing mode will lazy-download it at runtime.")
 
 # Package the tiktoken cache if present
 if os.path.exists(tiktoken_cache_source):

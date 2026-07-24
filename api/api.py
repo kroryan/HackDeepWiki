@@ -62,6 +62,15 @@ async def _build_lifespan(_app):
                 stop_worker()
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Job worker stop failed: {e}")
+        # Code Editing mode: kill any opencode child processes so closing the
+        # app never leaves orphaned agents holding repo locks/ports. (Also
+        # registered via atexit in the manager -- uvicorn runs in a thread in
+        # the frozen build, where the lifespan hook may not fire.)
+        try:
+            from api.code_agent.manager import manager as _code_agent_manager
+            _code_agent_manager.shutdown_all_sync()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"code agent shutdown failed: {e}")
 
 
 # Initialize FastAPI app
@@ -614,6 +623,18 @@ app.add_api_route("/chat/completions/stream", chat_completions_stream, methods=[
 async def _ws_chat(websocket: WebSocket):
     await handle_websocket_chat(websocket)
 
+# Code Editing mode (embedded opencode agent): REST + WS surface lives in its
+# own router -- deliberately NOT a flag on /ws/chat, which would drag the RAG
+# pipeline into code sessions and have to be hand-mirrored into simple_chat.
+# The router import is guarded so a broken/missing code_agent package (or a
+# missing httpx in an exotic install) degrades to "feature absent", never
+# "app won't start".
+try:
+    from api.code_agent.routes import router as code_agent_router
+    app.include_router(code_agent_router)
+except Exception as e:  # noqa: BLE001
+    logger.warning(f"Code Editing mode unavailable (code_agent router not loaded): {e}")
+
 # --- Wiki Cache Helper Functions ---
 
 # Wiki-cache path layout lives in api.wiki_cache_paths (single source of truth,
@@ -1103,6 +1124,22 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
         version=next_version,
     )
     logger.info(f"Attempting to save wiki cache as release v{next_version}. Path: {cache_path}")
+
+    # Record which commit of the clone this wiki release describes, so Code
+    # Editing mode can later verify wiki<->code version consistency before the
+    # agent edits files (api/code_agent/context.py). Best-effort: non-git
+    # sources (website/fanwiki/zim) or a missing clone simply store None.
+    repo_commit = None
+    try:
+        from api.code_agent.manager import repo_head_commit, repo_key_for
+        if data.repo.type == "local" and data.repo.localPath:
+            repo_commit = repo_head_commit(data.repo.localPath)
+        elif data.repo.type in ("github", "gitlab", "bitbucket") and data.repo.repoUrl:
+            _, clone_dir = repo_key_for(data.repo.repoUrl, data.repo.type)
+            repo_commit = repo_head_commit(clone_dir)
+    except Exception as commit_error:  # noqa: BLE001 - never block a wiki save on this
+        logger.debug(f"Could not record repo commit for wiki cache: {commit_error}")
+
     try:
         payload = WikiCacheData(
             wiki_structure=data.wiki_structure,
@@ -1113,6 +1150,7 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
             comprehensive=data.comprehensive,
             page_count=data.page_count,
             version=next_version,
+            repo_commit=repo_commit,
         )
         # Log size of data to be cached for debugging (avoid logging full content if large)
         try:

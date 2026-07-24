@@ -98,7 +98,13 @@
     "continueResearch": "繼續研究",
     "viewPlan": "檢視計畫",
     "viewUpdates": "檢視更新",
-    "viewConclusion": "檢視結論"
+    "viewConclusion": "檢視結論",
+    "codeMode": "程式碼編輯",
+    "codeModeTooltip": "編碼代理（opencode）直接在此儲存庫的本機副本上工作：可以讀取、編輯、執行命令和建置。它的編輯、差異和命令會即時顯示在右側面板中，同時在這裡回答你。使用聊天所選的同一模型。",
+    "codeVersionCheck": "版本檢查",
+    "codeAgentError": "程式碼代理錯誤",
+    "codeAgentConnectionError": "錯誤：與程式碼代理的連線已中斷。請重新傳送訊息重試。",
+    "codeRepoNotCloned": "該儲存庫尚無本機克隆。請先產生 wiki，以便將儲存庫克隆到本機。"
   },
   "repoPage": {
     "refreshWiki": "重新整理 Wiki",
@@ -172,5 +178,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "活動",
+    "diffsTab": "差異",
+    "abort": "停止",
+    "abortTooltip": "停止代理目前的操作",
+    "refresh": "重新整理",
+    "filesChanged": "個檔案已變更",
+    "noChanges": "此工作階段中尚無變更。",
+    "noPatchBody": "內容已變更（無文字差異可用）。",
+    "noActivity": "此工作階段中尚無代理活動。",
+    "waitingForSession": "在聊天中傳送訊息即可啟動程式碼代理。它的編輯、差異和命令將即時顯示在這裡。",
+    "localEditWarning": "正在直接編輯你的本機目錄",
+    "multiSession": "此儲存庫有 {n} 個作用中工作階段",
+    "crashed": "代理程序已結束。在聊天中傳送訊息以重新啟動。",
+    "update": "更新代理",
+    "updating": "更新中…",
+    "updated": "已更新至",
+    "updateTooltip": "將最新的opencode版本下載到應用資料夾（應用更新後保留）"
   }
 }

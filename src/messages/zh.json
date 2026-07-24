@@ -100,7 +100,13 @@
     "continueResearch": "继续研究",
     "viewPlan": "查看计划",
     "viewUpdates": "查看更新",
-    "viewConclusion": "查看结论"
+    "viewConclusion": "查看结论",
+    "codeMode": "代码编辑",
+    "codeModeTooltip": "编码智能体（opencode）直接在此仓库的本地副本上工作：可以读取、编辑、运行命令和构建。它的编辑、差异和命令会实时显示在右侧面板中，同时在这里回答你。使用聊天所选的同一模型。",
+    "codeVersionCheck": "版本检查",
+    "codeAgentError": "代码智能体错误",
+    "codeAgentConnectionError": "错误：与代码智能体的连接已断开。请重新发送消息重试。",
+    "codeRepoNotCloned": "该仓库尚无本地克隆。请先生成 wiki，以便将仓库克隆到本地。"
   },
   "repoPage": {
     "refreshWiki": "刷新Wiki",
@@ -174,5 +180,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "活动",
+    "diffsTab": "差异",
+    "abort": "停止",
+    "abortTooltip": "停止智能体当前的操作",
+    "refresh": "刷新",
+    "filesChanged": "个文件已更改",
+    "noChanges": "此会话中尚无更改。",
+    "noPatchBody": "内容已更改（无文本差异可用）。",
+    "noActivity": "此会话中尚无智能体活动。",
+    "waitingForSession": "在聊天中发送消息即可启动代码智能体。它的编辑、差异和命令将实时显示在这里。",
+    "localEditWarning": "正在直接编辑你的本地目录",
+    "multiSession": "此仓库有 {n} 个活动会话",
+    "crashed": "智能体进程已退出。在聊天中发送消息以重新启动。",
+    "update": "更新智能体",
+    "updating": "更新中…",
+    "updated": "已更新至",
+    "updateTooltip": "将最新的opencode版本下载到应用数据文件夹（应用更新后保留）"
   }
 }

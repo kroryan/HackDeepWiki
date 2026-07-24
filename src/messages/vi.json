@@ -100,7 +100,13 @@
     "continueResearch": "Tiếp tục nghiên cứu",
     "viewPlan": "Xem kế hoạch",
     "viewUpdates": "Xem cập nhật",
-    "viewConclusion": "Xem kết luận"
+    "viewConclusion": "Xem kết luận",
+    "codeMode": "Chỉnh sửa mã",
+    "codeModeTooltip": "Một tác nhân lập trình (opencode) làm việc trực tiếp trên bản sao cục bộ của kho lưu trữ này: có thể đọc, chỉnh sửa, chạy lệnh và biên dịch. Các chỉnh sửa, diff và lệnh của nó hiển thị trực tiếp ở bảng bên phải trong khi nó trả lời bạn ở đây. Dùng cùng mô hình đã chọn cho chat.",
+    "codeVersionCheck": "Kiểm tra phiên bản",
+    "codeAgentError": "Lỗi tác nhân mã",
+    "codeAgentConnectionError": "Lỗi: mất kết nối với tác nhân mã. Gửi lại tin nhắn để thử lại.",
+    "codeRepoNotCloned": "Kho lưu trữ chưa có bản sao cục bộ. Hãy tạo wiki trước để kho được nhân bản cục bộ."
   },
   "repoPage": {
     "refreshWiki": "Làm mới Wiki",
@@ -174,5 +180,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "Hoạt động",
+    "diffsTab": "Diff",
+    "abort": "Dừng",
+    "abortTooltip": "Dừng thao tác hiện tại của tác nhân",
+    "refresh": "Làm mới",
+    "filesChanged": "tệp đã thay đổi",
+    "noChanges": "Chưa có thay đổi nào trong phiên này.",
+    "noPatchBody": "Nội dung đã thay đổi (không có diff dạng văn bản).",
+    "noActivity": "Chưa có hoạt động của tác nhân trong phiên này.",
+    "waitingForSession": "Gửi tin nhắn trong chat để khởi động tác nhân mã. Các chỉnh sửa, diff và lệnh sẽ hiển thị trực tiếp tại đây.",
+    "localEditWarning": "Đang chỉnh sửa trực tiếp thư mục cục bộ của bạn",
+    "multiSession": "{n} phiên đang hoạt động trên kho này",
+    "crashed": "Tiến trình tác nhân đã thoát. Gửi tin nhắn trong chat để khởi động lại.",
+    "update": "Cập nhật tác nhân",
+    "updating": "Đang cập nhật…",
+    "updated": "Đã cập nhật lên",
+    "updateTooltip": "Tải bản phát hành opencode mới nhất vào thư mục dữ liệu của ứng dụng (giữ nguyên sau khi cập nhật ứng dụng)"
   }
 }

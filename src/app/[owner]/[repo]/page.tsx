@@ -4283,6 +4283,7 @@ IMPORTANT:
           currentPageId={currentPageId}
           title={messages.ask?.title || 'Repository chat'}
           fabAriaLabel={messages.ask?.title || 'Ask about this repository'}
+          wikiVersion={selectedWikiVersion ?? undefined}
         />
       )}
 

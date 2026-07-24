@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FaComments, FaCompress, FaExpand, FaTimes } from 'react-icons/fa';
 import Ask from './Ask';
 import RepoInfo from '@/types/repoinfo';
+import { CodeSessionInfo } from '@/utils/codeAgentClient';
+import CodeAgentPanel from './code/CodeAgentPanel';
 
 interface ChatWidgetProps {
   // null means "not ready yet" (e.g. .zim metadata still loading) -- the
@@ -17,13 +19,16 @@ interface ChatWidgetProps {
   currentPageId?: string;
   title: string;
   fabAriaLabel: string;
+  // The wiki release currently open on the page -- forwarded to Code Editing
+  // mode so the agent session is anchored to the version the user is reading.
+  wikiVersion?: number;
 }
 
 // Shared floating chat button + panel used by both the repo wiki page and the
 // .zim reader page -- previously each duplicated this ~40 lines of JSX with
 // its own open-state and Escape-key handling (only the repo page had the
 // latter). Consolidated here so both get the same behavior, including the
-// full-screen maximize toggle.
+// full-screen maximize toggle and the Code Editing split layout.
 export default function ChatWidget({
   repoInfo,
   provider,
@@ -34,18 +39,34 @@ export default function ChatWidget({
   currentPageId,
   title,
   fabAriaLabel,
+  wikiVersion,
 }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+  // ⚙ Code Editing mode: forces fullscreen and splits the panel -- chat on
+  // the left, live agent activity (edits/diffs/commands) on the right.
+  const [codeMode, setCodeMode] = useState(false);
+  const [codeSession, setCodeSession] = useState<CodeSessionInfo | null>(null);
   const askComponentRef = useRef<{ clearConversation: () => void } | null>(null);
 
-  // Escape closes the panel; if maximized, the first Escape just restores
-  // it instead, matching how most apps handle a maximized window/modal.
+  const handleCodeModeChange = (enabled: boolean) => {
+    setCodeMode(enabled);
+    if (enabled) {
+      setIsMaximized(true);
+    } else {
+      setCodeSession(null);
+    }
+  };
+
+  // Escape: code mode -> exit code mode first; then maximized -> restore;
+  // then close. Matches how most apps unwind nested fullscreen states.
   useEffect(() => {
     if (!isOpen) return;
     const handleEsc = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (isMaximized) {
+      if (codeMode) {
+        handleCodeModeChange(false);
+      } else if (isMaximized) {
         setIsMaximized(false);
       } else {
         setIsOpen(false);
@@ -53,9 +74,11 @@ export default function ChatWidget({
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [isOpen, isMaximized]);
+  }, [isOpen, isMaximized, codeMode]);
 
   if (!repoInfo) return null;
+
+  const splitLayout = codeMode && isMaximized;
 
   return (
     <>
@@ -85,10 +108,23 @@ export default function ChatWidget({
           <span className="text-sm font-semibold font-mono text-[var(--foreground)] flex items-center gap-2">
             <FaComments className="text-[var(--accent-primary)]" />
             {title}
+            {codeMode && (
+              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded border border-[var(--accent-primary)]/40 text-[var(--accent-primary)]">
+                ⚙ code
+              </span>
+            )}
           </span>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setIsMaximized((v) => !v)}
+              onClick={() => {
+                // In code mode the panel must stay fullscreen (the split
+                // needs the space), so Restore doubles as "exit code mode".
+                if (codeMode) {
+                  handleCodeModeChange(false);
+                } else {
+                  setIsMaximized((v) => !v);
+                }
+              }}
               className="text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-full p-1.5 hover:bg-[var(--accent-primary)]/10"
               aria-label={isMaximized ? 'Restore' : 'Maximize'}
               title={isMaximized ? 'Restore' : 'Maximize'}
@@ -104,17 +140,34 @@ export default function ChatWidget({
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto min-h-0">
-          <Ask
-            repoInfo={repoInfo}
-            provider={provider}
-            model={model}
-            isCustomModel={isCustomModel}
-            customModel={customModel}
-            language={language}
-            currentPageId={currentPageId}
-            onRef={(ref) => (askComponentRef.current = ref)}
-          />
+        <div className={splitLayout ? 'flex-1 flex min-h-0' : 'flex-1 overflow-y-auto min-h-0'}>
+          <div
+            className={
+              splitLayout
+                ? 'w-[46%] min-w-[340px] border-r border-[var(--border-color)] overflow-y-auto min-h-0'
+                : undefined
+            }
+          >
+            <Ask
+              repoInfo={repoInfo}
+              provider={provider}
+              model={model}
+              isCustomModel={isCustomModel}
+              customModel={customModel}
+              language={language}
+              currentPageId={currentPageId}
+              onRef={(ref) => (askComponentRef.current = ref)}
+              codeMode={codeMode}
+              onCodeModeChange={handleCodeModeChange}
+              onCodeSession={setCodeSession}
+              wikiVersion={wikiVersion}
+            />
+          </div>
+          {splitLayout && (
+            <div className="flex-1 min-w-0 min-h-0">
+              <CodeAgentPanel session={codeSession} />
+            </div>
+          )}
         </div>
       </div>
     </>

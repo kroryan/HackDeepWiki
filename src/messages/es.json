@@ -130,7 +130,13 @@
     "continueResearch": "Continuar Investigación",
     "viewPlan": "Ver Plan",
     "viewUpdates": "Ver Actualizaciones",
-    "viewConclusion": "Ver Conclusión"
+    "viewConclusion": "Ver Conclusión",
+    "codeMode": "Edición de código",
+    "codeModeTooltip": "Un agente de código (opencode) trabaja directamente sobre la copia local de este repositorio: puede leer, editar, ejecutar comandos y compilar. Sus ediciones, diffs y comandos aparecen en vivo en el panel derecho mientras te responde aquí. Usa el mismo modelo seleccionado para el chat.",
+    "codeVersionCheck": "Comprobación de versión",
+    "codeAgentError": "Error del agente de código",
+    "codeAgentConnectionError": "Error: se perdió la conexión con el agente de código. Envía el mensaje de nuevo para reintentar.",
+    "codeRepoNotCloned": "El repositorio aún no tiene clon local. Genera la wiki primero para que el repo se clone localmente."
   },
   "repoPage": {
     "refreshWiki": "Actualizar Wiki",
@@ -204,5 +210,24 @@
     "adding": "Añadiendo...",
     "addImages": "Añadir imágenes",
     "selectImageFolder": "Seleccionar carpeta de imágenes"
+  },
+  "codeAgent": {
+    "activityTab": "Actividad",
+    "diffsTab": "Diffs",
+    "abort": "Detener",
+    "abortTooltip": "Detener la operación actual del agente",
+    "refresh": "Actualizar",
+    "filesChanged": "archivo(s) modificados",
+    "noChanges": "Aún no hay cambios en esta sesión.",
+    "noPatchBody": "Contenido modificado (sin diff textual disponible).",
+    "noActivity": "Aún no hay actividad del agente en esta sesión.",
+    "waitingForSession": "Envía un mensaje en el chat para iniciar el agente de código. Sus ediciones, diffs y comandos aparecerán aquí en vivo.",
+    "localEditWarning": "Editando tu directorio local directamente",
+    "multiSession": "{n} sesiones activas en este repo",
+    "crashed": "El proceso del agente terminó. Envía un mensaje en el chat para reiniciarlo.",
+    "update": "Actualizar agente",
+    "updating": "Actualizando…",
+    "updated": "Actualizado a",
+    "updateTooltip": "Descarga la última versión de opencode en la carpeta de datos de la app (sobrevive a las actualizaciones)"
   }
 }

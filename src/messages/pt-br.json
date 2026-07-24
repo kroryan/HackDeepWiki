@@ -109,7 +109,13 @@
     "continueResearch": "Continuar Pesquisa",
     "viewPlan": "Ver Plano",
     "viewUpdates": "Ver Atualizações",
-    "viewConclusion": "Ver Conclusão"
+    "viewConclusion": "Ver Conclusão",
+    "codeMode": "Edição de código",
+    "codeModeTooltip": "Um agente de código (opencode) trabalha diretamente na cópia local deste repositório: pode ler, editar, executar comandos e compilar. Suas edições, diffs e comandos aparecem ao vivo no painel direito enquanto ele responde aqui. Usa o mesmo modelo selecionado para o chat.",
+    "codeVersionCheck": "Verificação de versão",
+    "codeAgentError": "Erro do agente de código",
+    "codeAgentConnectionError": "Erro: conexão com o agente de código perdida. Envie a mensagem novamente para tentar de novo.",
+    "codeRepoNotCloned": "O repositório ainda não tem clone local. Gere a wiki primeiro para que o repositório seja clonado localmente."
   },
   "repoPage": {
     "refreshWiki": "Atualizar Wiki",
@@ -183,5 +189,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "Atividade",
+    "diffsTab": "Diffs",
+    "abort": "Parar",
+    "abortTooltip": "Parar a operação atual do agente",
+    "refresh": "Atualizar",
+    "filesChanged": "arquivo(s) alterado(s)",
+    "noChanges": "Ainda não há alterações nesta sessão.",
+    "noPatchBody": "Conteúdo alterado (sem diff textual disponível).",
+    "noActivity": "Ainda não há atividade do agente nesta sessão.",
+    "waitingForSession": "Envie uma mensagem no chat para iniciar o agente de código. Suas edições, diffs e comandos aparecerão aqui ao vivo.",
+    "localEditWarning": "Editando seu diretório local diretamente",
+    "multiSession": "{n} sessões ativas neste repositório",
+    "crashed": "O processo do agente terminou. Envie uma mensagem no chat para reiniciá-lo.",
+    "update": "Atualizar agente",
+    "updating": "Atualizando…",
+    "updated": "Atualizado para",
+    "updateTooltip": "Baixa a versão mais recente do opencode para a pasta de dados do app (sobrevive a atualizações)"
   }
 }

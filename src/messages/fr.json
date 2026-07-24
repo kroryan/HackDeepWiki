@@ -109,7 +109,13 @@
     "continueResearch": "Continuer la recherche",
     "viewPlan": "Voir le plan",
     "viewUpdates": "Voir les mises à jour",
-    "viewConclusion": "Voir la conclusion"
+    "viewConclusion": "Voir la conclusion",
+    "codeMode": "Édition de code",
+    "codeModeTooltip": "Un agent de codage (opencode) travaille directement sur la copie locale de ce dépôt : il peut lire, modifier, exécuter des commandes et compiler. Ses modifications, diffs et commandes apparaissent en direct dans le panneau de droite pendant qu'il vous répond ici. Utilise le même modèle que le chat.",
+    "codeVersionCheck": "Vérification de version",
+    "codeAgentError": "Erreur de l'agent de code",
+    "codeAgentConnectionError": "Erreur : connexion à l'agent de code perdue. Renvoyez le message pour réessayer.",
+    "codeRepoNotCloned": "Le dépôt n'a pas encore de clone local. Générez d'abord le wiki pour que le dépôt soit cloné localement."
   },
   "repoPage": {
     "refreshWiki": "Rafraîchir le Wiki",
@@ -183,5 +189,24 @@
     "adding": "Adding...",
     "addImages": "Add images",
     "selectImageFolder": "Select image folder"
+  },
+  "codeAgent": {
+    "activityTab": "Activité",
+    "diffsTab": "Diffs",
+    "abort": "Arrêter",
+    "abortTooltip": "Arrêter l'opération en cours de l'agent",
+    "refresh": "Actualiser",
+    "filesChanged": "fichier(s) modifié(s)",
+    "noChanges": "Aucun changement dans cette session pour le moment.",
+    "noPatchBody": "Contenu modifié (aucun diff textuel disponible).",
+    "noActivity": "Aucune activité de l'agent dans cette session pour le moment.",
+    "waitingForSession": "Envoyez un message dans le chat pour démarrer l'agent de code. Ses modifications, diffs et commandes apparaîtront ici en direct.",
+    "localEditWarning": "Modification directe de votre répertoire local",
+    "multiSession": "{n} sessions actives sur ce dépôt",
+    "crashed": "Le processus de l'agent s'est arrêté. Envoyez un message dans le chat pour le redémarrer.",
+    "update": "Mettre à jour l'agent",
+    "updating": "Mise à jour…",
+    "updated": "Mis à jour vers",
+    "updateTooltip": "Télécharge la dernière version d'opencode dans le dossier de données de l'app (survit aux mises à jour)"
   }
 }

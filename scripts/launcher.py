@@ -209,6 +209,9 @@ def setup_persistent_config_and_logs(args):
 def run_fastapi_server(backend_port):
     print(f"Starting FastAPI backend on port {backend_port}...")
     os.environ["PORT"] = str(backend_port)
+    # Unambiguous backend-port export (PORT is reused for the frontend in the
+    # Node child's env); read by api/code_agent/config.py::backend_port.
+    os.environ["HACKDEEPWIKI_BACKEND_PORT"] = str(backend_port)
     os.environ["NODE_ENV"] = "production"
     
     import uvicorn

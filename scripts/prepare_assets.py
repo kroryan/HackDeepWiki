@@ -4,6 +4,12 @@ import shutil
 import urllib.request
 import tarfile
 import tempfile
+import zipfile
+
+# Make the api package importable so the opencode version pin lives in ONE
+# place (api/code_agent/binary.py) -- the runtime lazy-download and this
+# build-time download must agree.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def copy_dir(src, dest):
     if not os.path.exists(src):
@@ -70,6 +76,57 @@ def setup_node_binary(platform):
         print(f"Unknown platform: {platform}")
         sys.exit(1)
 
+def setup_opencode_binary(platform):
+    """Download the pinned opencode CLI release (anomalyco/opencode) into
+    bin/ so the AppImage/.exe ships with the code agent embedded. Mirrors
+    setup_node_binary. Non-fatal on failure: the app lazy-downloads at
+    runtime into DATABASE/opencode/bin (api/code_agent/binary.py), so a
+    flaky GitHub download must not fail the whole build."""
+    from api.code_agent.binary import GITHUB_REPO, OPENCODE_VERSION
+
+    bin_dir = os.path.abspath("bin")
+    os.makedirs(bin_dir, exist_ok=True)
+
+    if platform == "windows":
+        asset = "opencode-windows-x64.zip"
+        binary_name = "opencode.exe"
+    else:
+        asset = "opencode-linux-x64.tar.gz"
+        binary_name = "opencode"
+    url = f"https://github.com/{GITHUB_REPO}/releases/download/{OPENCODE_VERSION}/{asset}"
+    dest_path = os.path.join(bin_dir, binary_name)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=asset[asset.index("."):]) as temp_file:
+        temp_path = temp_file.name
+    try:
+        download_file(url, temp_path)
+        print(f"Extracting {binary_name} from {asset}...")
+        if asset.endswith(".zip"):
+            with zipfile.ZipFile(temp_path) as zf:
+                members = [m for m in zf.namelist() if os.path.basename(m) == binary_name]
+                if not members:
+                    raise RuntimeError(f"{binary_name} not found inside {asset}")
+                with zf.open(members[0]) as src, open(dest_path, "wb") as out:
+                    shutil.copyfileobj(src, out)
+        else:
+            with tarfile.open(temp_path, "r:gz") as tar:
+                members = [m for m in tar.getmembers()
+                           if os.path.basename(m.name) == binary_name and m.isfile()]
+                if not members:
+                    raise RuntimeError(f"{binary_name} not found inside {asset}")
+                extracted = tar.extractfile(members[0])
+                with extracted, open(dest_path, "wb") as out:
+                    shutil.copyfileobj(extracted, out)
+        os.chmod(dest_path, 0o755)
+        print(f"opencode {OPENCODE_VERSION} bundled at {dest_path}")
+    except Exception as e:  # noqa: BLE001 - see docstring: never fail the build on this
+        print(f"Warning: could not bundle opencode ({e}). "
+              "The app will lazy-download it at runtime on first use of Code Editing mode.")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def setup_tiktoken_cache():
     print("Preparing offline tiktoken cache...")
     cache_dir = os.path.abspath("tiktoken_cache")
@@ -110,7 +167,10 @@ def main():
     
     # 2. Setup Node.js binary
     setup_node_binary(platform)
-    
+
+    # 2.5. Bundle the opencode coding agent (Code Editing mode)
+    setup_opencode_binary(platform)
+
     # 3. Setup tiktoken cache
     setup_tiktoken_cache()
     
