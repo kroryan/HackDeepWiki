@@ -40,37 +40,19 @@ from api.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Character budget for `query` in the token-limit fallback path (see
-# handle_websocket_chat's exception handler below). Roughly a few thousand
-# tokens -- generous enough for real questions, small enough to actually fit
-# after a "prompt too long" error, whatever the original size was.
-MAX_FALLBACK_QUERY_CHARS = 8000
-
-# Substrings that indicate a provider rejected the request for being too
-# long, across every provider/wording variant seen in practice -- checked
-# case-insensitively against the exception message to decide whether to
-# retry with a truncated prompt (see the except block below). This used to
-# only match "maximum context length" (OpenAI's exact wording), which missed
-# Ollama's own phrasing ("...exceeded max context length by N tokens") --
-# missing "maximum" vs "max" meant Ollama's oversized-prompt errors were
-# never caught here and always surfaced as a hard failure instead of falling
-# back to a truncated prompt, regardless of repo/model.
-CONTEXT_LIMIT_ERROR_PHRASES = (
-    "maximum context length",
-    "max context length",
-    "context length",
-    "context_length_exceeded",
-    "token limit",
-    "too many tokens",
-    "prompt is too long",
-    "prompt too long",
-    "input is too long",
+# Character budget for `query` and the context-limit error phrases live in
+# api.chat_common now, shared with simple_chat.py so the two transports
+# can't drift on the fallback path (Fase 8.2). Previously these were
+# hand-mirrored here and in simple_chat.py with cross-referencing comments.
+from api.chat_common import (
+    MAX_FALLBACK_QUERY_CHARS,
+    is_context_limit_error,
+    truncate_query_for_fallback,
 )
 
-
-def _is_context_limit_error(error_message: str) -> bool:
-    lowered = error_message.lower()
-    return any(phrase in lowered for phrase in CONTEXT_LIMIT_ERROR_PHRASES)
+# Back-compat alias for the original private name this module used internally
+# and that callers in this file still reference.
+_is_context_limit_error = is_context_limit_error
 
 
 async def handle_websocket_chat(websocket: WebSocket):
@@ -667,12 +649,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     # instructions) and tail (the actual question, usually at the end)
                     # and drop the middle, which is where a runaway file/content list
                     # tends to live.
-                    fallback_query = query
-                    if len(fallback_query) > MAX_FALLBACK_QUERY_CHARS:
-                        head = fallback_query[: MAX_FALLBACK_QUERY_CHARS // 2]
-                        tail = fallback_query[-MAX_FALLBACK_QUERY_CHARS // 2:]
-                        fallback_query = f"{head}\n\n[... truncated: original query was {len(query)} characters, too large to process ...]\n\n{tail}"
-                        logger.warning(f"Query itself was oversized ({len(query)} chars); truncated for fallback")
+                    fallback_query = truncate_query_for_fallback(query)
 
                     simplified_prompt += f"<query>\n{fallback_query}\n</query>\n\nAssistant: "
 

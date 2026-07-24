@@ -31,36 +31,19 @@ from api.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Character budget for `query` in the token-limit fallback path below.
-# Mirrors MAX_FALLBACK_QUERY_CHARS in websocket_wiki.py's
-# handle_websocket_chat so the two transports can't drift on this.
-MAX_FALLBACK_QUERY_CHARS = 8000
-
-# Substrings that indicate a provider rejected the request for being too
-# long, checked case-insensitively against the exception message. Mirrors
-# CONTEXT_LIMIT_ERROR_PHRASES / _is_context_limit_error in websocket_wiki.py
-# so the two transports can't drift on this -- this used to only match
-# "maximum context length" (OpenAI's exact wording), which missed Ollama's
-# own phrasing ("...exceeded max context length by N tokens"), so an
-# oversized prompt against a local Ollama model always fell through to the
-# generic "Error: ..." branch below instead of retrying with a simplified,
-# truncated prompt.
-CONTEXT_LIMIT_ERROR_PHRASES = (
-    "maximum context length",
-    "max context length",
-    "context length",
-    "context_length_exceeded",
-    "token limit",
-    "too many tokens",
-    "prompt is too long",
-    "prompt too long",
-    "input is too long",
+# Fase 8.2: the context-limit fallback primitives (MAX_FALLBACK_QUERY_CHARS,
+# CONTEXT_LIMIT_ERROR_PHRASES, is_context_limit_error, the head/tail query
+# truncation) now live in api.chat_common, shared with websocket_wiki.py so
+# the two transports can't drift on the fallback path. Previously these were
+# hand-mirrored here with cross-referencing comments.
+from api.chat_common import (
+    MAX_FALLBACK_QUERY_CHARS,
+    is_context_limit_error,
+    truncate_query_for_fallback,
 )
 
-
-def _is_context_limit_error(error_message: str) -> bool:
-    lowered = error_message.lower()
-    return any(phrase in lowered for phrase in CONTEXT_LIMIT_ERROR_PHRASES)
+# Back-compat alias for the original private name this module used internally.
+_is_context_limit_error = is_context_limit_error
 
 
 # Initialize FastAPI app
@@ -601,15 +584,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                         # middle where a runaway file/content list tends to live)
                         # so the fallback doesn't resend the same oversized
                         # prompt and fail identically. Mirrors websocket_wiki.py.
-                        fallback_query = query
-                        if len(fallback_query) > MAX_FALLBACK_QUERY_CHARS:
-                            head = fallback_query[: MAX_FALLBACK_QUERY_CHARS // 2]
-                            tail = fallback_query[-MAX_FALLBACK_QUERY_CHARS // 2:]
-                            fallback_query = (
-                                f"{head}\n\n[... truncated: original query was "
-                                f"{len(query)} characters, too large to process ...]\n\n{tail}"
-                            )
-                            logger.warning(f"Query itself was oversized ({len(query)} chars); truncated for fallback")
+                        fallback_query = truncate_query_for_fallback(query)
 
                         simplified_prompt += f"<query>\n{fallback_query}\n</query>\n\nAssistant: "
 
