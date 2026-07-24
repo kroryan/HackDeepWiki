@@ -868,7 +868,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
     if (typeof mermaid !== 'undefined') {
       mermaid.initialize({
         theme: 'dark',
-        securityLevel: 'loose',
+        securityLevel: 'strict',
         startOnLoad: true
       });
     }
@@ -1122,7 +1122,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
       if (typeof mermaid !== 'undefined') {
         mermaid.initialize({
           theme: 'dark',
-          securityLevel: 'loose',
+          securityLevel: 'strict',
           startOnLoad: true
         });
       }

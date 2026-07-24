@@ -6,10 +6,19 @@ import { normalizeMermaidChart } from '@/utils/mermaid';
 // We'll use dynamic import for svg-pan-zoom
 
 // Initialize mermaid with defaults - Japanese aesthetic
+// securityLevel: 'strict' -- mermaid's built-in sanitizer: strips HTML from
+// labels (so an LLM/user can't inject <img onerror=...> / <script> / click
+// handlers via a diagram label) and disables click-jacking callbacks.
+// Diagrams reach us from LLM output and user content (untrusted), and the
+// rendered SVG is injected via dangerouslySetInnerHTML, so 'loose' (which
+// allows arbitrary HTML in labels) was an XSS vector. 'strict' is mermaid's
+// own sanitizer mode -- no extra dependency, and it neutralizes htmlLabels
+// for security while keeping the label-quoting in normalizeMermaidChart
+// (which is a *parser* fix, not a security one, so it stays).
 mermaid.initialize({
   startOnLoad: true,
   theme: 'neutral',
-  securityLevel: 'loose',
+  securityLevel: 'strict',
   suppressErrorRendering: true,
   logLevel: 'error',
   maxTextSize: 100000, // Increase text size limit

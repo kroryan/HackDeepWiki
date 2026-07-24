@@ -6,7 +6,9 @@
     "dev": "next dev --turbopack --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "d3-force-3d": "^3.0.6",
@@ -39,7 +41,8 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.21",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   },
   "overrides": {
     "postcss": "^8.5.10",
