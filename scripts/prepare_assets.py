@@ -32,11 +32,11 @@ def setup_node_binary(platform):
     os.makedirs(bin_dir, exist_ok=True)
     
     if platform == "windows":
-        node_url = "https://nodejs.org/dist/v20.11.0/win-x64/node.exe"
+        node_url = "https://nodejs.org/dist/v24.18.0/win-x64/node.exe"
         dest_path = os.path.join(bin_dir, "node.exe")
         download_file(node_url, dest_path)
     elif platform == "linux":
-        node_url = "https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz"
+        node_url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz"
         
         # Download tarball to a temp file
         with tempfile.NamedTemporaryFile(delete=False) as temp_tar:

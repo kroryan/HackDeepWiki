@@ -29,12 +29,12 @@
     "svg-pan-zoom": "^3.6.2",
     "three": "^0.180.0",
     "three-spritetext": "^1.10.0",
-    "undici": "^6.27.0"
+    "undici": "^7.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
