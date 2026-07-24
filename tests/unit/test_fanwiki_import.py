@@ -134,6 +134,49 @@ def test_library_discovers_legacy_import_and_deletes_only_verified_source(
     assert not imported_dir.exists()
 
 
+def test_delete_removes_read_only_tree(tmp_path, monkeypatch):
+    """Regression: delete() must clear a tree whose files/dirs were written
+    read-only. A plain shutil.rmtree aborts with PermissionError on such
+    trees (the imported-XML delete used to 500 on them)."""
+    import os
+    import stat
+
+    imported_dir = tmp_path / "repos" / "website_ro.test"
+    sub = imported_dir / "sub"
+    sub.mkdir(parents=True)
+    (imported_dir / "page.md").write_text("content", encoding="utf-8")
+    (sub / "nested.md").write_text("nested", encoding="utf-8")
+    (imported_dir / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (imported_dir / "_site_meta.json").write_text(
+        json.dumps(
+            {
+                "start_url": "https://ro.test/wiki/Main_Page",
+                "crawled_at": "2026-01-02T03:04:05+00:00",
+                "page_count": 1,
+                "pages": [{"relpath": "page.md", "title": "Page", "categories": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Files read-only (0o444), dirs readable+traversable but NOT writable
+    # (0o555) -- unlink/rmdir need write on the parent dir, so this forces
+    # the EPERM that the onerror handler must chmod-and-retry past.
+    for p in (imported_dir / "page.md", imported_dir / "logo.png", sub / "nested.md"):
+        os.chmod(p, 0o444)
+    for p in (sub, imported_dir):
+        os.chmod(p, 0o555)
+
+    monkeypatch.setattr(fanwiki_library, "get_data_root", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        fanwiki_library,
+        "website_local_dir",
+        lambda start_url: str(imported_dir),
+    )
+
+    assert fanwiki_library.delete("https://ro.test/wiki/Main_Page") is True
+    assert not imported_dir.exists()
+
+
 def test_reader_markdown_removes_mediawiki_layout_but_keeps_content():
     source = """<!-- editor note -->
 {| style="width: 100%"

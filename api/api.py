@@ -1752,7 +1752,18 @@ async def delete_imported_fanwiki(
         or not hmac.compare_digest(WIKI_AUTH_CODE, authorization_code)
     ):
         raise HTTPException(status_code=401, detail="Authorization code is invalid")
-    deleted = await asyncio.to_thread(fanwiki_library.delete, start_url)
+    try:
+        deleted = await asyncio.to_thread(fanwiki_library.delete, start_url)
+    except OSError as exc:
+        # fanwiki_library.delete already retries after forcing writable perms,
+        # so an OSError here means the tree genuinely can't be removed (e.g.
+        # files owned by another user). Surface a clear 409 instead of a raw
+        # 500 so the UI can show an actionable message.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not delete imported fanwiki source files: {exc}. "
+            "Check ownership/permissions of the source directory and retry.",
+        ) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Imported fanwiki source not found")
     return {"message": "Imported fanwiki source deleted successfully"}

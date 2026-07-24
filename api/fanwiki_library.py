@@ -15,6 +15,7 @@ import os
 import posixpath
 import re
 import shutil
+import stat
 import zipfile
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -590,6 +591,46 @@ def resolve_asset(entry_id: str, relpath: str) -> str:
     return candidate
 
 
+def _force_tree_writable(top: str) -> None:
+    """chmod ``top`` and every directory beneath it to rwx before a recursive
+    delete. On POSIX, removing a file needs write permission on the *containing
+    directory* -- not on the file -- so read-only files are harmless, but a
+    read-only DIRECTORY blocks unlinking its children and makes
+    shutil.rmtree abort with PermissionError partway through. Crawled/imported
+    fanwiki trees are frequently written with non-writable directories, so walk
+    top-down and make each directory writable first. os.walk does not follow
+    symlinked directories by default, so this never chmods outside the tree.
+    """
+    try:
+        os.chmod(top, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+    except OSError:
+        pass
+    for root, dirs, _files in os.walk(top):
+        for name in dirs:
+            try:
+                os.chmod(
+                    os.path.join(root, name),
+                    stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO,
+                )
+            except OSError:
+                pass
+
+
+def _force_writable_then_retry(func, path, exc_info):
+    """Belt-and-suspenders onerror for shutil.rmtree: if a specific path
+    still can't be removed after the directory pre-walk (e.g. a read-only
+    file on a platform whose unlink needs file-write permission), force it
+    writable and retry the same operation. If it STILL fails (e.g. the path
+    is owned by another user), let the error propagate so the caller can
+    surface it instead of silently swallowing data.
+    """
+    try:
+        os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+    except OSError:
+        pass
+    func(path)
+
+
 def delete(start_url: str) -> bool:
     """Delete only a verified fanwiki source tree and its embeddings cache."""
     local_dir = website_local_dir(start_url)
@@ -599,7 +640,12 @@ def delete(start_url: str) -> bool:
     if str(meta.get("start_url") or "").strip() != start_url.strip():
         return False
 
-    shutil.rmtree(local_dir)
+    # Imported/crawled trees often contain non-writable directories, which
+    # makes a plain shutil.rmtree abort with PermissionError (previously a
+    # 500). Make every directory writable first, then rmtree with an onerror
+    # that chmods-and-retries any residual read-only path.
+    _force_tree_writable(local_dir)
+    shutil.rmtree(local_dir, onerror=_force_writable_then_retry)
     repo_name = os.path.basename(local_dir)
     database_path = os.path.join(get_data_root(), "databases", f"{repo_name}.pkl")
     try:
