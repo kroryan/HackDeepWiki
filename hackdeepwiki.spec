@@ -52,6 +52,32 @@ node_bin_name = 'node.exe' if is_win else 'node'
 node_source_path = os.path.abspath(os.path.join('bin', node_bin_name))
 tiktoken_cache_source = os.path.abspath('tiktoken_cache')
 
+# The api/ and scripts/ trees are shipped as data, but ONLY their source
+# files. A developer's working copy accumulates build leftovers inside api/
+# (dist/ and build/ from running PyInstaller in there, logs/, __pycache__)
+# that a clean CI checkout never has — bundling the raw directory made a
+# local AppImage ~750 MB heavier than the CI artifact built from the same
+# commit. Filtering here keeps local and CI builds byte-identical in content
+# regardless of working-tree state.
+_TREE_EXCLUDED_DIRS = {'dist', 'build', 'logs', '__pycache__', '.pytest_cache',
+                       '.mypy_cache', '.ruff_cache', '.claude'}
+_TREE_EXCLUDED_EXTS = ('.pyc', '.pyo', '.log')
+
+
+def _source_tree(src_root, dest_root):
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(src_root):
+        dirnames[:] = [d for d in dirnames if d not in _TREE_EXCLUDED_DIRS]
+        for filename in filenames:
+            if filename.endswith(_TREE_EXCLUDED_EXTS):
+                continue
+            full = os.path.join(dirpath, filename)
+            rel_dir = os.path.relpath(dirpath, src_root)
+            dest = dest_root if rel_dir == '.' else os.path.join(dest_root, rel_dir)
+            entries.append((full, dest))
+    return entries
+
+
 datas = [
     # Package the frontend files (Next.js standalone output)
     ('.next/standalone/server.js', '.'),
@@ -59,11 +85,11 @@ datas = [
     ('.next/standalone/.next', '.next'),  # Contains required-server-files.json and server files
     ('public', 'public'),
     ('.next/static', '.next/static'),
-    # Package python api package
-    ('api', 'api'),
-    # Package scripts package (includes hackdeepwiki_config.py for runtime Ollama discovery)
-    ('scripts', 'scripts'),
 ]
+# Package the python api package and the scripts package (includes
+# hackdeepwiki_config.py for runtime Ollama discovery), sources only.
+datas.extend(_source_tree('api', 'api'))
+datas.extend(_source_tree('scripts', 'scripts'))
 
 # Package the Node binary if present
 if os.path.exists(node_source_path):
