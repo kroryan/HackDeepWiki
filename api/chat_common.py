@@ -135,3 +135,54 @@ def apply_memory_to_system_prompt(system_prompt: str, *, owner, repo,
     if not block:
         return system_prompt
     return f"{system_prompt}\n\n{block}"
+
+# Auto-capture bounds: one memory per exchange, big enough to hold a real
+# answer's substance, small enough that a long chat can't bloat the store.
+MAX_AUTOMEMORY_QUESTION_CHARS = 500
+MAX_AUTOMEMORY_ANSWER_CHARS = 1500
+MIN_AUTOMEMORY_ANSWER_CHARS = 120
+
+
+def capture_chat_exchange(*, owner, repo, wiki_version, question: str,
+                          answer: str, source: str = "chat") -> None:
+    """Store one finished Q&A turn in this wiki release's memory.
+
+    Relying on the model to call MEMORY_REMEMBER doesn't work in practice: it
+    answers and moves on, so the workspace stays empty. Writing the exchange
+    ourselves makes memory accumulate from normal use, and feeds Engraphis's
+    regex graph extractor the entities/relations that make the graph view
+    useful. Never raises -- memory must never break a chat.
+    """
+    if not owner or not repo:
+        return
+    question = _collapse(question)[:MAX_AUTOMEMORY_QUESTION_CHARS]
+    answer = _collapse(answer)
+    if len(answer) < MIN_AUTOMEMORY_ANSWER_CHARS or not question:
+        return  # greetings/refusals aren't worth a memory
+    answer = answer[:MAX_AUTOMEMORY_ANSWER_CHARS]
+    try:
+        from api import engraphis_integration
+        if not engraphis_integration.is_available():
+            return
+        workspace = engraphis_integration.workspace_for_version(
+            owner, repo, wiki_version
+        )
+        engraphis_integration.ensure_workspace(
+            workspace,
+            f"Knowledge about {owner}/{repo} (wiki release v{wiki_version}).",
+        )
+        engraphis_integration.remember(
+            workspace,
+            f"Q: {question}\nA: {answer}",
+            mtype="episodic", source=source,
+            title=question[:120],
+            metadata={"kind": "chat_exchange", "owner": owner, "repo": repo,
+                      "wiki_version": wiki_version},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Engraphis chat auto-capture skipped: %s", e)
+
+
+def _collapse(text: str) -> str:
+    import re
+    return re.sub(r"\s+", " ", str(text or "")).strip()

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import Optional, Dict, Any
@@ -44,12 +45,14 @@ logger = logging.getLogger(__name__)
 # api.chat_common now, shared with simple_chat.py so the two transports
 # can't drift on the fallback path (Fase 8.2). Previously these were
 # hand-mirrored here and in simple_chat.py with cross-referencing comments.
+from api.stream_events import is_process_frame
 from api.chat_common import (
     MAX_FALLBACK_QUERY_CHARS,
     is_context_limit_error,
     truncate_query_for_fallback,
     apply_skills_to_system_prompt,
     apply_memory_to_system_prompt,
+    capture_chat_exchange,
 )
 
 # Back-compat alias for the original private name this module used internally
@@ -629,14 +632,28 @@ async def handle_websocket_chat(websocket: WebSocket):
                     api_key=request.api_key,
                     api_endpoint=request.api_endpoint,
                 )
+            answer_parts: list[str] = []
             async for text in response_stream:
                 await websocket.send_text(text)
+                # Process frames (tool calls / reasoning) are a separate
+                # channel -- only real answer text belongs in memory.
+                if not is_process_frame(text):
+                    answer_parts.append(text)
             footer = search_tool.format_sources_footer(
                 collected_refs, is_zim, request.repo_url if is_zim else None
             )
             if footer:
                 await websocket.send_text(footer)
             await websocket.close()
+
+            # Persist this exchange to the release's memory once the answer is
+            # complete. Off the event loop: it embeds + writes SQLite.
+            await asyncio.to_thread(
+                capture_chat_exchange,
+                owner=request.owner, repo=request.repo,
+                wiki_version=request.wiki_version,
+                question=query, answer="".join(answer_parts),
+            )
 
         except Exception as e_outer:
             logger.error(f"Error in streaming response: {str(e_outer)}")

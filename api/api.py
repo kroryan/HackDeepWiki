@@ -1237,10 +1237,11 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
         except Exception as ev_e:  # noqa: BLE001
             logger.warning(f"wiki cache prune skipped (cache saved anyway): {ev_e}")
 
-        # Engraphis wiki-evolution memory: record what changed since the
-        # previous release (commit range, messages, diffstat) into the repo's
-        # cross-release workspace. Runs in a thread so a slow git log can't
-        # delay the save response; must never fail the save.
+        # Engraphis memory. Two independent scopes, both written off the
+        # request thread so neither a slow git log nor a large wiki can delay
+        # the save response; neither may ever fail the save.
+        #   * evolution  -- what changed across releases + the repo's history
+        #   * v{N}       -- what the project IS, per this release's own wiki
         try:
             from api import engraphis_integration
             import threading as _threading
@@ -1256,8 +1257,18 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
                 ),
                 name="engraphis-evolution", daemon=True,
             ).start()
+            _threading.Thread(
+                target=engraphis_integration.record_wiki_content,
+                kwargs=dict(
+                    owner=data.repo.owner, repo=data.repo.repo,
+                    version=next_version,
+                    wiki_structure=data.wiki_structure,
+                    generated_pages=data.generated_pages,
+                ),
+                name="engraphis-wiki-content", daemon=True,
+            ).start()
         except Exception as mem_e:  # noqa: BLE001
-            logger.warning(f"engraphis evolution memory skipped: {mem_e}")
+            logger.warning(f"engraphis memory skipped: {mem_e}")
 
         return next_version
     except IOError as e:
@@ -2535,6 +2546,7 @@ async def engraphis_status(
     repo: Optional[str] = Query(None, description="Repository name"),
     wiki_version: Optional[int] = Query(None, description="Open wiki release version"),
     view: str = Query("version", description="'version' (per-release memory) or 'evolution' (cross-release changes)"),
+    panel: str = Query("", description="Dashboard route to open, e.g. 'graph' for the knowledge graph"),
 ):
     from api import engraphis_integration
 
@@ -2560,7 +2572,7 @@ async def engraphis_status(
                 )
             info = dict(info)
             info["workspace"] = workspace
-            info["url"] = engraphis_integration.dashboard_url_for(workspace)
+            info["url"] = engraphis_integration.dashboard_url_for(workspace, panel)
         else:
             info = dict(info)
             info["url"] = info.get("dashboard_url")

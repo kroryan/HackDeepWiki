@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from urllib.parse import unquote
@@ -42,7 +43,9 @@ from api.chat_common import (
     truncate_query_for_fallback,
     apply_skills_to_system_prompt,
     apply_memory_to_system_prompt,
+    capture_chat_exchange,
 )
+from api.stream_events import is_process_frame
 
 # Back-compat alias for the original private name this module used internally.
 _is_context_limit_error = is_context_limit_error
@@ -529,6 +532,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         # sniff-and-relay convention instead. With tool calling off, this is
         # the original single-shot stream.
         async def response_stream():
+            answer_parts: list[str] = []
             try:
                 if tool_calling_enabled and request.provider in search_tool.NATIVE_TOOL_PROVIDERS:
                     stream = run_native_tool_chat(
@@ -567,11 +571,21 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     )
                 async for text in stream:
                     yield text
+                    # Process frames (tool calls / reasoning) are a separate
+                    # channel -- only real answer text belongs in memory.
+                    if not is_process_frame(text):
+                        answer_parts.append(text)
                 footer = search_tool.format_sources_footer(
                     collected_refs, is_zim, request.repo_url if is_zim else None
                 )
                 if footer:
                     yield footer
+                await asyncio.to_thread(
+                    capture_chat_exchange,
+                    owner=request.owner, repo=request.repo,
+                    wiki_version=request.wiki_version,
+                    question=query, answer="".join(answer_parts),
+                )
 
             except Exception as e_outer:
                 logger.error(f"Error in streaming response: {str(e_outer)}")

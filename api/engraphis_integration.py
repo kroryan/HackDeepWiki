@@ -72,6 +72,18 @@ _MAX_INJECTED_MEMORIES = 6
 _MAX_INJECTED_CHARS = 2400
 _MAX_EVOLUTION_COMMITS = 40
 
+# Full-history backfill (first time we ever see a repo in the evolution
+# workspace). Commits are grouped into one memory per batch so the graph gets
+# real nodes (authors, files, subjects) without writing one row per commit on a
+# 10k-commit repo.
+_HISTORY_BATCH = 25
+_MAX_HISTORY_COMMITS = 2000
+
+# Wiki-content ingest: one memory per documented area, bounded so a huge wiki
+# can't balloon the DB or the graph.
+_MAX_WIKI_PAGES = 60
+_MAX_WIKI_PAGE_CHARS = 1800
+
 # CSP mirroring engraphis.http_security.DEFAULT_CSP, with the single change
 # that makes embedding possible: frame-ancestors allows the HackDeepWiki
 # frontend (loopback, any port -- both ports are chosen dynamically at
@@ -98,12 +110,17 @@ _EMBED_CSP = "; ".join([
 # own workspace switcher once it has loaded. `?ws=` deep-linking is what lets
 # the sidebar button open THIS wiki release's memory and the header button
 # open the evolution workspace, instead of whatever workspace has the most
-# memories (the SPA's default).
+# memories (the SPA's default). `?view=` additionally picks the SPA route, so
+# HackDeepWiki can land straight on the knowledge graph.
 _SHIM_JS = b"""\
 (function () {
   'use strict';
-  var ws = null;
-  try { ws = new URLSearchParams(window.location.search).get('ws'); } catch (e) {}
+  var ws = null, view = null;
+  try {
+    var q = new URLSearchParams(window.location.search);
+    ws = q.get('ws');
+    view = q.get('view');
+  } catch (e) {}
   if (!ws) return;
   var tries = 0;
   var timer = setInterval(function () {
@@ -116,11 +133,15 @@ _SHIM_JS = b"""\
     // it exactly once so the two never fight.
     if (label.textContent === '\\u2014' || label.textContent === '') return;
     clearInterval(timer);
-    if (label.textContent === ws) return;
+    var sameWs = label.textContent === ws;
     try {
-      window.setWS(ws);
-      if (typeof window.navTo === 'function') window.navTo('overview');
-      window.loadOverview();
+      if (!sameWs) window.setWS(ws);
+      if (typeof window.navTo === 'function' && view) {
+        window.navTo(view);
+      } else if (!sameWs) {
+        if (typeof window.navTo === 'function') window.navTo('overview');
+        window.loadOverview();
+      }
     } catch (e) {}
   }, 150);
 })();
@@ -390,13 +411,17 @@ def status() -> dict[str, Any]:
     }
 
 
-def dashboard_url_for(workspace: str) -> Optional[str]:
-    """Deep-linked dashboard URL for one workspace (see _SHIM_JS)."""
+def dashboard_url_for(workspace: str, view: str = "") -> Optional[str]:
+    """Deep-linked dashboard URL for one workspace (see _SHIM_JS). ``view``
+    optionally picks the SPA route, e.g. 'graph' for the knowledge graph."""
     _ensure_started()
     if _dashboard_port is None:
         return None
     from urllib.parse import quote
-    return f"http://127.0.0.1:{_dashboard_port}/?ws={quote(workspace)}"
+    url = f"http://127.0.0.1:{_dashboard_port}/?ws={quote(workspace)}"
+    if view:
+        url += f"&view={quote(view)}"
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +442,7 @@ def ensure_workspace(workspace: str, description: str = "") -> bool:
 
 def remember(workspace: str, content: str, *, mtype: str = "semantic",
              session_id: Optional[str] = None, source: str = "agent",
-             metadata: Optional[dict] = None) -> str:
+             metadata: Optional[dict] = None, title: str = "") -> str:
     """Store one memory in a workspace. Returns a short outcome string."""
     svc = get_service()
     if svc is None:
@@ -428,7 +453,7 @@ def remember(workspace: str, content: str, *, mtype: str = "semantic",
     with _LOCK:
         try:
             result = svc.remember(
-                content, workspace=workspace, mtype=mtype,
+                content, workspace=workspace, mtype=mtype, title=title,
                 session_id=session_id, source=source, metadata=metadata,
             )
             op = (result or {}).get("op") or "add"
@@ -582,6 +607,7 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
             summary += f" Previous release: v{previous_version}"
             summary += f" at commit {previous_commit[:12]}." if previous_commit else "."
         remember(workspace, summary, mtype="episodic", source="hackdeepwiki",
+                 title=f"Wiki release v{version} of {owner}/{repo}",
                  metadata={"kind": "wiki_release", "version": version,
                            "commit": repo_commit or ""})
 
@@ -597,6 +623,7 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
                 f"{owner}/{repo} (git log {previous_commit[:12]}..{repo_commit[:12]}):\n"
                 f"{listing}",
                 mtype="episodic", source="hackdeepwiki",
+                title=f"Commits between wiki v{previous_version} and v{version}",
                 metadata={"kind": "wiki_diff", "from_version": previous_version,
                           "to_version": version},
             )
@@ -607,11 +634,225 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
                 f"Files changed between wiki v{previous_version} and v{version} "
                 f"of {owner}/{repo}:\n{stats}",
                 mtype="episodic", source="hackdeepwiki",
+                title=f"Files changed between wiki v{previous_version} and v{version}",
                 metadata={"kind": "wiki_diffstat", "from_version": previous_version,
                           "to_version": version},
             )
+
+        # First time we see this repo: ingest the WHOLE commit history, not
+        # just the (empty) range since a previous release. Without this the
+        # evolution workspace of a brand-new wiki holds a single "release"
+        # memory and the graph stays empty.
+        _backfill_history(workspace, owner, repo, clone_dir, repo_commit)
     except Exception as e:  # noqa: BLE001
         logger.warning("engraphis evolution record skipped: %s", e)
+
+
+def _backfill_history(workspace: str, owner: str, repo: str,
+                      clone_dir: Optional[str], head: Optional[str]) -> None:
+    """Ingest every commit reachable from HEAD into the evolution workspace,
+    once per repo. Subsequent releases only add their own range (handled by
+    record_wiki_release), so this stays cheap after the first run.
+
+    Deliberately deterministic (git only, no LLM): it runs on every wiki save
+    and must not cost tokens or time proportional to the model.
+    """
+    if not clone_dir:
+        return
+    marker = f"__history_backfilled__ {owner}/{repo}"
+    if _has_memory(workspace, "history_backfill"):
+        _backfill_incremental(workspace, owner, repo, clone_dir, head)
+        return
+
+    commits = _git_full_history(clone_dir)
+    if not commits:
+        return
+
+    stats = _git_history_stats(clone_dir)
+    if stats:
+        remember(workspace, stats, mtype="semantic", source="hackdeepwiki",
+                 title=f"Repository history overview -- {owner}/{repo}",
+                 metadata={"kind": "repo_history_overview"})
+
+    written = 0
+    for start in range(0, len(commits), _HISTORY_BATCH):
+        batch = commits[start:start + _HISTORY_BATCH]
+        if not batch:
+            continue
+        body = "\n".join(batch)
+        remember(
+            workspace,
+            f"Commit history of {owner}/{repo} "
+            f"({start + 1}-{start + len(batch)} of {len(commits)}, newest first):\n{body}",
+            mtype="episodic", source="hackdeepwiki",
+            title=f"Commits {start + 1}-{start + len(batch)} of {len(commits)} -- {owner}/{repo}",
+            metadata={"kind": "commit_history_batch", "offset": start,
+                      "count": len(batch)},
+        )
+        written += len(batch)
+
+    remember(
+        workspace,
+        f"{marker}: {written} commits of {owner}/{repo} ingested up to "
+        f"{(head or 'HEAD')[:12]}.",
+        mtype="semantic", source="hackdeepwiki",
+        title=f"History ingested -- {owner}/{repo}",
+        metadata={"kind": "history_backfill", "head": head or "",
+                  "count": written},
+    )
+    _mark_ingested(workspace, "history_backfill", head=head or "", count=written)
+    logger.info("Engraphis: backfilled %s commits of %s/%s into %s",
+                written, owner, repo, workspace)
+
+
+def _backfill_incremental(workspace: str, owner: str, repo: str,
+                          clone_dir: Optional[str], head: Optional[str]) -> None:
+    """After the initial backfill, ingest only commits newer than the last one
+    we recorded -- so the evolution graph keeps growing with each update."""
+    last = _last_backfilled_head(workspace)
+    if not last or not head or last == head:
+        return
+    commits = _git_commit_range_detailed(clone_dir, last, head)
+    if not commits:
+        return
+    for start in range(0, len(commits), _HISTORY_BATCH):
+        batch = commits[start:start + _HISTORY_BATCH]
+        remember(
+            workspace,
+            f"New commits in {owner}/{repo} since {last[:12]} "
+            f"(up to {head[:12]}):\n" + "\n".join(batch),
+            mtype="episodic", source="hackdeepwiki",
+            title=f"New commits in {owner}/{repo} since {last[:12]}",
+            metadata={"kind": "commit_history_batch", "since": last,
+                      "head": head, "count": len(batch)},
+        )
+    remember(
+        workspace,
+        f"__history_backfilled__ {owner}/{repo}: extended to {head[:12]} "
+        f"(+{len(commits)} commits).",
+        mtype="semantic", source="hackdeepwiki",
+        title=f"History extended to {head[:12]} -- {owner}/{repo}",
+        metadata={"kind": "history_backfill", "head": head,
+                  "count": len(commits)},
+    )
+    _mark_ingested(workspace, "history_backfill", head=head, count=len(commits))
+    logger.info("Engraphis: +%s new commits of %s/%s into %s",
+                len(commits), owner, repo, workspace)
+
+
+def _has_memory(workspace: str, kind: str) -> bool:
+    """True when the initial history backfill already ran for this workspace.
+
+    Tracked in our own small JSON state file rather than by querying Engraphis:
+    MemoryService exposes semantic recall, not an exact metadata lookup, and a
+    fuzzy match is the wrong tool for an idempotency check.
+    """
+    return bool((_ingest_state().get(workspace) or {}).get(kind))
+
+
+def _last_backfilled_head(workspace: str) -> Optional[str]:
+    entry = (_ingest_state().get(workspace) or {}).get("history_backfill")
+    return (entry or {}).get("head") if isinstance(entry, dict) else None
+
+
+def _ingest_state_path() -> str:
+    return os.path.join(_engraphis_root(), "hackdeepwiki_ingest.json")
+
+
+def _ingest_state() -> dict:
+    import json as _json
+    try:
+        with open(_ingest_state_path(), "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 - absent/corrupt state just means "not done"
+        return {}
+
+
+def _mark_ingested(workspace: str, kind: str, **fields: Any) -> None:
+    import json as _json
+    with _LOCK:
+        state = _ingest_state()
+        state.setdefault(workspace, {})[kind] = fields
+        try:
+            path = _ingest_state_path()
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                _json.dump(state, f, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("could not persist engraphis ingest state: %s", e)
+
+
+def _git_full_history(clone_dir: str) -> list[str]:
+    """`git log` over the whole repo, one rich line per commit (subject,
+    author, date) -- enough for the regex graph extractor to mint author and
+    concept nodes."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", clone_dir, "log", "--no-decorate",
+             f"--max-count={_MAX_HISTORY_COMMITS}",
+             "--date=short", "--pretty=format:%h %ad %an: %s"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if out.returncode != 0:
+            return []
+        return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _git_commit_range_detailed(clone_dir: Optional[str], old: str,
+                               new: str) -> list[str]:
+    if not clone_dir:
+        return []
+    try:
+        out = subprocess.run(
+            ["git", "-C", clone_dir, "log", "--no-decorate", "--date=short",
+             "--pretty=format:%h %ad %an: %s", f"{old}..{new}"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if out.returncode != 0:
+            return []
+        return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _git_history_stats(clone_dir: str) -> str:
+    """A compact, factual overview of the repo's history: size, span, and the
+    people who wrote it. Cheap (a few git calls) and highly recallable."""
+    try:
+        total = subprocess.run(
+            ["git", "-C", clone_dir, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        authors = subprocess.run(
+            ["git", "-C", clone_dir, "shortlog", "-sne", "--all"],
+            capture_output=True, text=True, timeout=60,
+        )
+        first = subprocess.run(
+            ["git", "-C", clone_dir, "log", "--reverse", "--date=short",
+             "--pretty=format:%ad", "--max-count=1"],
+            capture_output=True, text=True, timeout=30,
+        )
+        last = subprocess.run(
+            ["git", "-C", clone_dir, "log", "-1", "--date=short",
+             "--pretty=format:%ad"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    if total.returncode != 0:
+        return ""
+    parts = [f"Repository history overview: {total.stdout.strip()} commits"]
+    if first.returncode == 0 and last.returncode == 0 and first.stdout.strip():
+        parts.append(f"spanning {first.stdout.strip()} to {last.stdout.strip()}")
+    text = ", ".join(parts) + "."
+    if authors.returncode == 0 and authors.stdout.strip():
+        top = "\n".join(authors.stdout.strip().splitlines()[:15])
+        text += f"\nContributors (commits, name, email):\n{top}"
+    return text
 
 
 def _git_commit_range(clone_dir: Optional[str], old: Optional[str],
@@ -646,3 +887,151 @@ def _git_diff_stat(clone_dir: Optional[str], old: Optional[str],
         return "\n".join(lines[-60:]).strip()
     except Exception:  # noqa: BLE001
         return ""
+
+
+# ---------------------------------------------------------------------------
+# Wiki-content memory (what the project IS -- ingested at generation time)
+# ---------------------------------------------------------------------------
+
+def record_wiki_content(*, owner: str, repo: str, version: int,
+                        wiki_structure: Any, generated_pages: Any) -> None:
+    """Ingest the wiki HackDeepWiki just generated into this release's own
+    workspace, so chat and the code editor start out knowing what the project
+    is and how it works instead of an empty memory.
+
+    Deterministic: the pages were already written by the model during wiki
+    generation, so summarizing them costs no extra tokens -- we store the
+    structure plus a bounded excerpt of each page. Idempotent per release via
+    the ingest-state file; never raises.
+    """
+    try:
+        if get_service() is None:
+            return
+        workspace = workspace_for_version(owner, repo, version)
+        ensure_workspace(
+            workspace,
+            f"Knowledge about {owner}/{repo} as documented by wiki release "
+            f"v{version} (shared by chat and the code editor).",
+        )
+        if _has_memory(workspace, "wiki_content"):
+            return
+
+        pages = _pages_from_structure(wiki_structure, generated_pages)
+        overview = _structure_overview(owner, repo, version, wiki_structure, pages)
+        if overview:
+            remember(workspace, overview, mtype="semantic", source="hackdeepwiki",
+                     title=f"What {owner}/{repo} is -- wiki v{version} overview",
+                     metadata={"kind": "wiki_overview", "version": version})
+
+        written = 0
+        for page in pages[:_MAX_WIKI_PAGES]:
+            body = _page_memory(owner, repo, version, page)
+            if not body:
+                continue
+            remember(workspace, body, mtype="semantic",
+                     source="hackdeepwiki",
+                     title=(page.get("title") or "Wiki page")[:120],
+                     metadata={"kind": "wiki_page", "version": version,
+                               "page_id": page.get("id") or "",
+                               "title": page.get("title") or ""})
+            written += 1
+
+        _mark_ingested(workspace, "wiki_content", version=version, pages=written)
+        logger.info("Engraphis: ingested %s wiki pages of %s/%s v%s into %s",
+                    written, owner, repo, version, workspace)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("engraphis wiki-content ingest skipped: %s", e)
+
+
+def _pages_from_structure(wiki_structure: Any, generated_pages: Any) -> list[dict]:
+    """Merge the structure's page list with the generated content, keyed by id.
+
+    Both come straight off the save_wiki_cache payload, which may hold pydantic
+    models or plain dicts depending on the caller -- normalize to dicts.
+    """
+    def _as_dict(value: Any) -> dict:
+        if isinstance(value, dict):
+            return value
+        dump = getattr(value, "model_dump", None)
+        if callable(dump):
+            try:
+                return dump()
+            except Exception:  # noqa: BLE001
+                return {}
+        return {}
+
+    structure = _as_dict(wiki_structure)
+    by_id: dict[str, dict] = {}
+    order: list[str] = []
+    for raw in structure.get("pages") or []:
+        page = _as_dict(raw)
+        pid = str(page.get("id") or page.get("title") or len(order))
+        by_id[pid] = dict(page)
+        order.append(pid)
+
+    generated = generated_pages if isinstance(generated_pages, dict) else {}
+    for pid, raw in generated.items():
+        page = _as_dict(raw)
+        key = str(pid)
+        if key in by_id:
+            by_id[key].update({k: v for k, v in page.items() if v})
+        else:
+            by_id[key] = dict(page)
+            order.append(key)
+    return [by_id[pid] for pid in order if by_id.get(pid)]
+
+
+def _structure_overview(owner: str, repo: str, version: int,
+                        wiki_structure: Any, pages: list[dict]) -> str:
+    structure = wiki_structure if isinstance(wiki_structure, dict) else (
+        getattr(wiki_structure, "model_dump", lambda: {})() or {}
+    )
+    title = str(structure.get("title") or f"{owner}/{repo}").strip()
+    description = str(structure.get("description") or "").strip()
+    lines = [
+        f"Project overview for {owner}/{repo} (wiki release v{version}): {title}."
+    ]
+    if description:
+        lines.append(description[:800])
+    if pages:
+        titles = [str(p.get("title") or p.get("id") or "").strip()
+                  for p in pages[:_MAX_WIKI_PAGES]]
+        titles = [t for t in titles if t]
+        if titles:
+            lines.append("The wiki documents these areas: " + ", ".join(titles) + ".")
+    return "\n".join(lines).strip()
+
+
+def _page_memory(owner: str, repo: str, version: int, page: dict) -> str:
+    title = str(page.get("title") or page.get("id") or "").strip()
+    content = str(page.get("content") or "").strip()
+    if not title and not content:
+        return ""
+    excerpt = _strip_markdown(content)[:_MAX_WIKI_PAGE_CHARS]
+    files = page.get("filePaths") or page.get("file_paths") or []
+    parts = [f"{owner}/{repo} -- {title} (from wiki v{version})."]
+    if isinstance(files, list) and files:
+        shown = [str(f) for f in files[:12] if f]
+        if shown:
+            parts.append("Relevant files: " + ", ".join(shown) + ".")
+    if excerpt:
+        parts.append(excerpt)
+    return "\n".join(parts).strip()
+
+
+def _strip_markdown(text: str) -> str:
+    """Flatten markdown to prose so the excerpt carries meaning, not syntax.
+
+    Fenced code blocks and mermaid diagrams are dropped entirely: they blow the
+    character budget and the regex entity extractor turns their identifiers
+    into junk graph nodes.
+    """
+    if not text:
+        return ""
+    out = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    out = re.sub(r"^\s*[|:-]{3,}.*$", " ", out, flags=re.MULTILINE)
+    out = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", out)
+    out = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", out)
+    out = re.sub(r"[`*_>#]+", " ", out)
+    out = re.sub(r"\s+", " ", out)
+    return out.strip()

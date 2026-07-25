@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { FaBrain, FaSync, FaExternalLinkAlt } from 'react-icons/fa';
+import { FaBrain, FaSync, FaExternalLinkAlt, FaProjectDiagram, FaListUl } from 'react-icons/fa';
 
 interface EngraphisStatus {
   available: boolean;
@@ -36,6 +36,10 @@ export default function EngraphisPanel({ owner, repo, wikiVersion, view }: Engra
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Which Engraphis route the embedded dashboard opens on. The graph is the
+  // point of the memories we ingest, so it gets a first-class toggle instead
+  // of making the user find it in the dashboard's own sidebar.
+  const [panel, setPanel] = useState<'overview' | 'graph'>('overview');
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +48,7 @@ export default function EngraphisPanel({ owner, repo, wikiVersion, view }: Engra
     setStatus(null);
     const params = new URLSearchParams({ owner, repo, view });
     if (wikiVersion != null) params.set('wiki_version', String(wikiVersion));
+    if (panel === 'graph') params.set('panel', 'graph');
     fetch(`/api/engraphis/status?${params.toString()}`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`status ${res.status}`);
@@ -61,7 +66,7 @@ export default function EngraphisPanel({ owner, repo, wikiVersion, view }: Engra
     return () => {
       cancelled = true;
     };
-  }, [owner, repo, wikiVersion, view, reloadKey]);
+  }, [owner, repo, wikiVersion, view, panel, reloadKey]);
 
   const url = status?.url || status?.dashboard_url || null;
 
@@ -103,15 +108,35 @@ export default function EngraphisPanel({ owner, repo, wikiVersion, view }: Engra
             : `Memory of ${owner}/${repo} — wiki release v${wikiVersion ?? 0} (shared by chat & code editor)`}
           {status.workspace ? ` · workspace: ${status.workspace}` : ''}
         </span>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Open in a separate tab (optional)"
-          className="flex items-center gap-1 text-[10px] font-mono text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors"
-        >
-          <FaExternalLinkAlt className="text-[9px]" />
-        </a>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-md border border-[var(--border-color)] overflow-hidden">
+            {([
+              { id: 'overview', label: 'Memories', Icon: FaListUl },
+              { id: 'graph', label: 'Graph', Icon: FaProjectDiagram },
+            ] as const).map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                onClick={() => setPanel(id)}
+                className={`flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 transition-colors ${
+                  panel === id
+                    ? 'bg-[var(--accent-primary)] text-white'
+                    : 'text-[var(--muted)] hover:text-[var(--accent-primary)]'
+                }`}
+              >
+                <Icon className="text-[9px]" /> {label}
+              </button>
+            ))}
+          </div>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open in a separate tab (optional)"
+            className="flex items-center gap-1 text-[10px] font-mono text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors"
+          >
+            <FaExternalLinkAlt className="text-[9px]" />
+          </a>
+        </div>
       </div>
       <iframe
         key={`${url}-${reloadKey}`}

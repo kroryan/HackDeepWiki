@@ -44,6 +44,7 @@ from api.code_agent.models import (
     CodeSessionResponse,
 )
 from api.code_agent.config import describe_target, map_provider
+from api.chat_common import capture_chat_exchange
 from api.stream_events import encode_process
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,13 @@ async def ensure_code_session(request: CodeSessionRequest) -> CodeSessionRespons
             # Resumed after an instance restart: the context was already
             # injected into the (persisted) opencode session last time.
             inst.sessions[session_id] = {"context": None, "context_sent": True}
+
+        # The chat frame (CodeChatRequest) only carries repo_key/session_id,
+        # so the memory scope has to ride on the session itself.
+        inst.sessions[session_id].update({
+            "owner": request.owner, "repo": request.repo,
+            "wiki_version": request.wiki_version,
+        })
 
         binary = resolve_opencode_binary()
         return CodeSessionResponse(
@@ -233,6 +241,7 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
         saw_activity = False
         sent_any_text = False
         last_assistant_message = ""
+        answer_parts: list[str] = []
 
         while True:
             try:
@@ -323,6 +332,7 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                     last_assistant_message = message_id
                     sent_any_text = True
                     await websocket.send_text(delta)
+                    answer_parts.append(delta)
                 part_offsets[part_id] = part_offsets.get(part_id, 0) + len(delta)
                 continue
 
@@ -346,6 +356,7 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                         last_assistant_message = message_id
                         sent_any_text = True
                         await websocket.send_text(text[sent:])
+                        answer_parts.append(text[sent:])
                         part_offsets[part_id] = len(text)
                 elif part_type == "reasoning":
                     text = part.get("text") or ""
@@ -365,6 +376,16 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                             "label": part.get("tool") or "tool",
                             "query": f"{title} [{status}]" if title else status,
                         }))
+
+        # Same durable memory the repository chat writes to, so a coding turn
+        # and a wiki question accumulate into one story per wiki release.
+        await asyncio.to_thread(
+            capture_chat_exchange,
+            owner=session_meta.get("owner"), repo=session_meta.get("repo"),
+            wiki_version=session_meta.get("wiki_version"),
+            question=request.content, answer="".join(answer_parts),
+            source="code_agent",
+        )
     except WebSocketDisconnect:
         # User closed/cancelled mid-answer: stop the agent's current work.
         if inst and request:
