@@ -58,15 +58,48 @@ interface ChatSession {
   currentStageIndex: number;
   researchIteration: number;
   researchComplete: boolean;
-  // ⚙ Code Editing mode: the opencode session id, so re-enabling the toggle
-  // on this chat resumes the same agent session (opencode persists sessions
-  // on disk). The toggle itself is live UI state and is NOT persisted.
+  // ⚙ Code Editing mode state, persisted PER CHAT: reopening a chat from
+  // history must restore it exactly as it was -- same mode, same toggles,
+  // same opencode session (opencode persists sessions on disk, so the agent
+  // conversation resumes too). Entering a wiki still starts a fresh chat
+  // (mode off) because a fresh session carries none of these.
+  codeMode?: boolean;
+  includeSecurityContext?: boolean;
   codeSessionId?: string;
 }
 
 /** Repo types that have real code on disk to edit. Website/fanwiki/zim
  * sources have nothing for a coding agent to work on. */
 const CODE_MODE_REPO_TYPES = ['github', 'gitlab', 'bitbucket', 'local'];
+
+/** Append process events, MERGING instead of stacking where the stream is
+ * incremental: consecutive "thinking" events are token deltas of one thought
+ * (one <li> per token rendered as an unreadable word-per-line column), and a
+ * tool's pending->running->completed transitions are one call, not three
+ * lines -- same-label consecutive tool events update in place. */
+function appendProcessEvents(previous: ProcessEvent[], incoming: ProcessEvent[]): ProcessEvent[] {
+  if (incoming.length === 0) return previous;
+  const next = [...previous];
+  for (const event of incoming) {
+    const last = next[next.length - 1];
+    if (last && event.kind === 'thinking' && last.kind === 'thinking') {
+      next[next.length - 1] = {
+        kind: 'thinking',
+        payload: { ...last.payload, text: String(last.payload.text ?? '') + String(event.payload.text ?? '') },
+      };
+      continue;
+    }
+    if (
+      last && event.kind === 'tool' && last.kind === 'tool' &&
+      String(last.payload.label ?? '') === String(event.payload.label ?? '')
+    ) {
+      next[next.length - 1] = event;
+      continue;
+    }
+    next.push(event);
+  }
+  return next;
+}
 
 interface AskProps {
   repoInfo: RepoInfo;
@@ -253,11 +286,13 @@ const Ask: React.FC<AskProps> = ({
     setCurrentStageIndex(session.currentStageIndex || 0);
     setResearchIteration(session.researchIteration || 0);
     setResearchComplete(Boolean(session.researchComplete));
-    // codeSessionId is restored (re-enabling the toggle resumes the same
-    // opencode session), but codeMode itself is deliberately NOT -- the
-    // toggle is live UI state, and auto-restoring it on load/session-switch
-    // produced inconsistent layouts. The user flips it when they want it.
+    // Reopening a chat restores its full mode: toggles, the code-editing
+    // split, and the opencode session id (so the agent conversation
+    // resumes). Fresh sessions carry none of these, which is what keeps
+    // "entering a wiki" on a clean normal chat.
+    setIncludeSecurityContext(Boolean(session.includeSecurityContext));
     setCodeSessionId(session.codeSessionId);
+    onCodeModeChange?.(Boolean(session.codeMode) && CODE_MODE_REPO_TYPES.includes(repoInfo.type));
     const timer = window.setTimeout(() => {
       loadedSessionIdRef.current = activeSessionId;
     }, 0);
@@ -283,6 +318,8 @@ const Ask: React.FC<AskProps> = ({
             currentStageIndex,
             researchIteration,
             researchComplete,
+            codeMode,
+            includeSecurityContext,
             codeSessionId,
           }
         : session
@@ -296,6 +333,8 @@ const Ask: React.FC<AskProps> = ({
     currentStageIndex,
     researchIteration,
     researchComplete,
+    codeMode,
+    includeSecurityContext,
     codeSessionId,
   ]);
 
@@ -637,7 +676,7 @@ const Ask: React.FC<AskProps> = ({
         (message: string) => {
           const { text, events } = streamParser.feed(message);
           if (events.length > 0) {
-            setProcessEvents(prev => [...prev, ...events]);
+            setProcessEvents(prev => appendProcessEvents(prev, events));
           }
           fullResponse += text;
           setResponse(fullResponse);
@@ -740,7 +779,7 @@ const Ask: React.FC<AskProps> = ({
         const chunk = decoder.decode(value, { stream: true });
         const { text, events } = streamParser.feed(chunk);
         if (events.length > 0) {
-          setProcessEvents(prev => [...prev, ...events]);
+          setProcessEvents(prev => appendProcessEvents(prev, events));
         }
         fullResponse += text;
         setResponse(fullResponse);
@@ -923,7 +962,7 @@ const Ask: React.FC<AskProps> = ({
         (message: string) => {
           const { text, events } = streamParser.feed(message);
           if (events.length > 0) {
-            setProcessEvents(prev => [...prev, ...events]);
+            setProcessEvents(prev => appendProcessEvents(prev, events));
           }
           fullResponse += text;
           setResponse(fullResponse);
@@ -1025,7 +1064,7 @@ const Ask: React.FC<AskProps> = ({
         (message: string) => {
           const { text, events } = streamParser.feed(message);
           if (events.length > 0) {
-            setProcessEvents(prev => [...prev, ...events]);
+            setProcessEvents(prev => appendProcessEvents(prev, events));
           }
           fullResponse += text;
           setResponse(fullResponse);
