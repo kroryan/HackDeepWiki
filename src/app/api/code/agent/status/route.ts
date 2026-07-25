@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:8001';
 
@@ -6,10 +6,14 @@ const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:
 // running instances). force-dynamic: must re-read on every call.
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const headers: Record<string, string> = {};
+    const authorization = req.headers.get('x-hackdeepwiki-authorization');
+    if (authorization) headers['X-HackDeepWiki-Authorization'] = authorization;
     const backendResponse = await fetch(`${TARGET_SERVER_BASE_URL}/api/code/agent/status`, {
       cache: 'no-store',
+      headers,
     });
     const text = await backendResponse.text();
     return new NextResponse(text, {

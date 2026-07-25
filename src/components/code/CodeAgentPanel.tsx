@@ -24,6 +24,7 @@ import CodeDiffView from './CodeDiffView';
 
 interface CodeAgentPanelProps {
   session: CodeSessionInfo | null;
+  authorizationCode?: string;
 }
 
 const STATUS_COLORS: Record<CodeAgentStatus, string> = {
@@ -101,9 +102,15 @@ function ActivityItem({ event }: { event: CodeAgentEvent }) {
   return null;
 }
 
-export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
+export default function CodeAgentPanel({
+  session,
+  authorizationCode,
+}: CodeAgentPanelProps) {
   const { messages } = useLanguage();
-  const { events, debugEvents, status, working, diffTick } = useCodeAgentEvents(session);
+  const { events, debugEvents, status, working, diffTick } = useCodeAgentEvents(
+    session,
+    authorizationCode
+  );
   const [tab, setTab] = useState<'activity' | 'diffs' | 'debug'>('activity');
   const [updating, setUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
@@ -118,10 +125,14 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
     setUpdating(true);
     setUpdateResult(null);
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authorizationCode) {
+        headers['X-HackDeepWiki-Authorization'] = authorizationCode;
+      }
       const response = await fetch('/api/code/agent/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: 'latest' }),
+        headers,
+        body: JSON.stringify({ version: 'pinned' }),
       });
       const body = await response.json();
       if (response.ok) {
@@ -186,7 +197,11 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
                 {messages.codeAgent?.working || 'Working…'}
               </span>
               <button
-                onClick={() => abortCodeSession(session.repo_key, session.session_id)}
+                onClick={() => abortCodeSession(
+                  session.repo_key,
+                  session.session_id,
+                  authorizationCode
+                )}
                 className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors text-[10px]"
                 title={messages.codeAgent?.abortTooltip || 'Stop the agent’s current operation'}
               >
@@ -282,6 +297,7 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
             repoKey={session.repo_key}
             sessionId={session.session_id}
             diffTick={diffTick}
+            authorizationCode={authorizationCode}
           />
         ) : (
           /* Debug: the unfiltered firehose -- every bus event opencode emits

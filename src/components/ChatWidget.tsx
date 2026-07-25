@@ -22,6 +22,7 @@ interface ChatWidgetProps {
   // The wiki release currently open on the page -- forwarded to Code Editing
   // mode so the agent session is anchored to the version the user is reading.
   wikiVersion?: number;
+  authorizationCode?: string;
 }
 
 // Shared floating chat button + panel used by both the repo wiki page and the
@@ -40,6 +41,7 @@ export default function ChatWidget({
   title,
   fabAriaLabel,
   wikiVersion,
+  authorizationCode,
 }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -176,6 +178,7 @@ export default function ChatWidget({
               onCodeModeChange={handleCodeModeChange}
               onCodeSession={setCodeSession}
               wikiVersion={wikiVersion}
+              authorizationCode={authorizationCode}
             />
           </div>
           {splitLayout && (
@@ -183,7 +186,10 @@ export default function ChatWidget({
               className="shrink-0 min-h-0"
               style={{ width: '44%', minWidth: 380, maxWidth: 720 }}
             >
-              <CodeAgentPanel session={codeSession} />
+              <CodeAgentPanel
+                session={codeSession}
+                authorizationCode={authorizationCode}
+              />
             </div>
           )}
         </div>

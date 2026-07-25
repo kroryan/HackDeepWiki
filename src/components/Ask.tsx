@@ -1,6 +1,6 @@
 'use client';
 
-import React, {useState, useRef, useEffect, useMemo} from 'react';
+import React, {useState, useRef, useEffect, useMemo, useCallback} from 'react';
 import {
   FaChevronLeft,
   FaChevronRight,
@@ -20,6 +20,8 @@ import {
   createCodeChatWebSocket,
   CodeSessionError,
   CodeSessionInfo,
+  extractLatestAssistantText,
+  getCodeSessionMessages,
 } from '@/utils/codeAgentClient';
 
 interface Model {
@@ -124,6 +126,7 @@ interface AskProps {
   // The wiki release the user has OPEN (version anchoring: the agent must
   // not edit code based on a wiki describing another version).
   wikiVersion?: number;
+  authorizationCode?: string;
 }
 
 // Maximum deep-research iterations before we force a final synthesis round.
@@ -169,6 +172,7 @@ const Ask: React.FC<AskProps> = ({
   onCodeModeChange,
   onCodeSession,
   wikiVersion,
+  authorizationCode,
 }) => {
   const [question, setQuestion] = useState('');
   const [response, setResponse] = useState('');
@@ -361,13 +365,6 @@ const Ask: React.FC<AskProps> = ({
     }
   }, []);
 
-  // Expose clearConversation method to parent component
-  useEffect(() => {
-    if (onRef) {
-      onRef({ clearConversation });
-    }
-  }, [onRef]);
-
   // Scroll to bottom of response when it changes
   useEffect(() => {
     if (responseRef.current) {
@@ -423,7 +420,7 @@ const Ask: React.FC<AskProps> = ({
     }
   }, [provider, model]);
 
-  const clearConversation = () => {
+  const clearConversation = useCallback(() => {
     closeWebSocket(webSocketRef.current);
     setQuestion('');
     setResponse('');
@@ -441,7 +438,12 @@ const Ask: React.FC<AskProps> = ({
     if (inputRef.current) {
       inputRef.current.focus();
     }
-  };
+  }, [onCodeSession]);
+
+  // Expose a stable clearConversation method to the parent component.
+  useEffect(() => {
+    onRef?.({ clearConversation });
+  }, [onRef, clearConversation]);
 
   const startNewChat = () => {
     if (isLoading) return;
@@ -936,7 +938,7 @@ const Ask: React.FC<AskProps> = ({
         include_security_context: includeSecurityContext,
         existing_session_id: codeSessionId,
         ...credentials,
-      });
+      }, authorizationCode);
       if (sessionInfo.session_id !== codeSessionId) {
         setCodeSessionId(sessionInfo.session_id);
       }
@@ -960,6 +962,7 @@ const Ask: React.FC<AskProps> = ({
           model: modelName,
           ...credentials,
         },
+        authorizationCode,
         (message: string) => {
           const { text, events } = streamParser.feed(message);
           if (events.length > 0) {
@@ -973,7 +976,23 @@ const Ask: React.FC<AskProps> = ({
           setResponse(prev => prev + `\n\n${messages.ask?.codeAgentConnectionError || 'Error: lost connection to the code agent. Send the message again to retry.'}`);
           setIsLoading(false);
         },
-        () => {
+        async () => {
+          // OpenCode persists every part before emitting it. A dropped
+          // browser socket can therefore recover the authoritative final
+          // assistant text instead of silently losing the tail.
+          try {
+            const durableMessages = await getCodeSessionMessages(
+              sessionInfo.repo_key,
+              sessionInfo.session_id,
+              authorizationCode
+            );
+            const recovered = extractLatestAssistantText(durableMessages);
+            if (recovered && recovered.length >= fullResponse.length) {
+              fullResponse = recovered;
+            }
+          } catch (error) {
+            console.warn('Code session message recovery failed:', error);
+          }
           if (fullResponse) {
             setConversationHistory([
               ...newHistory,

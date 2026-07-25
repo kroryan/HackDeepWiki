@@ -59,4 +59,7 @@ class CodeAbortRequest(BaseModel):
 
 
 class CodeAgentUpdateRequest(BaseModel):
-    version: str = Field("pinned", description="'pinned', 'latest', or an explicit tag like v1.18.5")
+    version: str = Field(
+        "pinned",
+        description="'pinned' or the exact application-approved OpenCode tag",
+    )

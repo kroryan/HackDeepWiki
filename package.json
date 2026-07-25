@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

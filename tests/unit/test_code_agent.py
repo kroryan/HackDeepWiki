@@ -12,6 +12,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from api.code_agent import binary as oc_binary
 from api.code_agent import events as oc_events
 from api.code_agent.config import map_provider, provider_signature
-from api.code_agent.manager import CodeAgentError, repo_head_commit, repo_key_for
+from api.code_agent.manager import (
+    CodeAgentError,
+    repo_head_commit,
+    repo_key_for,
+    repo_worktree_fingerprint,
+)
+from api.code_agent.routes import _expects_repository_change
 
 
 # ---------------------------------------------------------------------------
@@ -95,11 +103,14 @@ def test_map_provider_ollama_endpoint_hygiene():
 
 
 def test_provider_signature_changes_when_resolution_changes():
-    # Same raw endpoint string, but a normalization fix changes the resolved
-    # baseURL -> the signature must differ so broken instances restart.
-    sig = provider_signature("ollama", None, "https://localhost:11434/v1", "m")
-    assert "http://localhost:11434/v1" in sig
-    assert "/v1/v1" not in sig
+    # Equivalent normalized endpoints are equal; a genuinely different
+    # resolved endpoint forces a restart. The signature itself stays opaque.
+    normalized = provider_signature("ollama", None, "https://localhost:11434/v1", "m")
+    canonical = provider_signature("ollama", None, "http://localhost:11434/v1", "m")
+    other = provider_signature("ollama", None, "http://localhost:11435/v1", "m")
+    assert normalized == canonical
+    assert normalized != other
+    assert "localhost" not in normalized
 
 
 def test_map_provider_google_env_name_translation():
@@ -123,11 +134,18 @@ def test_map_provider_unknown_with_endpoint_is_openai_compatible():
 
 
 def test_provider_signature_restart_semantics():
-    # Model changes never force a restart; credential/endpoint changes do.
+    # Credential values (not merely presence), endpoint and compatible-model
+    # declarations all participate in restart semantics.
     assert provider_signature("ollama", None, None) == provider_signature("OLLAMA", None, None)
-    assert provider_signature("openai", "k1", None) == provider_signature("openai", "k2", None)
+    assert provider_signature("openai", "k1", None) != provider_signature("openai", "k2", None)
     assert provider_signature("openai", "k", None) != provider_signature("openai", None, None)
     assert provider_signature("openai", None, "http://a") != provider_signature("openai", None, "http://b")
+    assert provider_signature("openai", "secret-key-value", None) == provider_signature(
+        "openai", "secret-key-value", None
+    )
+    assert "secret-key-value" not in provider_signature(
+        "openai", "secret-key-value", None
+    )
 
 
 def test_write_opencode_config_full_auto_and_mcp(tmp_path, monkeypatch):
@@ -155,10 +173,76 @@ def test_repo_key_for_rejects_codeless_types():
         assert exc.value.code == "unsupported_repo_type"
 
 
-def test_repo_key_for_local_uses_dir_in_place(tmp_path):
+def test_repo_key_for_local_uses_dir_in_place(tmp_path, monkeypatch):
+    monkeypatch.delenv("HACKDEEPWIKI_ALLOWED_LOCAL_ROOTS", raising=False)
+    monkeypatch.setenv("HACKDEEPWIKI_HOST", "127.0.0.1")
     repo_key, repo_dir = repo_key_for(str(tmp_path), "local")
-    assert repo_dir == str(tmp_path)
+    assert repo_dir == os.path.realpath(tmp_path)
     assert repo_key.startswith("local_")
+
+
+def test_repo_key_for_local_requires_roots_when_exposed(tmp_path, monkeypatch):
+    monkeypatch.delenv("HACKDEEPWIKI_ALLOWED_LOCAL_ROOTS", raising=False)
+    monkeypatch.setenv("HACKDEEPWIKI_HOST", "0.0.0.0")
+    with pytest.raises(CodeAgentError) as exc:
+        repo_key_for(str(tmp_path), "local")
+    assert exc.value.code == "local_path_forbidden"
+
+
+def test_repo_key_for_local_enforces_canonical_allowed_root(tmp_path, monkeypatch):
+    allowed = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    allowed.mkdir()
+    outside.mkdir()
+    monkeypatch.setenv("HACKDEEPWIKI_HOST", "0.0.0.0")
+    monkeypatch.setenv("HACKDEEPWIKI_ALLOWED_LOCAL_ROOTS", str(allowed))
+    assert repo_key_for(str(allowed), "local")[1] == str(allowed)
+    with pytest.raises(CodeAgentError) as exc:
+        repo_key_for(str(outside), "local")
+    assert exc.value.code == "local_path_forbidden"
+
+
+def test_verify_archive_checksum_rejects_tampering(tmp_path, monkeypatch):
+    archive = tmp_path / "asset.zip"
+    archive.write_bytes(b"trusted archive")
+    digest = __import__("hashlib").sha256(archive.read_bytes()).hexdigest()
+    monkeypatch.setitem(oc_binary.OPENCODE_ARCHIVE_SHA256, "asset.zip", digest)
+    oc_binary.verify_archive_checksum(
+        str(archive), "asset.zip", oc_binary.OPENCODE_VERSION
+    )
+    archive.write_bytes(b"tampered archive")
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        oc_binary.verify_archive_checksum(
+            str(archive), "asset.zip", oc_binary.OPENCODE_VERSION
+        )
+
+
+def test_opencode_install_lock_serializes_concurrent_first_use(tmp_path):
+    active = 0
+    maximum = 0
+    guard = threading.Lock()
+    barrier = threading.Barrier(3)
+
+    def worker():
+        nonlocal active, maximum
+        barrier.wait()
+        with oc_binary._installation_lock(str(tmp_path)):
+            with guard:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.03)
+            with guard:
+                active -= 1
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert maximum == 1
 
 
 def test_repo_key_for_missing_clone_raises(monkeypatch, tmp_path):
@@ -178,6 +262,29 @@ def test_repo_head_commit(tmp_path):
     head = repo_head_commit(str(tmp_path))
     assert head and len(head) == 40
     assert repo_head_commit(str(tmp_path / "nope")) is None
+
+
+def test_repo_worktree_fingerprint_detects_real_changes(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git", "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-q", "--allow-empty", "-m", "x",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    before = repo_worktree_fingerprint(str(tmp_path))
+    (tmp_path / "created.txt").write_text("real change")
+    after = repo_worktree_fingerprint(str(tmp_path))
+    assert before and after and before != after
+
+
+def test_mutation_intent_detection_is_conservative():
+    assert _expects_repository_change("Corrige el bug y crea el archivo")
+    assert _expects_repository_change("Please implement this change")
+    assert not _expects_repository_change("Explain how this module works")
+    assert not _expects_repository_change("Give me a detailed plan")
 
 
 # ---------------------------------------------------------------------------

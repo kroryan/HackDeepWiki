@@ -90,10 +90,12 @@ _MAX_INJECTED_MEMORIES = 6
 _MAX_INJECTED_CHARS = 2400
 _MAX_EVOLUTION_COMMITS = 40
 
-# Full-history backfill (first time we ever see a repo in the evolution
+# Bounded-history backfill (first time we ever see a repo in the evolution
 # workspace). Commits are grouped into one memory per batch so the graph gets
 # real nodes (authors, files, subjects) without writing one row per commit on a
-# 10k-commit repo.
+# 100k-commit monorepo. The total reachable count and truncation flag are
+# recorded explicitly; neither the UI nor memory text may call this "full"
+# when the safety bound was hit.
 _HISTORY_BATCH = 25
 _MAX_HISTORY_COMMITS = 2000
 
@@ -1084,6 +1086,8 @@ def _backfill_history(workspace: str, owner: str, repo: str,
     commits = [_record_line(r) for r in records]
     if not commits:
         return
+    total_reachable = _git_history_count(clone_dir) or len(commits)
+    truncated = total_reachable > len(commits)
 
     stats = _git_history_stats(clone_dir)
     overview_id = ""
@@ -1107,11 +1111,13 @@ def _backfill_history(workspace: str, owner: str, repo: str,
         batch_id = remember_detailed(
             workspace,
             f"Commit history of {owner}/{repo} "
-            f"({start + 1}-{start + len(batch)} of {len(commits)}, newest first):\n{body}",
+            f"({start + 1}-{start + len(batch)} of {len(commits)} ingested, newest first"
+            f"{f'; repository has {total_reachable} commits' if truncated else ''}):\n{body}",
             mtype="episodic", source="hackdeepwiki",
-            title=f"Commits {start + 1}-{start + len(batch)} of {len(commits)} -- {owner}/{repo}",
+            title=f"Commits {start + 1}-{start + len(batch)} of {len(commits)} ingested -- {owner}/{repo}",
             metadata={"kind": "commit_history_batch", "offset": start,
-                      "count": len(batch)},
+                      "count": len(batch), "total_reachable": total_reachable,
+                      "truncated": truncated},
         )["id"]
         # History is a chain, and every batch is part of the same repository
         # history -- batches are written newest-first, so batch N follows the
@@ -1138,20 +1144,26 @@ def _backfill_history(workspace: str, owner: str, repo: str,
     # Wording matters on a redo: Engraphis reinforces near-duplicates instead
     # of inserting them, so "45 commits" phrased like the earlier "1 commits"
     # would silently keep the stump's text as the memory a human reads.
-    body = (f"{marker}: the full history of {owner}/{repo} was re-ingested "
-            f"after the shallow clone was deepened -- {written} commits, up "
+    scope = (
+        f"{written} commits (the newest of {total_reachable} reachable commits)"
+        if truncated else f"{written} commits (all reachable)"
+    )
+    body = (f"{marker}: history of {owner}/{repo} was re-ingested "
+            f"after the shallow clone was deepened -- {scope}, up "
             f"to {(head or 'HEAD')[:12]}." if redo else
-            f"{marker}: {written} commits of {owner}/{repo} ingested up to "
+            f"{marker}: {scope} of {owner}/{repo} ingested up to "
             f"{(head or 'HEAD')[:12]}.")
     remember(
         workspace, body,
         mtype="semantic", source="hackdeepwiki",
         title=f"History ingested -- {owner}/{repo}",
         metadata={"kind": "history_backfill", "head": head or "",
-                  "count": written, "redo": redo},
+                  "count": written, "total_reachable": total_reachable,
+                  "truncated": truncated, "redo": redo},
     )
     _mark_ingested(workspace, "history_backfill", head=head or "",
-                   count=written, shallow=shallow)
+                   count=written, total_reachable=total_reachable,
+                   truncated=truncated, shallow=shallow)
     logger.info("Engraphis: backfilled %s commits of %s/%s into %s%s",
                 written, owner, repo, workspace,
                 " (shallow clone -- only the tip is available)" if shallow else "")
@@ -1167,6 +1179,20 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
     commits = _git_commit_range_detailed(clone_dir, last, head)
     if not commits:
         return
+    previous_state = (
+        (_ingest_state().get(workspace) or {}).get("history_backfill") or {}
+    )
+    previous_count = int(previous_state.get("count") or 0)
+    previous_total = int(previous_state.get("total_reachable") or previous_count)
+    ingested_count = previous_count + len(commits)
+    total_reachable = (
+        _git_history_count(clone_dir)
+        or previous_total + len(commits)
+    )
+    total_reachable = max(total_reachable, ingested_count)
+    truncated = bool(previous_state.get("truncated")) or (
+        total_reachable > ingested_count
+    )
     overview_id = str(
         ((_ingest_state().get(workspace) or {}).get("history_overview") or {}).get("id") or ""
     )
@@ -1183,7 +1209,9 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
             mtype="episodic", source="hackdeepwiki",
             title=f"New commits in {owner}/{repo} since {last[:12]}",
             metadata={"kind": "commit_history_batch", "since": last,
-                      "head": head, "count": len(batch)},
+                      "head": head, "count": len(batch),
+                      "total_reachable": total_reachable,
+                      "truncated": truncated},
         )["id"])
 
     # Keep extending the ONE chain the initial backfill built instead of
@@ -1203,14 +1231,22 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
     remember(
         workspace,
         f"__history_backfilled__ {owner}/{repo}: extended to {head[:12]} "
-        f"(+{len(commits)} commits).",
+        f"(+{len(commits)} commits; {ingested_count} ingested"
+        + (
+            f" of {total_reachable} reachable commits)."
+            if truncated else ", all reachable)."
+        ),
         mtype="semantic", source="hackdeepwiki",
         title=f"History extended to {head[:12]} -- {owner}/{repo}",
         metadata={"kind": "history_backfill", "head": head,
-                  "count": len(commits)},
+                  "count": ingested_count, "added_count": len(commits),
+                  "total_reachable": total_reachable,
+                  "truncated": truncated},
     )
     _mark_ingested(workspace, "history_backfill", head=head,
-                   count=len(commits), shallow=is_shallow_clone(clone_dir))
+                   count=ingested_count, added_count=len(commits),
+                   total_reachable=total_reachable, truncated=truncated,
+                   shallow=is_shallow_clone(clone_dir))
     logger.info("Engraphis: +%s new commits of %s/%s into %s",
                 len(commits), owner, repo, workspace)
 
@@ -1302,7 +1338,7 @@ def ensure_deep_clone(clone_dir: Optional[str]) -> bool:
 
 
 def _git_history_records(clone_dir: str) -> list[dict]:
-    """Every commit reachable from HEAD, newest first, as structured records.
+    """The newest bounded commit history, newest first, as structured records.
 
     One `git log` call; the unit separator keeps subjects containing spaces or
     colons parseable, which a plain "%h %s" line does not.
@@ -1327,6 +1363,19 @@ def _git_history_records(clone_dir: str) -> list[dict]:
         records.append({"sha": parts[0], "short": parts[1], "date": parts[2],
                         "author": parts[3], "subject": parts[4]})
     return records
+
+
+def _git_history_count(clone_dir: str) -> int:
+    """Number of commits reachable from HEAD, or zero when git cannot answer."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", clone_dir, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120,
+        )
+        return int(out.stdout.strip()) if out.returncode == 0 else 0
+    except Exception:  # noqa: BLE001 - history memory is best-effort
+        return 0
 
 
 def _record_line(record: dict) -> str:
@@ -1448,7 +1497,9 @@ def _write_history_checkpoints(workspace: str, owner: str, repo: str,
     moved" -- each one summarising a stride of commits with the churn, the
     directories that changed and the milestone subjects in it. Only COMPLETE
     windows are written and the count of written windows is remembered, so a
-    later wiki save only pays for the windows that closed since.
+    later wiki save only pays for the windows that closed since. A partial
+    trailing window is deliberately left open: when more commits arrive it
+    must be rewritten as one complete checkpoint, never marked done early.
     """
     if not clone_dir:
         return 0
@@ -1464,10 +1515,10 @@ def _write_history_checkpoints(workspace: str, owner: str, repo: str,
     # The repo outgrew the stride we picked: widen the window instead of
     # writing an unbounded number of checkpoints. Two old windows collapse
     # into one new one, so the count halves with the stride.
-    while (total + stride - 1) // stride > _MAX_CHECKPOINTS:
+    while total // stride > _MAX_CHECKPOINTS:
         stride *= 2
         done //= 2
-    windows = (total + stride - 1) // stride
+    windows = total // stride
     if windows <= done:
         return 0
 

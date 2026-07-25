@@ -22,8 +22,8 @@ It ships as a **single portable binary** — an AppImage on Linux, a `.exe` on W
 - **Automatic wiki generation** for any public or token-authenticated GitHub / GitLab / Bitbucket repository, or a local directory.
 - **Visual architecture diagrams** rendered with Mermaid, generated alongside the docs.
 - **Ask & Deep Research** — a chat panel grounded in the repo's own code (RAG over embeddings), plus a multi-iteration research mode for harder questions.
-- **Code Editing mode (Devin-style)** — flip the ⚙ toggle in the chat and an embedded [opencode](https://opencode.ai) coding agent works directly on the local checkout of the repo: it reads, edits, runs commands and builds, full-auto. The chat goes fullscreen split-view — you keep talking on the left while its edits, diffs and shell output stream live in the right panel. It uses the same model you selected for the chat, knows the generated wiki (via MCP), and verifies the open wiki release matches the commit on disk before editing. The opencode binary ships inside the AppImage/exe, with an in-app "Update agent" that installs newer releases into the portable `DATABASE/` folder.
-- **Persistent memory (Engraphis)** — every wiki release gets its own durable, explainable memory store powered by [Engraphis](https://github.com/Coding-Dev-Tools/engraphis) (Apache-2.0, local-first, fully offline). The chat and the code-editing agent share it: decisions, preferences and findings survive across sessions, scoped strictly to that wiki version (never global). The full Engraphis dashboard is embedded right inside the app — the 🧠 *Engraphis Memory* button in the wiki sidebar opens the current release's memory, and the *Evolution* button next to the theme toggle opens a cross-release workspace that auto-records what changed between wiki versions (commit ranges, messages, diffstat). Everything lives in `DATABASE/engraphis/engraphis.db` — one portable SQLite file. The latest Engraphis is pulled from upstream automatically on every build (`scripts/prepare_assets.py`).
+- **Code Editing mode (Devin-style)** — flip the ⚙ toggle in the chat and an embedded [opencode](https://opencode.ai) coding agent works directly on the local checkout of the repo: it reads, edits, runs commands and builds, full-auto. The chat goes fullscreen split-view — you keep talking on the left while its edits, diffs and shell output stream live in the right panel. It uses the same model you selected for the chat, knows the generated wiki (via MCP), and verifies the open wiki release matches the commit on disk before editing. The OpenCode binary ships inside the AppImage/exe; the in-app updater only installs the application-approved release after SHA-256 and executable checks, retaining the previous binary for rollback.
+- **Persistent memory (Engraphis)** — every wiki release gets its own durable, explainable memory store powered by [Engraphis](https://github.com/Coding-Dev-Tools/engraphis) (Apache-2.0, local-first, fully offline). The chat and the code-editing agent share it: decisions, preferences and findings survive across sessions, scoped strictly to that wiki version (never global). The full Engraphis dashboard is embedded right inside the app — the 🧠 *Engraphis Memory* button in the wiki sidebar opens the current release's memory, and the *Evolution* button next to the theme toggle opens a cross-release workspace that auto-records what changed between wiki versions (commit ranges, messages, diffstat). Everything lives in `DATABASE/engraphis/engraphis.db` — one portable SQLite file. Builds use the exact Engraphis commit locked in `api/poetry.lock`.
 - **Fully portable** — download one file, run it, done. No containers, no services to stand up, no `.env` to hand-edit before your first run.
 - **Local-first by default** — the packaged app auto-discovers a running Ollama instance and uses it for both generation and embeddings, so it works fully offline with zero API keys.
 - **Bring your own provider** when you want cloud-grade models: OpenAI, Google Gemini, Anthropic Claude (API key or a Pro/Max subscription token from `claude login`), OpenRouter, AWS Bedrock, Azure OpenAI, Alibaba Dashscope, or any OpenAI-compatible API (Novita, Together, Groq, vLLM, LM Studio, etc.) via the custom-endpoint option.
@@ -38,7 +38,12 @@ It ships as a **single portable binary** — an AppImage on Linux, a `.exe` on W
 3. It starts its own local server, waits for it to come up, and opens your browser automatically at `http://127.0.0.1:<port>`.
 4. Paste a repository URL and generate your first wiki. If you have Ollama running locally, no further setup is needed — otherwise open the model settings panel and add an API key for the provider of your choice.
 
-Every push to `main` publishes its own versioned pre-release, `vX.Y.Z-pre.<build>`, so development builds never overwrite each other and you can always go back to (or link to) a specific one — the ten most recent are kept. Tagged commits (`vX.Y.Z`) publish the stable release. Both platforms are built and attached automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml).
+Every push to `main` publishes its own neutral development pre-release,
+`build-<run>-<commit>`, so automatic builds never claim a product version,
+never overwrite each other, and remain directly linkable — the ten most
+recent are kept. Explicitly tagged commits publish the stable release under
+the exact tag chosen by the maintainer. Both platforms are built and attached
+automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Configuring a provider
 
@@ -71,16 +76,22 @@ The frontend proxies API/WebSocket calls to `SERVER_BASE_URL` (defaults to `http
 ## Building the portable binaries yourself
 
 ```bash
+python -m pip install poetry==2.4.1
+poetry -C api sync --with build --without dev
+npm ci --legacy-peer-deps
 npm run build
 python scripts/prepare_assets.py linux   # or "windows"
-pip install poetry pyinstaller
-poetry -C api install --only main
-pyinstaller hackdeepwiki.spec
+pyinstaller --noconfirm --clean hackdeepwiki.spec
 ```
 
 This bundles the built Next.js frontend, the FastAPI backend, and a Node.js runtime into a single PyInstaller binary (`scripts/launcher.py` is the entrypoint), which the Linux job then wraps into an AppImage.
 
-`prepare_assets.py` also installs the **latest Engraphis** (memory engine + embedded dashboard) from upstream on every build — GitHub `main` first, PyPI as fallback. It is installed *without* extras on purpose: the core is numpy-only and the dashboard reuses the already-bundled FastAPI/uvicorn, so the memory feature adds no heavy dependencies (no torch/sentence-transformers — recall runs offline on Engraphis's deterministic embedder). If both sources are unreachable and no `engraphis` is installed, the build aborts loudly via `_REQUIRED_IMPORTS` in `hackdeepwiki.spec`.
+`prepare_assets.py` verifies the **locked Engraphis 1.0.1 commit** (memory engine + embedded dashboard); it never installs `main` or an ambient fallback during a build. It is installed *without* extras on purpose: the core is numpy-only and the dashboard reuses the already-bundled FastAPI/uvicorn, so the memory feature adds no heavy dependencies (no torch/sentence-transformers — recall runs offline on Engraphis's deterministic embedder). A missing or mismatched version aborts the build loudly.
+
+Evolution backfill is deliberately bounded to the newest 2,000 reachable
+commits. Its stored marker and metadata report both the reachable total and
+`truncated=true` when that limit is hit, so a partial history is never
+presented as complete.
 
 ## 🤝 Contributing
 

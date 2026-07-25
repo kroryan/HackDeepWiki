@@ -180,7 +180,10 @@ async def build_code_session_context(
         "- BUILD mode: only when the user explicitly asks you to implement, fix, "
         "refactor, apply, or change something ('do it', 'fix it', 'implement option 2'). "
         "Then act end-to-end without asking for confirmation, verify (build/tests where "
-        "sensible), and report clearly what you changed and why.\n"
+        "sensible), and report clearly what you changed and why. Before claiming that "
+        "you created or changed a file, inspect the final git diff/status (or reread "
+        "the file in a non-git directory). Never report a mutation that your tools did "
+        "not actually perform.\n"
         "When in doubt, stay in PLAN/ANSWER mode and end by offering to implement. "
         "Reply to the user in the language they write in."
     )

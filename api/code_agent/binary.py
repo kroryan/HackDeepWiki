@@ -19,6 +19,7 @@ a killed download never leaves a half-written binary behind.
 """
 
 import logging
+import hashlib
 import os
 import platform
 import re
@@ -28,8 +29,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import urllib.request
 import zipfile
+from contextlib import contextmanager
 from typing import Awaitable, Callable, Optional
 
 from api.data_root import get_data_root
@@ -42,6 +45,19 @@ logger = logging.getLogger(__name__)
 # old repo's assets 404.
 OPENCODE_VERSION = "v1.18.5"
 GITHUB_REPO = "anomalyco/opencode"
+
+# SHA-256 digests published by GitHub for the immutable v1.18.5 release
+# assets. Runtime and build-time downloads both use this table.
+OPENCODE_ARCHIVE_SHA256 = {
+    "opencode-darwin-arm64.zip": "85f6f9eece174d3bf0c92588086a65284388b891256c8f4102dc317d476ffca6",
+    "opencode-darwin-x64.zip": "f972e376cf7d6af855919093674123f6912ec8388af83c9aee2c2e9d6e536203",
+    "opencode-linux-arm64.tar.gz": "18b643362fdf0b8d5b8711b3e160dafb4e68d0bfc00288f56fd1298fd72da69d",
+    "opencode-linux-x64.tar.gz": "cd4a2557a3d6550f27cb5c0257ebe8d73388bb34beda8b6121e6428a74c1eae2",
+    "opencode-windows-arm64.zip": "33959ea655342f60bf01a46e8ac836f9f3627f76dc0fcb3665693f60c76c56f4",
+    "opencode-windows-x64.zip": "755b9ff083ef4f444a9be1fb59803729a2158e448a526317fa3e54de464b515b",
+}
+
+_INSTALL_THREAD_LOCK = threading.Lock()
 
 # Optional callback: awaited with one human-readable progress line at a time.
 ProgressCb = Optional[Callable[[str], Awaitable[None]]]
@@ -123,43 +139,151 @@ def installed_opencode_version(binary_path: str) -> Optional[str]:
 
 
 def _download_url(version: str) -> str:
-    if version == "latest":
-        return f"https://github.com/{GITHUB_REPO}/releases/latest/download/{release_asset_name()}"
     return f"https://github.com/{GITHUB_REPO}/releases/download/{version}/{release_asset_name()}"
 
 
-def _extract_binary(archive_path: str, dest_dir: str) -> str:
+@contextmanager
+def _installation_lock(dest_dir: str):
+    """Serialize installs across asyncio workers *and* app processes.
+
+    The previous fixed ``opencode.tmp`` path let concurrent first-use
+    downloads overwrite/truncate each other. A thread lock plus an OS file
+    lock protects the critical section on Linux/macOS and Windows.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    lock_path = os.path.join(dest_dir, ".install.lock")
+    with _INSTALL_THREAD_LOCK:
+        with open(lock_path, "a+b") as lock_file:
+            if sys.platform == "win32":
+                import msvcrt
+
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def verify_archive_checksum(
+    archive_path: str,
+    asset: str,
+    version: str = OPENCODE_VERSION,
+) -> None:
+    """Reject altered/truncated archives before extraction."""
+    if version != OPENCODE_VERSION:
+        raise RuntimeError(
+            f"OpenCode version {version!r} is not an approved pinned release"
+        )
+    expected = OPENCODE_ARCHIVE_SHA256.get(asset)
+    if not expected:
+        raise RuntimeError(f"No approved SHA-256 is configured for {asset}")
+    digest = hashlib.sha256()
+    with open(archive_path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if not hmac_compare_digest(actual, expected):
+        raise RuntimeError(
+            f"SHA-256 mismatch for {asset}: expected {expected}, got {actual}"
+        )
+
+
+def hmac_compare_digest(left: str, right: str) -> bool:
+    # Small wrapper keeps the cryptographic comparison mockable in tests
+    # without importing the wider security/config module.
+    import hmac
+
+    return hmac.compare_digest(left, right)
+
+
+def _extract_binary(
+    archive_path: str,
+    dest_dir: str,
+    expected_version: str = OPENCODE_VERSION,
+) -> str:
     """Extract the single opencode binary out of the release archive into
     dest_dir (atomically: extract to a temp name, chmod, then rename)."""
     name = opencode_binary_name()
     final_path = os.path.join(dest_dir, name)
-    tmp_path = os.path.join(dest_dir, name + ".tmp")
+    fd, tmp_path = tempfile.mkstemp(prefix=f".{name}-", suffix=".tmp", dir=dest_dir)
+    os.close(fd)
 
     def _write_member(fileobj) -> None:
         with open(tmp_path, "wb") as out:
             shutil.copyfileobj(fileobj, out)
 
-    if archive_path.endswith(".zip"):
-        with zipfile.ZipFile(archive_path) as zf:
-            members = [m for m in zf.namelist() if os.path.basename(m) == name]
-            if not members:
-                raise RuntimeError(f"No {name!r} inside {os.path.basename(archive_path)}")
-            with zf.open(members[0]) as f:
-                _write_member(f)
-    else:
-        with tarfile.open(archive_path, "r:gz") as tf:
-            members = [m for m in tf.getmembers() if os.path.basename(m.name) == name and m.isfile()]
-            if not members:
-                raise RuntimeError(f"No {name!r} inside {os.path.basename(archive_path)}")
-            extracted = tf.extractfile(members[0])
-            if extracted is None:
-                raise RuntimeError(f"Could not extract {members[0].name}")
-            with extracted as f:
-                _write_member(f)
+    try:
+        if archive_path.endswith(".zip"):
+            with zipfile.ZipFile(archive_path) as zf:
+                members = [m for m in zf.namelist() if os.path.basename(m) == name]
+                if not members:
+                    raise RuntimeError(f"No {name!r} inside {os.path.basename(archive_path)}")
+                with zf.open(members[0]) as f:
+                    _write_member(f)
+        else:
+            with tarfile.open(archive_path, "r:gz") as tf:
+                members = [
+                    m for m in tf.getmembers()
+                    if os.path.basename(m.name) == name and m.isfile()
+                ]
+                if not members:
+                    raise RuntimeError(f"No {name!r} inside {os.path.basename(archive_path)}")
+                extracted = tf.extractfile(members[0])
+                if extracted is None:
+                    raise RuntimeError(f"Could not extract {members[0].name}")
+                with extracted as f:
+                    _write_member(f)
 
-    os.chmod(tmp_path, os.stat(tmp_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    os.replace(tmp_path, final_path)
-    return final_path
+        os.chmod(
+            tmp_path,
+            os.stat(tmp_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
+        )
+        _version_cache.pop(tmp_path, None)
+        extracted_version = installed_opencode_version(tmp_path)
+        if extracted_version != expected_version.removeprefix("v"):
+            raise RuntimeError(
+                "Downloaded OpenCode binary reported "
+                f"{extracted_version or 'no version'}, expected "
+                f"{expected_version.removeprefix('v')}"
+            )
+
+        # Keep the last known-good binary as a rollback. The candidate has
+        # already executed successfully, and both renames are atomic.
+        backup_path = final_path + ".previous"
+        had_previous = os.path.isfile(final_path)
+        if had_previous:
+            os.replace(final_path, backup_path)
+        try:
+            os.replace(tmp_path, final_path)
+        except Exception:
+            if had_previous and os.path.isfile(backup_path):
+                os.replace(backup_path, final_path)
+            raise
+        return final_path
+    finally:
+        _version_cache.pop(tmp_path, None)
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def download_opencode(version: str = OPENCODE_VERSION, progress_cb=None) -> str:
@@ -172,8 +296,12 @@ def download_opencode(version: str = OPENCODE_VERSION, progress_cb=None) -> str:
     """
     dest_dir = override_bin_dir()
     os.makedirs(dest_dir, exist_ok=True)
-    url = _download_url(version)
-    asset = release_asset_name()
+    if version in ("", "pinned"):
+        version = OPENCODE_VERSION
+    if version != OPENCODE_VERSION:
+        raise RuntimeError(
+            f"Only the verified pinned OpenCode release {OPENCODE_VERSION} can be installed"
+        )
 
     def report(line: str) -> None:
         logger.info("opencode download: %s", line)
@@ -183,51 +311,67 @@ def download_opencode(version: str = OPENCODE_VERSION, progress_cb=None) -> str:
             except Exception:  # noqa: BLE001 - progress must never break the download
                 pass
 
-    report(f"Downloading {asset} ({version}) from GitHub...")
-    tmp_archive = None
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "HackDeepWiki"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            total = int(resp.headers.get("Content-Length") or 0)
-            fd, tmp_archive = tempfile.mkstemp(
-                suffix=os.path.splitext(asset)[1], dir=dest_dir
-            )
-            done = 0
-            last_pct = -10
-            with os.fdopen(fd, "wb") as out:
-                while True:
-                    chunk = resp.read(1024 * 256)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    done += len(chunk)
-                    if total:
-                        pct = int(done * 100 / total)
-                        if pct >= last_pct + 10:
-                            last_pct = pct
-                            report(f"Downloading opencode... {pct}% ({done // (1024*1024)} MB)")
-        report("Extracting...")
-        final_path = _extract_binary(tmp_archive, dest_dir)
-        # The version cache is keyed by path; an update writes a NEW binary
-        # to the SAME path, so the stale entry must go before re-probing.
+    with _installation_lock(dest_dir):
+        final_path = os.path.join(dest_dir, opencode_binary_name())
         _version_cache.pop(final_path, None)
-        ver = installed_opencode_version(final_path)
-        if not ver:
-            raise RuntimeError("Downloaded opencode binary did not run (--version failed)")
-        report(f"opencode {ver} installed at {final_path}")
-        return final_path
-    except Exception as e:
-        raise RuntimeError(
-            f"Could not download opencode from {url}: {e}. "
-            "Check your internet connection, or place an opencode binary at "
-            f"{os.path.join(dest_dir, opencode_binary_name())} manually."
-        ) from e
-    finally:
-        if tmp_archive and os.path.exists(tmp_archive):
-            try:
-                os.remove(tmp_archive)
-            except OSError:
-                pass
+        if (
+            os.path.isfile(final_path)
+            and installed_opencode_version(final_path) == version.removeprefix("v")
+        ):
+            report(f"Verified OpenCode {version.removeprefix('v')} is already installed")
+            return final_path
+
+        url = _download_url(version)
+        asset = release_asset_name()
+        report(f"Downloading {asset} ({version}) from GitHub...")
+        tmp_archive = None
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "HackDeepWiki"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
+                fd, tmp_archive = tempfile.mkstemp(
+                    suffix=".zip" if asset.endswith(".zip") else ".tar.gz",
+                    dir=dest_dir,
+                )
+                done = 0
+                last_pct = -10
+                with os.fdopen(fd, "wb") as out:
+                    while True:
+                        chunk = resp.read(1024 * 256)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        done += len(chunk)
+                        if total:
+                            pct = int(done * 100 / total)
+                            if pct >= last_pct + 10:
+                                last_pct = pct
+                                report(
+                                    f"Downloading opencode... {pct}% "
+                                    f"({done // (1024*1024)} MB)"
+                                )
+            report("Verifying SHA-256...")
+            verify_archive_checksum(tmp_archive, asset, version)
+            report("Extracting and validating executable...")
+            final_path = _extract_binary(tmp_archive, dest_dir, version)
+            _version_cache.pop(final_path, None)
+            ver = installed_opencode_version(final_path)
+            if not ver:
+                raise RuntimeError("Downloaded opencode binary did not run (--version failed)")
+            report(f"opencode {ver} installed at {final_path}")
+            return final_path
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not install verified opencode from {url}: {e}. "
+                "Check your internet connection, or place an opencode binary at "
+                f"{os.path.join(dest_dir, opencode_binary_name())} manually."
+            ) from e
+        finally:
+            if tmp_archive and os.path.exists(tmp_archive):
+                try:
+                    os.remove(tmp_archive)
+                except OSError:
+                    pass
 
 
 async def ensure_opencode(progress_cb: ProgressCb = None) -> str:

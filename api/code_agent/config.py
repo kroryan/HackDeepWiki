@@ -18,6 +18,8 @@ The config also:
 """
 
 import json
+import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -27,6 +29,13 @@ from typing import Optional, Tuple
 from api.data_root import get_data_root
 
 logger = logging.getLogger(__name__)
+
+# Provider restart fingerprints are intentionally opaque. A plain JSON
+# fingerprint made API keys discoverable in memory dumps/logging, while the
+# old presence-only marker failed to restart an instance when k1 changed to
+# k2. A process-local HMAC preserves equality semantics without retaining the
+# credential in the signature.
+_PROVIDER_SIGNATURE_KEY = secrets.token_bytes(32)
 
 
 def backend_port() -> int:
@@ -225,11 +234,21 @@ def provider_signature(provider: str, api_key: Optional[str], api_endpoint: Opti
     opencode sessions persist on disk across restarts. Native cloud
     providers produce no provider block, so model switches there never
     restart anything."""
-    import json as _json
     provider_config, extra_env, _ = map_provider(provider, model, api_key, api_endpoint)
-    resolved = _json.dumps(provider_config, sort_keys=True)
-    return (f"{(provider or '').lower()}|{api_endpoint or ''}|{'k' if api_key else ''}"
-            f"|{sorted(extra_env)}|{resolved}")
+    resolved = json.dumps(
+        {
+            "provider": (provider or "").lower(),
+            "provider_config": provider_config,
+            "extra_env": extra_env,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hmac.new(
+        _PROVIDER_SIGNATURE_KEY,
+        resolved,
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def write_opencode_config(repo_key: str, provider: str, model: str,

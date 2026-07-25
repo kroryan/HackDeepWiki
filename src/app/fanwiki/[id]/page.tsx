@@ -173,7 +173,7 @@ export default function FanwikiReaderPage() {
         setError(reason instanceof Error ? reason.message : messages.fanwiki?.loadError || 'Article load failed.');
       })
       .finally(() => setIsPageLoading(false));
-  }, [fanwikiId, currentPath, pageRevision]);
+  }, [fanwikiId, currentPath, pageRevision, messages.fanwiki?.loadError]);
 
   useEffect(() => {
     const normalized = query.trim();
@@ -279,7 +279,13 @@ export default function FanwikiReaderPage() {
     } finally {
       setToolRunning(null);
     }
-  }, [imagesDir, metadata, toolRunning]);
+  }, [
+    imagesDir,
+    metadata,
+    toolRunning,
+    messages.fanwiki?.imagesAttachError,
+    messages.fanwiki?.selectImageFolderFirst,
+  ]);
 
   const visibleEntries = query ? results : indexEntries;
 

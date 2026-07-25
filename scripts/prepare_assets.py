@@ -1,10 +1,11 @@
 import os
 import sys
 import shutil
+import hashlib
+import subprocess
 import urllib.request
 import tarfile
 import tempfile
-import zipfile
 
 # Make the api package importable so the opencode version pin lives in ONE
 # place (api/code_agent/binary.py) -- the runtime lazy-download and this
@@ -20,7 +21,7 @@ def copy_dir(src, dest):
     shutil.copytree(src, dest)
     print(f"Copied {src} -> {dest}")
 
-def download_file(url, dest_path):
+def download_file(url, dest_path, expected_sha256=None):
     print(f"Downloading {url} to {dest_path}...")
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     
@@ -31,16 +32,34 @@ def download_file(url, dest_path):
     )
     with urllib.request.urlopen(req) as response, open(dest_path, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
+    if expected_sha256:
+        digest = hashlib.sha256()
+        with open(dest_path, "rb") as downloaded:
+            for chunk in iter(lambda: downloaded.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual != expected_sha256:
+            raise RuntimeError(
+                f"SHA-256 mismatch for {os.path.basename(dest_path)}: "
+                f"expected {expected_sha256}, got {actual}"
+            )
     print("Download finished.")
 
 def setup_node_binary(platform):
     bin_dir = os.path.abspath("bin")
     os.makedirs(bin_dir, exist_ok=True)
+    dest_path = os.path.join(
+        bin_dir,
+        "node.exe" if platform == "windows" else "node",
+    )
     
     if platform == "windows":
         node_url = "https://nodejs.org/dist/v24.18.0/win-x64/node.exe"
-        dest_path = os.path.join(bin_dir, "node.exe")
-        download_file(node_url, dest_path)
+        download_file(
+            node_url,
+            dest_path,
+            "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
+        )
     elif platform == "linux":
         node_url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz"
         
@@ -49,7 +68,11 @@ def setup_node_binary(platform):
             temp_tar_path = temp_tar.name
             
         try:
-            download_file(node_url, temp_tar_path)
+            download_file(
+                node_url,
+                temp_tar_path,
+                "55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742",
+            )
             print("Extracting Node.js binary from tarball...")
             with tarfile.open(temp_tar_path, "r:xz") as tar:
                 # Find the bin/node file inside the tarball
@@ -61,8 +84,8 @@ def setup_node_binary(platform):
                         
                 if node_member:
                     # Extract it
-                    node_member.name = "node" # Rename to node
-                    tar.extract(node_member, path=bin_dir)
+                    node_member.name = "node"  # Rename to node
+                    tar.extract(node_member, path=bin_dir, filter="data")
                     print(f"Extracted Node.js to {os.path.join(bin_dir, 'node')}")
                     # Set executable permissions
                     os.chmod(os.path.join(bin_dir, "node"), 0o755)
@@ -75,14 +98,29 @@ def setup_node_binary(platform):
     else:
         print(f"Unknown platform: {platform}")
         sys.exit(1)
+    node_version = subprocess.run(
+        [dest_path, "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    ).stdout.strip()
+    if node_version != "v24.18.0":
+        raise RuntimeError(f"Bundled Node reported {node_version!r}, expected 'v24.18.0'")
+    print(f"Node {node_version} executable validated at {dest_path}")
 
 def setup_opencode_binary(platform):
     """Download the pinned opencode CLI release (anomalyco/opencode) into
     bin/ so the AppImage/.exe ships with the code agent embedded. Mirrors
-    setup_node_binary. Non-fatal on failure: the app lazy-downloads at
-    runtime into DATABASE/opencode/bin (api/code_agent/binary.py), so a
-    flaky GitHub download must not fail the whole build."""
-    from api.code_agent.binary import GITHUB_REPO, OPENCODE_VERSION
+    setup_node_binary. Release builds are strict: an executable advertised
+    with Code Editing mode must
+    contain a checksum-verified, runnable agent."""
+    from api.code_agent.binary import (
+        GITHUB_REPO,
+        OPENCODE_VERSION,
+        _extract_binary,
+        verify_archive_checksum,
+    )
 
     bin_dir = os.path.abspath("bin")
     os.makedirs(bin_dir, exist_ok=True)
@@ -100,46 +138,20 @@ def setup_opencode_binary(platform):
         temp_path = temp_file.name
     try:
         download_file(url, temp_path)
-        print(f"Extracting {binary_name} from {asset}...")
-        if asset.endswith(".zip"):
-            with zipfile.ZipFile(temp_path) as zf:
-                members = [m for m in zf.namelist() if os.path.basename(m) == binary_name]
-                if not members:
-                    raise RuntimeError(f"{binary_name} not found inside {asset}")
-                with zf.open(members[0]) as src, open(dest_path, "wb") as out:
-                    shutil.copyfileobj(src, out)
-        else:
-            with tarfile.open(temp_path, "r:gz") as tar:
-                members = [m for m in tar.getmembers()
-                           if os.path.basename(m.name) == binary_name and m.isfile()]
-                if not members:
-                    raise RuntimeError(f"{binary_name} not found inside {asset}")
-                extracted = tar.extractfile(members[0])
-                with extracted, open(dest_path, "wb") as out:
-                    shutil.copyfileobj(extracted, out)
-        os.chmod(dest_path, 0o755)
+        print(f"Verifying SHA-256 for {asset}...")
+        verify_archive_checksum(temp_path, asset, OPENCODE_VERSION)
+        print(f"Extracting and executing {binary_name} validation...")
+        installed = _extract_binary(temp_path, bin_dir, OPENCODE_VERSION)
+        if installed != dest_path:
+            raise RuntimeError(f"OpenCode was installed at unexpected path {installed}")
         print(f"opencode {OPENCODE_VERSION} bundled at {dest_path}")
-    except Exception as e:  # noqa: BLE001 - see docstring: never fail the build on this
-        print(f"Warning: could not bundle opencode ({e}). "
-              "The app will lazy-download it at runtime on first use of Code Editing mode.")
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
 
 def setup_engraphis():
-    """Install/refresh the Engraphis memory engine (api/engraphis_integration.py)
-    from upstream so EVERY build ships the latest release -- the upstream repo
-    is effectively 'cloned automatically during compilation' via pip's git
-    support. Order of attempts:
-
-      1. latest main from GitHub (pip install git+...)
-      2. latest published release from PyPI (fallback when git/network to
-         GitHub is unavailable)
-      3. keep whatever is already installed (warn) -- the hard gate lives in
-         hackdeepwiki.spec's _REQUIRED_IMPORTS, which aborts the build if
-         engraphis is missing entirely, so a broken bundle can never ship
-         silently.
+    """Require the exact Engraphis version locked by Poetry.
 
     Deliberately installed WITHOUT extras: the [server]/[mcp] extras drag in
     sentence-transformers -> torch (gigabytes) and an `mcp` pin this codebase
@@ -147,30 +159,22 @@ def setup_engraphis():
     dashboard reuses the fastapi/uvicorn already bundled; recall runs fully
     offline on Engraphis's deterministic embedder.
     """
-    import subprocess
+    import importlib.metadata
+    from api.engraphis_version import ENGRAPHIS_VERSION
 
-    print("Installing latest Engraphis (memory engine + embedded dashboard)...")
-    attempts = [
-        ["--upgrade", "git+https://github.com/Coding-Dev-Tools/engraphis@main"],
-        ["--upgrade", "engraphis"],
-    ]
-    for extra_args in attempts:
-        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + extra_args
-        try:
-            result = subprocess.run(cmd, timeout=600)
-            if result.returncode == 0:
-                break
-            print(f"Warning: {' '.join(cmd)} failed (exit {result.returncode}); trying fallback...")
-        except Exception as e:  # noqa: BLE001 - fall through to the next source
-            print(f"Warning: {' '.join(cmd)} failed ({e}); trying fallback...")
     try:
-        import importlib.metadata
         version = importlib.metadata.version("engraphis")
-        print(f"engraphis {version} present in the build environment.")
-    except Exception:
-        print("Warning: engraphis is NOT installed. The PyInstaller spec will "
-              "abort the build (see _REQUIRED_IMPORTS in hackdeepwiki.spec); "
-              "install it manually with: pip install engraphis")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            "Engraphis is missing from the build environment; run the locked "
+            "Poetry install before preparing assets."
+        ) from exc
+    if version != ENGRAPHIS_VERSION:
+        raise RuntimeError(
+            f"Engraphis {version} is installed, but the build requires "
+            f"exactly {ENGRAPHIS_VERSION}."
+        )
+    print(f"engraphis {version} matches the locked build contract.")
 
 
 def setup_tiktoken_cache():
@@ -217,7 +221,7 @@ def main():
     # 2.5. Bundle the opencode coding agent (Code Editing mode)
     setup_opencode_binary(platform)
 
-    # 2.7. Install/refresh the Engraphis memory engine (latest on every build)
+    # 2.7. Verify the locked Engraphis memory engine
     setup_engraphis()
 
     # 3. Setup tiktoken cache

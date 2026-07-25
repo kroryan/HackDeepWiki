@@ -32,7 +32,10 @@ const MAX_EVENTS = 500;
 // churns much faster than the curated activity feed -- separate buffer.
 const MAX_DEBUG_EVENTS = 1000;
 
-export function useCodeAgentEvents(session: CodeSessionInfo | null) {
+export function useCodeAgentEvents(
+  session: CodeSessionInfo | null,
+  authorizationCode?: string
+) {
   const [events, setEvents] = useState<CodeAgentEvent[]>([]);
   const [debugEvents, setDebugEvents] = useState<CodeAgentEvent[]>([]);
   const [status, setStatus] = useState<CodeAgentStatus>('idle');
@@ -99,9 +102,12 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
       }
       setStatus('connecting');
       try {
-        const url = await getBackendWebSocketUrl('/ws/code/events');
+        const url = new URL(await getBackendWebSocketUrl('/ws/code/events'));
+        if (authorizationCode) {
+          url.searchParams.set('authorization_code', authorizationCode);
+        }
         if (cancelled) return;
-        ws = new WebSocket(url);
+        ws = new WebSocket(url.toString());
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -180,7 +186,7 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
       wsRef.current = null;
     };
     // Reconnect when the agent session identity changes.
-  }, [session?.repo_key, session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.repo_key, session?.session_id, authorizationCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { events, debugEvents, status, working, diffTick };
 }

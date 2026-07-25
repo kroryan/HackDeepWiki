@@ -217,12 +217,7 @@ def run_fastapi_server(backend_port):
     import uvicorn
     # Import the app inside the thread to make sure config environment variables are set
     from api.api import app
-    import google.generativeai as genai
-    from api.config import GOOGLE_API_KEY
-    
-    if GOOGLE_API_KEY:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        
+
     uvicorn.run(app, host="127.0.0.1", port=backend_port)
 
 def is_port_open(port):

@@ -86,6 +86,25 @@ _NONCE_LEN = 12
 _ENC_PREFIX = "enc:v1:"
 
 
+def authorization_is_valid(value: str | None) -> bool:
+    """Validate the shared UI authorization code in constant time.
+
+    Importing the configuration lazily avoids a cycle: ``api.config`` imports
+    model clients which themselves use helpers from this module.  Keeping the
+    primitive here lets HTTP routes and WebSockets enforce exactly the same
+    policy instead of gradually drifting into separate security boundaries.
+    """
+    from api.config import WIKI_AUTH_CODE, WIKI_AUTH_MODE
+
+    if not WIKI_AUTH_MODE:
+        return True
+    return bool(
+        value
+        and WIKI_AUTH_CODE
+        and hmac.compare_digest(WIKI_AUTH_CODE, value)
+    )
+
+
 def _derive_key(passphrase: str, salt: bytes) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt, _PBKDF2_ITERATIONS, dklen=32)
 

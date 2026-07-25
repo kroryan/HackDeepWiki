@@ -15,9 +15,9 @@ build, so atexit is the reliable path there).
 
 import asyncio
 import atexit
+import hashlib
 import logging
 import os
-import re
 import socket
 import subprocess
 import sys
@@ -69,11 +69,41 @@ def repo_key_for(repo_url: str, repo_type: str) -> tuple[str, str]:
             f"Code editing is not available for '{repo_type}' sources (no code to edit).",
         )
     if repo_type == "local":
-        repo_dir = os.path.abspath(repo_url)
+        repo_dir = os.path.realpath(os.path.abspath(repo_url))
         if not os.path.isdir(repo_dir):
             raise CodeAgentError("repo_not_cloned", f"Local path does not exist: {repo_dir}")
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", repo_dir.strip(os.sep))
-        return f"local_{safe}", repo_dir
+        configured_roots = [
+            os.path.realpath(os.path.abspath(root))
+            for root in os.environ.get("HACKDEEPWIKI_ALLOWED_LOCAL_ROOTS", "").split(os.pathsep)
+            if root.strip()
+        ]
+        if configured_roots:
+            allowed = False
+            for root in configured_roots:
+                try:
+                    if os.path.commonpath([repo_dir, root]) == root:
+                        allowed = True
+                        break
+                except ValueError:
+                    # Different Windows drives can have no common path.
+                    continue
+            if not allowed:
+                raise CodeAgentError(
+                    "local_path_forbidden",
+                    "The local repository is outside HACKDEEPWIKI_ALLOWED_LOCAL_ROOTS.",
+                )
+        else:
+            bind_host = os.environ.get("HACKDEEPWIKI_HOST", "127.0.0.1").strip().lower()
+            if bind_host not in {"127.0.0.1", "localhost", "::1"}:
+                raise CodeAgentError(
+                    "local_path_forbidden",
+                    "Local code editing on a non-loopback server requires "
+                    "HACKDEEPWIKI_ALLOWED_LOCAL_ROOTS.",
+                )
+        # A repo key crosses the browser boundary; deriving it from the full
+        # absolute path leaked the user's directory tree in every request.
+        digest = hashlib.sha256(repo_dir.encode("utf-8")).hexdigest()[:24]
+        return f"local_{digest}", repo_dir
 
     from api.data_pipeline import _local_clone_dir
     repo_dir = _local_clone_dir(repo_url, repo_type)
@@ -97,6 +127,33 @@ def repo_head_commit(repo_dir: str) -> Optional[str]:
     except (subprocess.TimeoutExpired, OSError):
         pass
     return None
+
+
+def repo_worktree_fingerprint(repo_dir: str) -> Optional[str]:
+    """Stable fingerprint of HEAD plus tracked/untracked working-tree state.
+
+    This lets the transport verify a model's claimed mutation instead of
+    trusting its prose. Non-git local directories return ``None`` and fall
+    back to OpenCode session-diff/tool evidence.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            timeout=10,
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=repo_dir,
+            capture_output=True,
+            timeout=20,
+        )
+        if head.returncode != 0 or status.returncode != 0:
+            return None
+        return hashlib.sha256(head.stdout + b"\0" + status.stdout).hexdigest()
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
 
 def _maybe_unshallow(repo_dir: str) -> None:
@@ -415,14 +472,12 @@ class OpencodeManager:
             else:
                 source = "path"
         return {
-            "resolved_path": resolved,
             "source": source,
             "installed_version": installed_opencode_version(resolved) if resolved else None,
             "pinned_version": OPENCODE_VERSION,
             "running_instances": [
                 {
                     "repo_key": i.repo_key,
-                    "repo_dir": i.repo_dir,
                     "sessions": len(i.sessions),
                     "idle_seconds": int(time.time() - i.last_activity),
                 }

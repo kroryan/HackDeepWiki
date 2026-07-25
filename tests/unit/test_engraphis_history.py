@@ -194,6 +194,23 @@ def test_backfill_records_every_commit_and_the_progress_arc(memory, repo):
         assert (checkpoint["id"], overview, "part_of") in edges
 
 
+def test_history_limit_is_explicit_in_marker_and_state(memory, repo, monkeypatch):
+    eng = memory
+    head = _git(repo, "rev-parse", "HEAD")
+    monkeypatch.setattr(eng, "_git_history_count", lambda _repo_dir: 2500)
+
+    eng._backfill_history(
+        "acme_widgets_evolution", "acme", "widgets", str(repo), head
+    )
+
+    marker = _memories(eng, "history_backfill")[0]["content"]
+    assert "45 commits (the newest of 2500 reachable commits)" in marker
+    state = eng._ingest_state()["acme_widgets_evolution"]["history_backfill"]
+    assert state["count"] == 45
+    assert state["total_reachable"] == 2500
+    assert state["truncated"] is True
+
+
 def test_checkpoints_extend_instead_of_being_rewritten(memory, repo):
     eng = memory
     head = _git(repo, "rev-parse", "HEAD")
@@ -219,6 +236,73 @@ def test_checkpoints_extend_instead_of_being_rewritten(memory, repo):
     assert len(checkpoints) == 5
     assert "commits 41-50 of 50" in checkpoints[4]["content"]
     assert (checkpoints[4]["id"], checkpoints[3]["id"], "follows") in _edges(eng)
+    state = eng._ingest_state()["acme_widgets_evolution"]["history_backfill"]
+    assert state["count"] == 50
+    assert state["total_reachable"] == 50
+    assert state["truncated"] is False
+
+
+def test_truncated_history_metadata_survives_incremental_updates(
+    memory, repo, monkeypatch
+):
+    eng = memory
+    ws = "acme_widgets_evolution"
+    reachable = 2500
+    monkeypatch.setattr(
+        eng, "_git_history_count", lambda _repo_dir: reachable
+    )
+    eng._backfill_history(
+        ws, "acme", "widgets", str(repo), _git(repo, "rev-parse", "HEAD")
+    )
+
+    (repo / "api" / "new_after_limit.py").write_text("# new\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat: after bounded history")
+    reachable = 2501
+    eng._backfill_history(
+        ws, "acme", "widgets", str(repo), _git(repo, "rev-parse", "HEAD")
+    )
+
+    state = eng._ingest_state()[ws]["history_backfill"]
+    assert state["count"] == 46
+    assert state["total_reachable"] == 2501
+    assert state["truncated"] is True
+    marker = _memories(eng, "history_backfill")[-1]["content"]
+    assert "46 ingested of 2501 reachable commits" in marker
+
+
+def test_partial_checkpoint_stays_open_until_the_window_is_complete(memory, repo):
+    """Regression for 74314d4: ceil(total/stride) both indexed past the record
+    list and, if merely clamped, marked a partial window done forever."""
+    eng = memory
+    ws = "acme_widgets_evolution"
+    head = _git(repo, "rev-parse", "HEAD")
+    eng._backfill_history(ws, "acme", "widgets", str(repo), head)
+    assert len(_memories(eng, "history_checkpoint")) == 4
+    assert eng._ingest_state()[ws]["checkpoints"]["done"] == 4
+
+    # 46-49 remain an open tail: no checkpoint and no out-of-range access.
+    for i in range(45, 49):
+        (repo / "api" / f"partial_{i}.py").write_text(f"# partial {i}\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", f"work in progress {i}")
+    eng._backfill_history(
+        ws, "acme", "widgets", str(repo), _git(repo, "rev-parse", "HEAD")
+    )
+    assert len(_memories(eng, "history_checkpoint")) == 4
+    assert eng._ingest_state()[ws]["checkpoints"]["done"] == 4
+
+    # Commit 50 closes exactly one immutable 41-50 checkpoint.
+    (repo / "api" / "partial_49.py").write_text("# complete\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat: complete the window")
+    eng._backfill_history(
+        ws, "acme", "widgets", str(repo), _git(repo, "rev-parse", "HEAD")
+    )
+    checkpoints = _memories(eng, "history_checkpoint")
+    assert len(checkpoints) == 5
+    assert "commits 41-50 of 50" in checkpoints[-1]["content"]
+    assert eng._ingest_state()[ws]["checkpoints"]["done"] == 5
 
 
 def test_non_ascii_commit_subjects_survive_the_ingest(memory, repo):

@@ -1,10 +1,9 @@
 import os
 import sys
 import logging
-import warnings
 from dotenv import load_dotenv
 
-warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
+import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="pydantic")
 
 # Load environment variables from .env file
@@ -74,15 +73,6 @@ try:
         )
 except Exception:  # noqa: BLE001 - never block startup on a warning
     pass
-
-# Configure Google Generative AI
-import google.generativeai as genai
-from api.config import GOOGLE_API_KEY
-
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-else:
-    logger.warning("GOOGLE_API_KEY not configured")
 
 if __name__ == "__main__":
     # Get port from environment variable or use default

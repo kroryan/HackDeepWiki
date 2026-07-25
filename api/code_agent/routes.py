@@ -22,10 +22,20 @@ Transports:
 
 import asyncio
 import logging
+import os
+import re
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from api.code_agent import events as oc_events
 from api.code_agent.binary import (
@@ -35,7 +45,12 @@ from api.code_agent.binary import (
     resolve_opencode_binary,
 )
 from api.code_agent.context import build_code_session_context
-from api.code_agent.manager import CodeAgentError, manager, repo_key_for
+from api.code_agent.manager import (
+    CodeAgentError,
+    manager,
+    repo_key_for,
+    repo_worktree_fingerprint,
+)
 from api.code_agent.models import (
     CodeAbortRequest,
     CodeAgentUpdateRequest,
@@ -45,6 +60,7 @@ from api.code_agent.models import (
 )
 from api.code_agent.config import describe_target, map_provider
 from api.chat_common import capture_chat_exchange
+from api.security import authorization_is_valid, sanitize_error_message
 from api.stream_events import encode_process
 
 logger = logging.getLogger(__name__)
@@ -54,6 +70,7 @@ router = APIRouter()
 _ERROR_STATUS = {
     "unsupported_repo_type": 400,
     "repo_not_cloned": 409,
+    "local_path_forbidden": 403,
     "opencode_unavailable": 503,
     "opencode_error": 502,
 }
@@ -63,15 +80,111 @@ _ERROR_STATUS = {
 # events while a build runs, but the tool part still updates).
 _CHAT_EVENT_TIMEOUT = 900
 
+_MUTATION_REQUEST = re.compile(
+    r"\b("
+    r"create|write|edit|change|modify|implement|fix|refactor|remove|delete|"
+    r"add|apply|rename|generate|build|"
+    r"crea|crear|escribe|editar|edita|cambia|cambiar|modifica|implementar|"
+    r"implementa|arregla|corrige|refactoriza|elimina|añade|agrega|aplica|"
+    r"renombra|genera|compila"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _expects_repository_change(prompt: str) -> bool:
+    """Conservative mutation-intent detector for post-turn verification."""
+    return bool(_MUTATION_REQUEST.search(prompt or ""))
+
 
 def _http_error(e: CodeAgentError) -> HTTPException:
+    logger.warning("Code agent request failed (%s): %s", e.code, e)
     return HTTPException(
         status_code=_ERROR_STATUS.get(e.code, 500),
-        detail={"code": e.code, "message": str(e)},
+        detail={"code": e.code, "message": sanitize_error_message(str(e))},
     )
 
 
-@router.post("/api/code/session", response_model=CodeSessionResponse)
+async def _require_code_authorization(
+    authorization: Optional[str] = Header(
+        None, alias="X-HackDeepWiki-Authorization"
+    ),
+) -> bool:
+    if not _code_authorization_is_valid(authorization):
+        raise HTTPException(status_code=401, detail="Authorization code is invalid")
+    return True
+
+
+_AUTH_DEPENDENCY = [Depends(_require_code_authorization)]
+
+
+def _code_authorization_is_valid(value: Optional[str]) -> bool:
+    """Keep loopback zero-config, but never expose an auto-approved shell.
+
+    A Docker/LAN bind must enable the normal shared auth mode. An operator
+    with a separately isolated trusted network can explicitly opt back into
+    the old behavior via HACKDEEPWIKI_ALLOW_UNAUTHENTICATED_CODE_AGENT=true.
+    """
+    from api.config import WIKI_AUTH_MODE
+
+    bind_host = os.environ.get("HACKDEEPWIKI_HOST", "127.0.0.1").strip().lower()
+    loopback = bind_host in {"127.0.0.1", "localhost", "::1"}
+    explicit_unsafe_opt_in = os.environ.get(
+        "HACKDEEPWIKI_ALLOW_UNAUTHENTICATED_CODE_AGENT", ""
+    ).lower() in {"1", "true", "yes"}
+    if not loopback and not WIKI_AUTH_MODE and not explicit_unsafe_opt_in:
+        return False
+    return authorization_is_valid(value)
+
+
+def _websocket_origin_allowed(websocket: WebSocket) -> bool:
+    """Allow non-browser clients and browser connections from the serving
+    origin (plus explicitly configured origins).
+
+    WebSockets are not covered by the application's CORS middleware. Without
+    this check, a malicious web page could drive a localhost CodeAgent when
+    auth is disabled in the normal desktop configuration.
+    """
+    origin = websocket.headers.get("origin")
+    if not origin:
+        return True
+
+    configured = {
+        item.rstrip("/")
+        for item in os.environ.get("HACKDEEPWIKI_ALLOWED_ORIGINS", "").split(",")
+        if item.strip()
+    }
+    if origin.rstrip("/") in configured:
+        return True
+
+    origin_host = (urlparse(origin).hostname or "").lower()
+    request_host = (
+        urlparse(f"//{websocket.headers.get('host', '')}").hostname or ""
+    ).lower()
+    loopback = {"localhost", "127.0.0.1", "::1"}
+    return bool(
+        origin_host
+        and request_host
+        and (origin_host == request_host or {origin_host, request_host} <= loopback)
+    )
+
+
+async def _authorize_websocket(websocket: WebSocket) -> bool:
+    code = (
+        websocket.query_params.get("authorization_code")
+        or websocket.headers.get("x-hackdeepwiki-authorization")
+    )
+    if not _code_authorization_is_valid(code) or not _websocket_origin_allowed(websocket):
+        await websocket.close(code=1008)
+        return False
+    return True
+
+
+@router.post(
+    "/api/code/session",
+    response_model=CodeSessionResponse,
+    dependencies=_AUTH_DEPENDENCY,
+)
 async def ensure_code_session(request: CodeSessionRequest) -> CodeSessionResponse:
     try:
         repo_key, repo_dir = repo_key_for(request.repo_url, request.type)
@@ -107,10 +220,15 @@ async def ensure_code_session(request: CodeSessionRequest) -> CodeSessionRespons
         })
 
         binary = resolve_opencode_binary()
+        workspace_label = (
+            os.path.basename(os.path.normpath(repo_dir)) or "local repository"
+            if request.type == "local"
+            else f"{request.owner}/{request.repo}".strip("/")
+        )
         return CodeSessionResponse(
             session_id=session_id,
             repo_key=repo_key,
-            repo_dir=repo_dir,
+            repo_dir=workspace_label,
             is_local_type=request.type == "local",
             opencode_version=installed_opencode_version(binary) if binary else None,
             version_warning=version_warning,
@@ -122,7 +240,7 @@ async def ensure_code_session(request: CodeSessionRequest) -> CodeSessionRespons
         raise _http_error(e)
 
 
-@router.post("/api/code/abort")
+@router.post("/api/code/abort", dependencies=_AUTH_DEPENDENCY)
 async def abort_code_session(request: CodeAbortRequest) -> dict:
     inst = manager.get(request.repo_key)
     if not inst:
@@ -134,7 +252,7 @@ async def abort_code_session(request: CodeAbortRequest) -> dict:
         raise _http_error(e)
 
 
-@router.get("/api/code/diff")
+@router.get("/api/code/diff", dependencies=_AUTH_DEPENDENCY)
 async def code_session_diff(repo_key: str, session_id: str) -> list:
     inst = manager.get(repo_key)
     if not inst:
@@ -145,7 +263,7 @@ async def code_session_diff(repo_key: str, session_id: str) -> list:
         raise _http_error(e)
 
 
-@router.get("/api/code/messages")
+@router.get("/api/code/messages", dependencies=_AUTH_DEPENDENCY)
 async def code_session_messages(repo_key: str, session_id: str) -> list:
     """Backfill: the session's message list straight from opencode, so a
     dropped chat WebSocket can recover assistant text it missed."""
@@ -158,12 +276,12 @@ async def code_session_messages(repo_key: str, session_id: str) -> list:
         raise _http_error(e)
 
 
-@router.get("/api/code/agent/status")
+@router.get("/api/code/agent/status", dependencies=_AUTH_DEPENDENCY)
 async def code_agent_status() -> dict:
     return manager.status()
 
 
-@router.post("/api/code/agent/update")
+@router.post("/api/code/agent/update", dependencies=_AUTH_DEPENDENCY)
 async def code_agent_update(request: CodeAgentUpdateRequest) -> dict:
     """Download a release into DATABASE/opencode/bin (the writable override
     that beats the read-only bundled copy). Synchronous: the archives are
@@ -176,17 +294,31 @@ async def code_agent_update(request: CodeAgentUpdateRequest) -> dict:
     naturally (idle reap / app restart / provider change), and every NEW
     instance picks up the update immediately. ``pending_restart`` tells the
     UI how many running agents are still on the old version."""
-    version = OPENCODE_VERSION if request.version in ("", "pinned") else request.version
+    if request.version not in ("", "pinned", OPENCODE_VERSION):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "unsupported_version",
+                "message": f"Only the verified pinned release {OPENCODE_VERSION} is supported.",
+            },
+        )
+    version = OPENCODE_VERSION
     try:
         path = await asyncio.to_thread(download_opencode, version)
         return {
             "status": "ok",
-            "path": path,
             "version": installed_opencode_version(path),
             "pending_restart": len(manager.instances()),
         }
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail={"code": "download_failed", "message": str(e)})
+        logger.error("OpenCode update failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "download_failed",
+                "message": sanitize_error_message(str(e)),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +326,8 @@ async def code_agent_update(request: CodeAgentUpdateRequest) -> dict:
 # ---------------------------------------------------------------------------
 
 async def handle_code_chat_websocket(websocket: WebSocket) -> None:
+    if not await _authorize_websocket(websocket):
+        return
     await websocket.accept()
     queue = None
     fanout = None
@@ -231,6 +365,11 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                 "label": "Code agent", "query": "wiki context injected into the session",
             }))
 
+        expects_change = _expects_repository_change(request.content)
+        before_fingerprint = (
+            await asyncio.to_thread(repo_worktree_fingerprint, inst.repo_dir)
+            if expects_change else None
+        )
         await manager.prompt_async(inst, request.session_id, request.content, model_ref)
 
         # -- stream loop ----------------------------------------------------
@@ -242,6 +381,8 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
         sent_any_text = False
         last_assistant_message = ""
         answer_parts: list[str] = []
+        saw_mutation_tool = False
+        completed_normally = False
 
         while True:
             try:
@@ -260,14 +401,19 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                 tail = "\n".join(props.get("stderr_tail") or [])
                 await websocket.send_text(
                     "\n\n**Code agent error:** the opencode process exited."
-                    + (f"\n```\n{tail}\n```" if tail else "")
+                    + (
+                        f"\n```\n{sanitize_error_message(tail)}\n```"
+                        if tail else ""
+                    )
                 )
                 break
 
             if evt_type.startswith("session.error"):
                 err = props.get("error") or props
                 msg = err.get("data", {}).get("message") or err.get("message") or str(err)
-                await websocket.send_text(f"\n\n**Code agent error:** {str(msg)[:2000]}")
+                await websocket.send_text(
+                    f"\n\n**Code agent error:** {sanitize_error_message(str(msg))}"
+                )
                 break
 
             if evt_type == "message.updated":
@@ -302,10 +448,12 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                         "query": f"retry {status.get('attempt', '?')}: {msg}"[:400],
                     }))
                 elif stype == "idle" and saw_activity:
+                    completed_normally = True
                     break
                 continue
 
             if "idle" in evt_type and saw_activity:
+                completed_normally = True
                 break
 
             # opencode >=1.18.5 streams text token-by-token as
@@ -371,11 +519,41 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                     # One frame per state transition, not per token of output.
                     if tool_states.get(part_id) != status:
                         tool_states[part_id] = status
+                        if (
+                            status == "completed"
+                            and str(part.get("tool") or "").lower()
+                            in {"edit", "write", "patch", "apply_patch", "bash", "shell"}
+                        ):
+                            saw_mutation_tool = True
                         title = (state.get("title") or "")[:300]
                         await websocket.send_text(encode_process("tool", {
                             "label": part.get("tool") or "tool",
                             "query": f"{title} [{status}]" if title else status,
                         }))
+
+        if completed_normally and expects_change:
+            after_fingerprint = await asyncio.to_thread(
+                repo_worktree_fingerprint, inst.repo_dir
+            )
+            if before_fingerprint is not None and after_fingerprint is not None:
+                verified_change = before_fingerprint != after_fingerprint
+            else:
+                try:
+                    verified_change = (
+                        bool(await manager.get_diff(inst, request.session_id))
+                        or saw_mutation_tool
+                    )
+                except CodeAgentError:
+                    verified_change = saw_mutation_tool
+            if not verified_change:
+                warning = (
+                    "\n\n⚠️ **Verification warning:** the request asked for a "
+                    "repository change, but OpenCode finished without any verified "
+                    "HEAD/working-tree or session diff. The model may not support "
+                    "reliable tool calling; no file change should be assumed."
+                )
+                await websocket.send_text(warning)
+                answer_parts.append(warning)
 
         # Same durable memory the repository chat writes to, so a coding turn
         # and a wiki question accumulate into one story per wiki release.
@@ -396,7 +574,9 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
     except Exception as e:  # noqa: BLE001
         logger.error("code chat websocket failed: %s", e, exc_info=True)
         try:
-            await websocket.send_text(f"\n\n**Code agent error:** {e}")
+            await websocket.send_text(
+                f"\n\n**Code agent error:** {sanitize_error_message(str(e))}"
+            )
         except Exception:  # noqa: BLE001
             pass
     finally:
@@ -413,6 +593,8 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 async def handle_code_events_websocket(websocket: WebSocket) -> None:
+    if not await _authorize_websocket(websocket):
+        return
     await websocket.accept()
     queue = None
     fanout = None
@@ -430,7 +612,7 @@ async def handle_code_events_websocket(websocket: WebSocket) -> None:
         queue = fanout.subscribe(session_id)
         await websocket.send_json({
             "t": "status", "state": "connected",
-            "repo_dir": inst.repo_dir,
+            "workspace": os.path.basename(os.path.normpath(inst.repo_dir)),
             "active_sessions": max(1, len(inst.sessions)),
         })
 

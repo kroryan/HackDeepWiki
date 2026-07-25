@@ -1,183 +1,100 @@
-#!/usr/bin/env python3
-"""
-Test script to reproduce and fix Google embedder 'list' object has no attribute 'embedding' error.
-"""
+"""Offline contract tests for the maintained Google GenAI embedder adapter."""
 
-import os
-import sys
-import logging
-from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Add the project root to the Python path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+import pytest
 
-# Set up environment
-from dotenv import load_dotenv
-load_dotenv()
+from adalflow.core.types import ModelType
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from api.google_embedder_client import GoogleEmbedderClient
 
-def test_google_embedder_client():
-    """Test the Google embedder client directly."""
-    logger.info("Testing Google embedder client...")
-    
-    try:
-        from api.google_embedder_client import GoogleEmbedderClient
-        from adalflow.core.types import ModelType
-        
-        # Initialize the client
-        client = GoogleEmbedderClient()
-        
-        # Test single embedding
-        logger.info("Testing single embedding...")
-        api_kwargs = client.convert_inputs_to_api_kwargs(
-            input="Hello world",
-            model_kwargs={"model": "text-embedding-004", "task_type": "SEMANTIC_SIMILARITY"},
-            model_type=ModelType.EMBEDDER
-        )
-        
-        response = client.call(api_kwargs, ModelType.EMBEDDER)
-        logger.info(f"Single embedding response type: {type(response)}")
-        logger.info(f"Single embedding response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
-        
-        # Parse the response
-        parsed = client.parse_embedding_response(response)
-        logger.info(f"Parsed response data length: {len(parsed.data) if parsed.data else 0}")
-        logger.info(f"Parsed response error: {parsed.error}")
-        
-        # Test batch embedding
-        logger.info("Testing batch embedding...")
-        api_kwargs = client.convert_inputs_to_api_kwargs(
-            input=["Hello world", "Test embedding"],
-            model_kwargs={"model": "text-embedding-004", "task_type": "SEMANTIC_SIMILARITY"},
-            model_type=ModelType.EMBEDDER
-        )
-        
-        response = client.call(api_kwargs, ModelType.EMBEDDER)
-        logger.info(f"Batch embedding response type: {type(response)}")
-        logger.info(f"Batch embedding response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
-        
-        # Parse the response
-        parsed = client.parse_embedding_response(response)
-        logger.info(f"Parsed batch response data length: {len(parsed.data) if parsed.data else 0}")
-        logger.info(f"Parsed batch response error: {parsed.error}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error testing Google embedder client: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
 
-def test_adalflow_embedder():
-    """Test the AdalFlow embedder with Google client."""
-    logger.info("Testing AdalFlow embedder with Google client...")
-    
-    try:
-        import adalflow as adal
-        from api.google_embedder_client import GoogleEmbedderClient
-        
-        # Create embedder
-        client = GoogleEmbedderClient()
-        embedder = adal.Embedder(
-            model_client=client,
-            model_kwargs={
-                "model": "text-embedding-004",
-                "task_type": "SEMANTIC_SIMILARITY"
-            }
-        )
-        
-        # Test embedding
-        logger.info("Testing embedder with single input...")
-        result = embedder("Hello world")
-        logger.info(f"Embedder result type: {type(result)}")
-        logger.info(f"Embedder result: {result}")
-        
-        if hasattr(result, 'data'):
-            logger.info(f"Result data length: {len(result.data) if result.data else 0}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error testing AdalFlow embedder: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "offline-test-key")
+    sdk = MagicMock()
+    sdk.aio.models.embed_content = AsyncMock()
+    with patch("api.google_embedder_client.genai.Client", return_value=sdk) as factory:
+        instance = GoogleEmbedderClient()
+    factory.assert_called_once_with(api_key="offline-test-key")
+    return instance, sdk
 
-def test_document_processing():
-    """Test document processing with Google embedder."""
-    logger.info("Testing document processing with Google embedder...")
-    
-    try:
-        from adalflow.core.types import Document
-        from adalflow.components.data_process import ToEmbeddings
-        from api.tools.embedder import get_embedder
-        
-        # Create some test documents
-        docs = [
-            Document(text="This is a test document.", meta_data={"file_path": "test1.txt"}),
-            Document(text="Another test document here.", meta_data={"file_path": "test2.txt"})
+
+def test_single_embedding_uses_google_genai_request_shape(client):
+    embedder, sdk = client
+    response = SimpleNamespace(
+        embeddings=[SimpleNamespace(values=[0.1, 0.2, 0.3])]
+    )
+    sdk.models.embed_content.return_value = response
+    api_kwargs = embedder.convert_inputs_to_api_kwargs(
+        input="Hello world",
+        model_kwargs={
+            "model": "gemini-embedding-001",
+            "task_type": "SEMANTIC_SIMILARITY",
+        },
+        model_type=ModelType.EMBEDDER,
+    )
+
+    raw = embedder.call(api_kwargs, ModelType.EMBEDDER)
+    parsed = embedder.parse_embedding_response(raw)
+
+    request = sdk.models.embed_content.call_args.kwargs
+    assert request["model"] == "gemini-embedding-001"
+    assert request["contents"] == "Hello world"
+    assert request["config"].task_type == "SEMANTIC_SIMILARITY"
+    assert parsed.error is None
+    assert parsed.data[0].embedding == [0.1, 0.2, 0.3]
+
+
+def test_batch_embedding_preserves_order(client):
+    embedder, sdk = client
+    sdk.models.embed_content.return_value = SimpleNamespace(
+        embeddings=[
+            SimpleNamespace(values=[1.0, 2.0]),
+            SimpleNamespace(values=[3.0, 4.0]),
         ]
-        
-        # Get the Google embedder
-        embedder = get_embedder(embedder_type='google')
-        logger.info(f"Embedder type: {type(embedder)}")
-        
-        # Process documents
-        embedder_transformer = ToEmbeddings(embedder=embedder, batch_size=100)
-        
-        # Transform documents
-        logger.info("Transforming documents...")
-        transformed_docs = embedder_transformer(docs)
-        
-        logger.info(f"Transformed docs type: {type(transformed_docs)}")
-        logger.info(f"Number of transformed docs: {len(transformed_docs)}")
-        
-        # Check the structure
-        for i, doc in enumerate(transformed_docs):
-            logger.info(f"Doc {i} type: {type(doc)}")
-            logger.info(f"Doc {i} attributes: {dir(doc)}")
-            if hasattr(doc, 'vector'):
-                logger.info(f"Doc {i} vector type: {type(doc.vector)}")
-                logger.info(f"Doc {i} vector length: {len(doc.vector) if doc.vector else 0}")
-            else:
-                logger.info(f"Doc {i} has no vector attribute")
-        
-        return transformed_docs
-        
-    except Exception as e:
-        logger.error(f"Error testing document processing: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    )
+    api_kwargs = embedder.convert_inputs_to_api_kwargs(
+        input=["first", "second"],
+        model_kwargs={"model": "gemini-embedding-001"},
+        model_type=ModelType.EMBEDDER,
+    )
 
-def main():
-    """Main test function."""
-    logger.info("Starting Google embedder tests...")
-    
-    # Test 1: Direct client test
-    if not test_google_embedder_client():
-        logger.error("Google embedder client test failed")
-        return False
-    
-    # Test 2: AdalFlow embedder test
-    if not test_adalflow_embedder():
-        logger.error("AdalFlow embedder test failed")
-        return False
-    
-    # Test 3: Document processing test
-    result = test_document_processing()
-    if result is False:
-        logger.error("Document processing test failed")
-        return False
-    
-    logger.info("All tests completed successfully!")
-    return True
+    parsed = embedder.parse_embedding_response(
+        embedder.call(api_kwargs, ModelType.EMBEDDER)
+    )
 
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    assert sdk.models.embed_content.call_args.kwargs["contents"] == [
+        "first",
+        "second",
+    ]
+    assert [item.embedding for item in parsed.data] == [
+        [1.0, 2.0],
+        [3.0, 4.0],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_embedding_uses_native_async_sdk(client):
+    embedder, sdk = client
+    expected = SimpleNamespace(
+        embeddings=[SimpleNamespace(values=[0.5, 0.6])]
+    )
+    sdk.aio.models.embed_content.return_value = expected
+    api_kwargs = embedder.convert_inputs_to_api_kwargs(
+        input="async",
+        model_kwargs={"model": "gemini-embedding-001"},
+        model_type=ModelType.EMBEDDER,
+    )
+
+    actual = await embedder.acall(api_kwargs, ModelType.EMBEDDER)
+
+    assert actual is expected
+    sdk.aio.models.embed_content.assert_awaited_once()
+
+
+def test_rejects_non_embedding_model_type(client):
+    embedder, _ = client
+    with pytest.raises(ValueError, match="EMBEDDER"):
+        embedder.call({}, ModelType.LLM)

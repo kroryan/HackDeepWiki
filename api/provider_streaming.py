@@ -23,7 +23,8 @@ that already existed in the original code:
 import logging
 from typing import AsyncIterator, Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from adalflow.components.model_client.ollama_client import OllamaClient
 from adalflow.core.types import ModelType
 
@@ -394,17 +395,16 @@ async def stream_provider_response(
     # Google Generative AI (default provider). No internal try/except: errors
     # propagate to the caller's outer token-limit-retry fallback, matching
     # original behavior (same category as ollama above).
-    if api_key:
-        genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name=model_config_kwargs.get("model", "gemini-2.5-flash"),
-        generation_config={
-            "temperature": model_config_kwargs.get("temperature", 0.7),
-            "top_p": model_config_kwargs.get("top_p", 0.8),
-            "top_k": model_config_kwargs.get("top_k", 40),
-        },
+    client = genai.Client(api_key=api_key) if api_key else genai.Client()
+    response = await client.aio.models.generate_content_stream(
+        model=model_config_kwargs.get("model", "gemini-2.5-flash"),
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(
+            temperature=model_config_kwargs.get("temperature", 0.7),
+            top_p=model_config_kwargs.get("top_p", 0.8),
+            top_k=model_config_kwargs.get("top_k", 40),
+        ),
     )
-    response = model.generate_content(prompt, stream=True)
-    for chunk in response:
+    async for chunk in response:
         if hasattr(chunk, "text"):
             yield chunk.text

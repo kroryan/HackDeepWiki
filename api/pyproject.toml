@@ -2,7 +2,9 @@
 name = "open-hackdeepwiki-api"
 version = "1.0.0"
 description = "Backend API for HackDeepWiki, providing smart code analysis and AI-powered documentation generation."
-license = {text = "MIT License"}
+license = "MIT"
+requires-python = ">=3.11,<4.0"
+dynamic = ["dependencies"]
 
 [tool.poetry]
 package-mode = false
@@ -22,11 +24,13 @@ uvicorn = { extras = ["standard"], version = ">=0.21.1" }
 # Engraphis's embedded dashboard mounts routes with Form/UploadFile params;
 # FastAPI refuses to build those without python-multipart (verified live --
 # the dashboard fails to mount and the app degrades to memory-only mode).
-# Tiny pure-python dep. Engraphis itself is NOT declared here: it is
-# installed fresh from upstream on every build by scripts/prepare_assets.py.
+# Tiny pure-python dep. Engraphis is pinned exactly below: its persistence
+# format and dashboard are part of the executable contract, so builds must
+# never silently compile whatever happened to be on upstream ``main``.
 python-multipart = ">=0.0.18"
 pydantic = ">=2.0.0"
-google-generativeai = ">=0.3.0"
+google-genai = ">=2.14.0,<3.0.0"
+engraphis = { git = "https://github.com/Coding-Dev-Tools/engraphis.git", rev = "74f58494fa0c57fade8b938fdac43dee939446af" }
 tiktoken = ">=0.5.0"
 adalflow = ">=0.1.0"
 numpy = ">=1.24.0"
@@ -46,7 +50,7 @@ websockets = ">=11.0.3"
 azure-identity = ">=1.12.0"
 azure-core = ">=1.38.0"
 # Not imported directly -- these pin known-vulnerable *transitive*
-# dependencies (of requests/google-generativeai/boto3/azure-identity/pytest)
+# dependencies (of requests/google-genai/boto3/azure-identity/pytest)
 # up to a patched version. Without an explicit floor here, poetry's resolver
 # is free to satisfy the graph with an older, still-technically-compatible
 # version that happens to carry a known CVE (verified via `pip-audit
@@ -95,3 +99,6 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.0.3"
+
+[tool.poetry.group.build.dependencies]
+pyinstaller = { version = "==6.21.0", python = ">=3.11,<3.16" }

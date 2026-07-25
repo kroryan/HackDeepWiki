@@ -4,8 +4,12 @@ const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:
 
 export async function GET(req: NextRequest) {
   try {
+    const headers: Record<string, string> = {};
+    const authorization = req.headers.get('x-hackdeepwiki-authorization');
+    if (authorization) headers['X-HackDeepWiki-Authorization'] = authorization;
     const backendResponse = await fetch(
-      `${TARGET_SERVER_BASE_URL}/api/code/messages?${req.nextUrl.searchParams.toString()}`
+      `${TARGET_SERVER_BASE_URL}/api/code/messages?${req.nextUrl.searchParams.toString()}`,
+      { headers }
     );
     const text = await backendResponse.text();
     return new NextResponse(text, {

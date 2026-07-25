@@ -24,7 +24,7 @@ block_cipher = None
 # CI builds. Keep this list in sync with `packages_to_collect` below.
 # ---------------------------------------------------------------------------
 _REQUIRED_IMPORTS = [
-    "fastapi", "uvicorn", "pydantic", "adalflow", "google.generativeai",
+    "fastapi", "uvicorn", "pydantic", "adalflow", "google.genai",
     "tiktoken", "tiktoken_ext", "websockets", "azure.identity", "azure.core",
     "boto3", "botocore", "requests", "jinja2", "aiohttp", "langid", "numpy",
     "openai", "ollama", "faiss", "libzim",
@@ -95,23 +95,31 @@ datas.extend(_source_tree('scripts', 'scripts'))
 if os.path.exists(node_source_path):
     datas.append((node_source_path, 'bin'))
 else:
-    print(f"Warning: Node.js executable not found at {node_source_path}. Make sure it is downloaded before running PyInstaller.")
+    raise SystemExit(
+        f"[build aborted] Node.js executable not found at {node_source_path}. "
+        "Run scripts/prepare_assets.py first."
+    )
 
-# Package the opencode coding agent (Code Editing mode) if present. Warning,
-# not error: the app lazy-downloads it into DATABASE/opencode/bin at runtime
-# (api/code_agent/binary.py), so dev builds work without prebundling.
+# Package the checksum-verified OpenCode agent. Release builds must never
+# advertise Code Editing mode while silently omitting its executable.
 opencode_bin_name = 'opencode.exe' if is_win else 'opencode'
 opencode_source_path = os.path.abspath(os.path.join('bin', opencode_bin_name))
 if os.path.exists(opencode_source_path):
     datas.append((opencode_source_path, 'bin'))
 else:
-    print(f"Warning: opencode binary not found at {opencode_source_path}; Code Editing mode will lazy-download it at runtime.")
+    raise SystemExit(
+        f"[build aborted] OpenCode executable not found at {opencode_source_path}. "
+        "Run scripts/prepare_assets.py first."
+    )
 
 # Package the tiktoken cache if present
 if os.path.exists(tiktoken_cache_source):
     datas.append((tiktoken_cache_source, 'tiktoken_cache'))
 else:
-    print(f"Warning: tiktoken cache not found at {tiktoken_cache_source}.")
+    raise SystemExit(
+        f"[build aborted] tiktoken cache not found at {tiktoken_cache_source}. "
+        "Run scripts/prepare_assets.py first."
+    )
 
 # Collect all hidden submodules of dynamic libraries
 packages_to_collect = [
@@ -126,7 +134,7 @@ packages_to_collect = [
     'uvicorn',
     'pydantic',
     'adalflow',
-    'google',
+    'google.genai',
     'tiktoken',
     'tiktoken_ext',
     'websockets',
@@ -157,9 +165,26 @@ packages_to_collect = [
 
 hidden_imports = []
 
+
+def _runtime_submodule(name):
+    """Keep package discovery out of vendor test/benchmark trees.
+
+    Several runtime libraries ship their entire upstream test suite in the
+    wheel.  Freezing those modules can pull pytest and large optional stacks
+    (pandas, pyarrow, scipy, matplotlib) into an otherwise clean release.
+    """
+    parts = name.split('.')
+    return not any(
+        part in {'test', 'tests', 'testing', 'benchmarks'}
+        or part == 'conftest'
+        or part.startswith('test_')
+        for part in parts
+    )
+
+
 for pkg in packages_to_collect:
     try:
-        submodules = collect_submodules(pkg)
+        submodules = collect_submodules(pkg, filter=_runtime_submodule)
         hidden_imports.extend(submodules)
     except Exception as e:
         print(f"Warning: Could not collect submodules for {pkg}: {e}")

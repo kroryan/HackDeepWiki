@@ -9,10 +9,10 @@ from adalflow.core.model_client import ModelClient
 from adalflow.core.types import ModelType, EmbedderOutput
 
 try:
-    import google.generativeai as genai
-    from google.generativeai.types.text_types import EmbeddingDict, BatchEmbeddingDict
+    from google import genai
+    from google.genai import types
 except ImportError:
-    raise ImportError("google-generativeai is required. Install it with 'pip install google-generativeai'")
+    raise ImportError("google-genai is required. Install it with 'pip install google-genai'")
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class GoogleEmbedderClient(ModelClient):
             raise ValueError(
                 f"Environment variable {self._env_api_key_name} must be set"
             )
-        genai.configure(api_key=api_key)
+        self._client = genai.Client(api_key=api_key)
 
     def parse_embedding_response(self, response) -> EmbedderOutput:
         """Parse Google AI embedding response to EmbedderOutput format.
@@ -101,6 +101,8 @@ class GoogleEmbedderClient(ModelClient):
                     return getattr(obj, "embedding")
                 if hasattr(obj, "embeddings"):
                     return getattr(obj, "embeddings")
+                if hasattr(obj, "values"):
+                    return getattr(obj, "values")
                 for method_name in ("model_dump", "to_dict", "dict"):
                     if hasattr(obj, method_name):
                         try:
@@ -110,6 +112,8 @@ class GoogleEmbedderClient(ModelClient):
                                     return dumped.get("embedding")
                                 if "embeddings" in dumped:
                                     return dumped.get("embeddings")
+                                if "values" in dumped:
+                                    return dumped.get("values")
                         except Exception:
                             pass
                 return None
@@ -233,20 +237,8 @@ class GoogleEmbedderClient(ModelClient):
         log.info("Google AI Embeddings call kwargs (sanitized): %s", safe_log_kwargs)
         
         try:
-            # Use embed_content for single text or batch embedding
-            if "content" in api_kwargs:
-                # Single embedding
-                response = genai.embed_content(**api_kwargs)
-            elif "contents" in api_kwargs:
-                # Batch embedding - Google AI supports batch natively
-                # Copy to avoid mutating the original dict (needed for retries)
-                kwargs = api_kwargs.copy()
-                contents = kwargs.pop("contents")
-                response = genai.embed_content(content=contents, **kwargs)
-            else:
-                raise ValueError("Either 'content' or 'contents' must be provided")
-                
-            return response
+            request = self._new_sdk_request(api_kwargs)
+            return self._client.models.embed_content(**request)
             
         except Exception as e:
             log.error(f"Error calling Google AI Embeddings API: {e}")
@@ -255,8 +247,34 @@ class GoogleEmbedderClient(ModelClient):
     async def acall(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
         """Async call to Google AI embedding API.
         
-        Note: Google AI Python client doesn't have async support yet,
-        so this falls back to synchronous call.
+        Uses the maintained SDK's native async client.
         """
-        # Google AI client doesn't have async support yet
-        return self.call(api_kwargs, model_type)
+        if model_type != ModelType.EMBEDDER:
+            raise ValueError("GoogleEmbedderClient only supports EMBEDDER model type")
+        request = self._new_sdk_request(api_kwargs)
+        return await self._client.aio.models.embed_content(**request)
+
+    @staticmethod
+    def _new_sdk_request(api_kwargs: Dict) -> Dict:
+        kwargs = dict(api_kwargs)
+        contents = kwargs.pop("content", kwargs.pop("contents", None))
+        if contents is None:
+            raise ValueError("Either 'content' or 'contents' must be provided")
+        model = kwargs.pop("model", "gemini-embedding-001")
+        config_fields = {
+            "task_type",
+            "title",
+            "output_dimensionality",
+            "mime_type",
+            "auto_truncate",
+        }
+        config_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key in config_fields and value is not None
+        }
+        return {
+            "model": model,
+            "contents": contents,
+            "config": types.EmbedContentConfig(**config_kwargs),
+        }

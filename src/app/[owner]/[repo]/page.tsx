@@ -236,7 +236,12 @@ export default function RepoWikiPage() {
     } finally {
       setAttachImagesRunning(false);
     }
-  }, [attachImagesDir, effectiveRepoInfo]);
+  }, [
+    attachImagesDir,
+    effectiveRepoInfo,
+    messages.repoPage?.attachImagesFailed,
+    messages.repoPage?.attachImagesPathError,
+  ]);
 
   // 🌐 Website vulnerability scan state -- separate report shape/endpoint
   // from the dependency scan above (WebVulnReport vs VulnReport), used only
@@ -1018,7 +1023,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, isUserFocusedView, focusInstructions, language, activeContentRequests, generateFileUrl, wikiStructure, repoFileTree]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, isUserFocusedView, focusInstructions, language, activeContentRequests, generateFileUrl, wikiStructure, repoFileTree, messages.repoPage?.modelTimeoutError]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string, force: boolean = false) => {
@@ -1818,7 +1823,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, messages.loading, isComprehensiveView, isUserFocusedView, focusInstructions, pageCount]);
+  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, technicalAnalysisEnabled, language, messages.loading, messages.repoPage?.backendConnectionError, messages.repoPage?.modelNoPagesError, messages.repoPage?.modelTimeoutRetryError, isComprehensiveView, isUserFocusedView, focusInstructions, pageCount]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async (force: boolean = false) => {
@@ -4350,6 +4355,7 @@ IMPORTANT:
           title={messages.ask?.title || 'Repository chat'}
           fabAriaLabel={messages.ask?.title || 'Ask about this repository'}
           wikiVersion={selectedWikiVersion ?? undefined}
+          authorizationCode={authCode}
         />
       )}
 

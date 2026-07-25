@@ -9,9 +9,12 @@ export const maxDuration = 300;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const authorization = req.headers.get('x-hackdeepwiki-authorization');
+    if (authorization) headers['X-HackDeepWiki-Authorization'] = authorization;
     const backendResponse = await fetch(`${TARGET_SERVER_BASE_URL}/api/code/agent/update`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
     const text = await backendResponse.text();

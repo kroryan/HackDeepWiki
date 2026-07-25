@@ -29,12 +29,18 @@ interface CodeDiffViewProps {
   // Bumped by the events hook whenever the working tree likely changed;
   // triggers a debounced refetch.
   diffTick: number;
+  authorizationCode?: string;
 }
 
 const diffFile = (d: FileDiff) => d.file || d.path || d.filename || 'unknown file';
 const diffPatch = (d: FileDiff) => d.patch || d.diff || '';
 
-export default function CodeDiffView({ repoKey, sessionId, diffTick }: CodeDiffViewProps) {
+export default function CodeDiffView({
+  repoKey,
+  sessionId,
+  diffTick,
+  authorizationCode,
+}: CodeDiffViewProps) {
   const { messages } = useLanguage();
   const [diffs, setDiffs] = useState<FileDiff[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,8 +50,13 @@ export default function CodeDiffView({ repoKey, sessionId, diffTick }: CodeDiffV
   const fetchDiffs = useCallback(async () => {
     setLoading(true);
     try {
+      const headers: Record<string, string> = {};
+      if (authorizationCode) {
+        headers['X-HackDeepWiki-Authorization'] = authorizationCode;
+      }
       const response = await fetch(
-        `/api/code/diff?repo_key=${encodeURIComponent(repoKey)}&session_id=${encodeURIComponent(sessionId)}`
+        `/api/code/diff?repo_key=${encodeURIComponent(repoKey)}&session_id=${encodeURIComponent(sessionId)}`,
+        { headers }
       );
       if (response.ok) {
         const data = await response.json();
@@ -56,7 +67,7 @@ export default function CodeDiffView({ repoKey, sessionId, diffTick }: CodeDiffV
     } finally {
       setLoading(false);
     }
-  }, [repoKey, sessionId]);
+  }, [repoKey, sessionId, authorizationCode]);
 
   useEffect(() => {
     // Debounce: a burst of file edits triggers one refetch, 1s after the

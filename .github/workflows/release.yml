@@ -8,20 +8,65 @@ name: Release Build
 # allows a manual run.
 #
 # What gets published:
-#   * a version tag (vX.Y.Z)  -> the stable release, marked latest;
-#   * a main/master push      -> its OWN pre-release, vX.Y.Z-pre.<run number>,
-#     where X.Y.Z is the version in api/pyproject.toml. Builds no longer
-#     overwrite each other: every development build keeps its own tag, assets
-#     and permalink, and the newest ten are retained (see the prune step).
+#   * an explicit tag         -> the stable release, marked latest;
+#   * a main/master push      -> its OWN build-<run>-<commit> pre-release.
+#     Automatic builds never claim a semantic product version. Every
+#     development build keeps its own tag, assets and permalink, and the
+#     newest ten are retained (see the prune step).
 on:
   push:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  quality:
+    name: Tests, lint and locked dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Validate frontend
+        run: |
+          npm ci --legacy-peer-deps
+          npm test
+          npm run lint
+          npm run typecheck
+
+      - name: Install locked Python test environment
+        run: |
+          python -m pip install poetry==2.4.1
+          cd api
+          poetry check --lock
+          poetry config virtualenvs.create false
+          poetry sync --with dev --without build
+
+      - name: Validate backend
+        run: |
+          python -m pytest -q
+          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/hackdeepwiki-pycache" python -m compileall -q api scripts tests
+          python -m pip check
+          if grep -R "google\\.generativeai" -n api scripts tests hackdeepwiki.spec; then
+            echo "Deprecated google.generativeai import found"
+            exit 1
+          fi
+
   build-windows:
+    needs: quality
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -55,12 +100,8 @@ jobs:
         working-directory: api
         run: |
           poetry config virtualenvs.create false
-          # Regenerate the lock file if pyproject.toml was edited without
-          # running `poetry lock` locally. Keeps the build green when only the
-          # content hash is out of sync. (`--no-update` was removed in Poetry 2.)
-          poetry lock
-          poetry install --only main
-          pip install pyinstaller
+          poetry check --lock
+          poetry sync --with build --without dev
 
       - name: Prepare build assets
         run: |
@@ -70,13 +111,59 @@ jobs:
         run: |
           pyinstaller hackdeepwiki.spec
 
+      - name: Smoke-test Windows executable
+        shell: pwsh
+        run: |
+          $nodeVersion = & .\bin\node.exe --version
+          if ($nodeVersion -ne "v24.18.0") { throw "Unexpected Node version: $nodeVersion" }
+          $openCodeVersion = & .\bin\opencode.exe --version
+          if ($openCodeVersion -notmatch "^1\.18\.5") { throw "Unexpected OpenCode version: $openCodeVersion" }
+          & .\dist\hackdeepwiki.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "Windows executable smoke test failed" }
+
+          $stdout = Join-Path $env:RUNNER_TEMP "hackdeepwiki-smoke.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "hackdeepwiki-smoke.stderr.log"
+          $process = Start-Process `
+            -FilePath ".\dist\hackdeepwiki.exe" `
+            -ArgumentList @("--api-port", "18101", "--port", "13101") `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -PassThru
+          try {
+            $ready = $false
+            for ($attempt = 1; $attempt -le 120; $attempt++) {
+              if ($process.HasExited) { break }
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:18101/health" -TimeoutSec 2
+                $frontend = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:13101/" -TimeoutSec 2
+                if ($health.status -eq "healthy" -and $frontend.StatusCode -eq 200) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $ready) {
+              Get-Content $stdout -ErrorAction SilentlyContinue
+              Get-Content $stderr -ErrorAction SilentlyContinue
+              throw "Packaged Windows backend/frontend startup smoke test failed"
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              & taskkill.exe /PID $process.Id /T /F | Out-Null
+            }
+          }
+
       - name: Rename and upload Windows binary
         uses: actions/upload-artifact@v4
         with:
           name: hackdeepwiki-windows
           path: dist/hackdeepwiki.exe
+          if-no-files-found: error
 
   build-linux:
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -110,12 +197,8 @@ jobs:
         working-directory: api
         run: |
           poetry config virtualenvs.create false
-          # Regenerate the lock file if pyproject.toml was edited without
-          # running `poetry lock` locally. Keeps the build green when only the
-          # content hash is out of sync. (`--no-update` was removed in Poetry 2.)
-          poetry lock
-          poetry install --only main
-          pip install pyinstaller
+          poetry check --lock
+          poetry sync --with build --without dev
 
       - name: Prepare build assets
         run: |
@@ -124,6 +207,15 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pyinstaller hackdeepwiki.spec
+
+      - name: Smoke-test Linux onedir executable
+        run: |
+          test "$(bin/node --version)" = "v24.18.0"
+          bin/opencode --version | grep -E '^1\.18\.5'
+          test -x dist/hackdeepwiki/hackdeepwiki
+          test -x dist/hackdeepwiki/_internal/bin/node
+          test -x dist/hackdeepwiki/_internal/bin/opencode
+          timeout 120s dist/hackdeepwiki/hackdeepwiki --help
 
       - name: Package AppImage
         run: |
@@ -156,18 +248,66 @@ jobs:
           Terminal=true
           EOF
           
-          # 5. Download and run appimagetool
-          curl -LO https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          # 5. Download and run appimagetool. Both the tool and the Type-2
+          # runtime it embeds are checksum-pinned: current appimagetool
+          # otherwise fetches a mutable "continuous" runtime internally.
+          curl -fL --retry 3 -o appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool-x86_64.AppImage" \
+            | sha256sum -c -
+          curl -fL --retry 3 -o appimage-runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          echo "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  appimage-runtime-x86_64" \
+            | sha256sum -c -
           chmod +x appimagetool-x86_64.AppImage
           
           export APPIMAGE_EXTRACT_AND_RUN=1
-          ./appimagetool-x86_64.AppImage --no-appstream AppDir HackDeepWiki-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage --no-appstream \
+            --runtime-file appimage-runtime-x86_64 \
+            AppDir HackDeepWiki-x86_64.AppImage
+
+      - name: Smoke-test Linux AppImage
+        run: |
+          test -x HackDeepWiki-x86_64.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 timeout 120s ./HackDeepWiki-x86_64.AppImage --help
+
+          smoke_log="$RUNNER_TEMP/hackdeepwiki-appimage-smoke.log"
+          health_out="$RUNNER_TEMP/hackdeepwiki-health.json"
+          frontend_out="$RUNNER_TEMP/hackdeepwiki-frontend.html"
+          setsid env BROWSER=/bin/true APPIMAGE_EXTRACT_AND_RUN=1 \
+            ./HackDeepWiki-x86_64.AppImage --api-port 18101 --port 13101 \
+            >"$smoke_log" 2>&1 &
+          app_pid=$!
+          cleanup() {
+            kill -TERM -- "-$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 120); do
+            if curl --noproxy '*' -fsS http://127.0.0.1:18101/health >"$health_out" 2>/dev/null \
+              && curl --noproxy '*' -fsS http://127.0.0.1:13101/ >"$frontend_out" 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$ready" -ne 1 ]; then
+            tail -100 "$smoke_log"
+            exit 1
+          fi
+          grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"' "$health_out"
+          grep -Eiq '<!doctype html|<html' "$frontend_out"
+          cleanup
+          trap - EXIT
 
       - name: Upload Linux AppImage
         uses: actions/upload-artifact@v4
         with:
           name: hackdeepwiki-linux
           path: HackDeepWiki-x86_64.AppImage
+          if-no-files-found: error
 
   publish-release:
     # Only create a GitHub Release for main/master pushes and version tags.
@@ -177,6 +317,8 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     needs: [build-windows, build-linux]
+    permissions:
+      contents: write
     # Every build publishes its OWN release, so two pushes landing close
     # together no longer fight over one tag -- but they must not run the
     # retention sweep at the same time either. Serialised, never cancelled:
@@ -186,7 +328,6 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout repository
-        # Only for the version in api/pyproject.toml, which names the release.
         uses: actions/checkout@v4
 
       - name: Download Windows binary
@@ -207,10 +348,6 @@ jobs:
           mv ./artifacts/windows/hackdeepwiki.exe ./HackDeepWiki-windows-x64.exe
           mv ./artifacts/linux/HackDeepWiki-x86_64.AppImage ./HackDeepWiki-x86_64.AppImage
 
-          # The app's own version, so a pre-release says which release it is
-          # leading up to instead of just "development build".
-          VERSION=$(grep -m1 -E '^version *= *"' api/pyproject.toml | cut -d'"' -f2)
-          VERSION=${VERSION:-0.0.0}
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
 
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
@@ -224,18 +361,15 @@ jobs:
             # rolling "pre-release" tag, so each build silently replaced the
             # previous one and there was no way to go back to (or link to) an
             # earlier development build. github.run_number is monotonic and
-            # unique for the repository, which makes vX.Y.Z-pre.N a valid
-            # semver pre-release that sorts in build order and BELOW the
-            # stable vX.Y.Z it leads to. Re-running a build reuses its run
-            # number, so a re-run updates its own release instead of adding
-            # a duplicate.
-            TAG_NAME="v${VERSION}-pre.${{ github.run_number }}"
-            RELEASE_NAME="v${VERSION} pre-release #${{ github.run_number }} (${SHORT_SHA})"
+            # unique for the repository. The commit suffix is human-auditable
+            # and, deliberately, no automatic release claims a product
+            # version. Re-running a build updates its own release.
+            TAG_NAME="build-${{ github.run_number }}-${SHORT_SHA}"
+            RELEASE_NAME="Development build #${{ github.run_number }} (${SHORT_SHA})"
             IS_PRERELEASE=true
           fi
 
           {
-            echo "VERSION=$VERSION"
             echo "SHORT_SHA=$SHORT_SHA"
             echo "TAG_NAME=$TAG_NAME"
             echo "RELEASE_NAME=$RELEASE_NAME"
@@ -252,7 +386,7 @@ jobs:
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           draft: false
           body: |
-            ${{ env.IS_PRERELEASE == 'true' && format('Development build **#{0}** of HackDeepWiki v{1} — one release per build, so this one stays put and is not replaced by the next.', github.run_number, env.VERSION) || format('HackDeepWiki {0}.', github.ref_name) }}
+            ${{ env.IS_PRERELEASE == 'true' && format('Development build **#{0}** of HackDeepWiki — one release per build, so this one stays put and is not replaced by the next.', github.run_number) || format('HackDeepWiki {0}.', github.ref_name) }}
 
             - Branch: `${{ github.ref_name }}`
             - Commit: [`${{ env.SHORT_SHA }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
@@ -273,10 +407,10 @@ jobs:
         # Keeping every build forever would bury the stable releases (and each
         # one carries ~600 MB of binaries), so the newest KEEP development
         # builds are kept and older ones are removed along with their tags.
-        # Strictly scoped to the tags THIS workflow generates: stable vX.Y.Z
-        # releases, the legacy rolling "pre-release", and anything published
-        # by hand are never matched, and a failure here must not fail a
-        # release that already succeeded.
+        # Strictly scoped to the build-N-SHA tags THIS workflow generates:
+        # stable releases, legacy tags and anything published by hand are
+        # never matched, and a failure here must not fail a release that
+        # already succeeded.
         if: env.IS_PRERELEASE == 'true'
         continue-on-error: true
         env:
@@ -289,7 +423,7 @@ jobs:
           gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
             --json tagName,isPrerelease,createdAt \
             --jq '[.[] | select(.isPrerelease)
-                       | select(.tagName | test("^v[0-9]+(\\.[0-9]+)*-pre\\.[0-9]+$"))]
+                       | select(.tagName | test("^build-[0-9]+-[0-9a-f]{7}$"))]
                   | sort_by(.createdAt) | reverse | .[].tagName' \
           | tail -n "+$((KEEP + 1))" \
           | while read -r tag; do
