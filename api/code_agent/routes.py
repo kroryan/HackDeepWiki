@@ -385,7 +385,7 @@ async def handle_code_events_websocket(websocket: WebSocket) -> None:
             if evt.get("type") in ("instance.exited", "_fanout.stopped"):
                 break
     except WebSocketDisconnect:
-        pass
+        logger.info("code events ws: client disconnected")
     except Exception as e:  # noqa: BLE001
         logger.error("code events websocket failed: %s", e, exc_info=True)
     finally:

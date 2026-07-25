@@ -190,7 +190,7 @@ class OpencodeManager:
                               api_endpoint: Optional[str],
                               progress_cb=None) -> OpencodeInstance:
         async with self._lock_for(repo_key):
-            sig = provider_signature(provider, api_key, api_endpoint)
+            sig = provider_signature(provider, api_key, api_endpoint, model)
             existing = self._instances.get(repo_key)
             if existing and existing.alive():
                 if existing.provider_sig == sig:

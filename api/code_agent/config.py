@@ -55,6 +55,43 @@ def opencode_home_dir() -> str:
     return os.path.join(get_data_root(), "opencode", "home")
 
 
+def _is_local_host(url: str) -> bool:
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    return (
+        host in ("localhost", "0.0.0.0")
+        or host.startswith("127.")
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+    )
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    """Same endpoint hygiene the model-probe endpoint applies (api/api.py):
+    add a scheme when missing, and force http:// for local hosts even when
+    https:// was pasted -- plain-HTTP servers like Ollama fail the TLS
+    handshake otherwise, which surfaces as an opaque 'Cannot connect to
+    API' retry loop in the agent."""
+    endpoint = endpoint.strip().rstrip("/")
+    if not endpoint.startswith(("http://", "https://")):
+        scheme = "http" if _is_local_host(f"http://{endpoint}") else "https"
+        endpoint = f"{scheme}://{endpoint}"
+    if endpoint.startswith("https://") and _is_local_host(endpoint):
+        endpoint = "http://" + endpoint[len("https://"):]
+    return endpoint
+
+
+def _ollama_base_url(api_endpoint: Optional[str]) -> str:
+    """Canonical `<host>/v1` for Ollama's OpenAI-compatible API. The endpoint
+    saved in the UI often already ends in /v1 -- appending blindly produced
+    the broken `.../v1/v1` (real-world bug)."""
+    host = _normalize_endpoint(
+        api_endpoint or os.environ.get("OLLAMA_HOST") or "http://localhost:11434")
+    while host.endswith("/v1"):
+        host = host[:-3].rstrip("/")
+    return host + "/v1"
+
+
 def _openai_compatible_provider(provider_id: str, display_name: str, base_url: str,
                                 model: str, api_key: Optional[str]) -> dict:
     """opencode provider block for any OpenAI-compatible endpoint (Ollama,
@@ -109,19 +146,13 @@ def map_provider(provider: str, model: str, api_key: Optional[str],
             extra_env["OPENROUTER_API_KEY"] = key
         model_ref = f"openrouter/{model}"
     elif provider == "ollama":
-        # Same normalization as api/ollama_patch.py::normalize_ollama_host,
-        # inlined because importing that module drags in adalflow just to
-        # prepend a scheme.
-        host = (api_endpoint or os.environ.get("OLLAMA_HOST") or "http://localhost:11434").strip()
-        if not host.startswith(("http://", "https://")):
-            host = f"http://{host}"
-        base = host.rstrip("/") + "/v1"
         provider_config["ollama"] = _openai_compatible_provider(
-            "ollama", "Ollama", base, model, api_key
+            "ollama", "Ollama", _ollama_base_url(api_endpoint), model, api_key
         )
         model_ref = f"ollama/{model}"
     elif provider == "litellm":
-        base = (api_endpoint or os.environ.get("LITELLM_ENDPOINT") or "http://localhost:4000").rstrip("/")
+        base = _normalize_endpoint(
+            api_endpoint or os.environ.get("LITELLM_ENDPOINT") or "http://localhost:4000")
         provider_config["litellm"] = _openai_compatible_provider(
             "litellm", "LiteLLM", base, model,
             api_key or os.environ.get("LITELLM_API_KEY"),
@@ -149,7 +180,7 @@ def map_provider(provider: str, model: str, api_key: Optional[str],
         # Unknown provider with an explicit endpoint: assume OpenAI-compatible
         # (covers openai_custom and self-hosted gateways).
         provider_config[provider or "custom"] = _openai_compatible_provider(
-            provider or "custom", provider or "Custom", api_endpoint.rstrip("/"), model, api_key
+            provider or "custom", provider or "Custom", _normalize_endpoint(api_endpoint), model, api_key
         )
         model_ref = f"{provider or 'custom'}/{model}"
     else:
@@ -183,11 +214,22 @@ def describe_target(provider: str, model: str, api_key: Optional[str],
     return f"{model_ref} → {_CLOUD_HOSTS.get((provider or '').lower(), 'cloud API')}"
 
 
-def provider_signature(provider: str, api_key: Optional[str], api_endpoint: Optional[str]) -> str:
+def provider_signature(provider: str, api_key: Optional[str], api_endpoint: Optional[str],
+                       model: str = "") -> str:
     """Cheap fingerprint of everything that requires an opencode RESTART when
-    it changes (credentials/endpoints are read at server startup; the model
-    itself is per-message and never forces a restart)."""
-    return f"{(provider or '').lower()}|{api_endpoint or ''}|{'k' if api_key else ''}"
+    it changes. Includes the RESOLVED provider block, not just the raw
+    inputs, so (a) a normalization fix in this module also restarts
+    instances still running on a broken config, and (b) switching model on
+    an openai-compatible provider (whose config must DECLARE the model)
+    restarts the server with the new declaration -- a few seconds, and
+    opencode sessions persist on disk across restarts. Native cloud
+    providers produce no provider block, so model switches there never
+    restart anything."""
+    import json as _json
+    provider_config, extra_env, _ = map_provider(provider, model, api_key, api_endpoint)
+    resolved = _json.dumps(provider_config, sort_keys=True)
+    return (f"{(provider or '').lower()}|{api_endpoint or ''}|{'k' if api_key else ''}"
+            f"|{sorted(extra_env)}|{resolved}")
 
 
 def write_opencode_config(repo_key: str, provider: str, model: str,

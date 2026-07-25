@@ -80,6 +80,28 @@ def test_map_provider_ollama_endpoint_without_scheme():
     assert provider_config["ollama"]["options"]["baseURL"] == "http://192.168.1.5:11434/v1"
 
 
+def test_map_provider_ollama_endpoint_hygiene():
+    """Real-world bug: the UI-saved endpoint 'https://localhost:11434/v1'
+    produced 'https://localhost:11434/v1/v1' -- TLS against plain-HTTP Ollama
+    plus a doubled path, surfacing as an opaque 'Cannot connect to API'."""
+    provider_config, _, _ = map_provider("ollama", "m", None, "https://localhost:11434/v1")
+    assert provider_config["ollama"]["options"]["baseURL"] == "http://localhost:11434/v1"
+    # /v1/v1 pasted outright also collapses to one
+    provider_config, _, _ = map_provider("ollama", "m", None, "http://localhost:11434/v1/v1")
+    assert provider_config["ollama"]["options"]["baseURL"] == "http://localhost:11434/v1"
+    # https kept for genuinely remote hosts
+    provider_config, _, _ = map_provider("ollama", "m", None, "https://ollama.example.com")
+    assert provider_config["ollama"]["options"]["baseURL"] == "https://ollama.example.com/v1"
+
+
+def test_provider_signature_changes_when_resolution_changes():
+    # Same raw endpoint string, but a normalization fix changes the resolved
+    # baseURL -> the signature must differ so broken instances restart.
+    sig = provider_signature("ollama", None, "https://localhost:11434/v1", "m")
+    assert "http://localhost:11434/v1" in sig
+    assert "/v1/v1" not in sig
+
+
 def test_map_provider_google_env_name_translation():
     _, extra_env, model_ref = map_provider("google", "gemini-2.5-pro", "KEY", None)
     # opencode reads GOOGLE_GENERATIVE_AI_API_KEY, not HackDeepWiki's GOOGLE_API_KEY

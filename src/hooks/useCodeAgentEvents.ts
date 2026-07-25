@@ -48,27 +48,44 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
     }
 
     let cancelled = false;
-    let retryDelay = 500;
+    // Backoff starts at 1.5s and only resets after a message actually
+    // ARRIVES -- resetting on open (as the first version did) meant a
+    // connection that dies right after opening reconnected at full speed
+    // forever: the accept-storm seen in real-world logs.
+    let retryDelay = 1500;
     let retryTimer: number | undefined;
+    // The socket of THIS effect run. Tracked locally (not only via wsRef)
+    // so the cleanup always closes the exact socket it created -- if the
+    // effect re-runs while getBackendWebSocketUrl() is still in flight,
+    // the old run's socket would otherwise open post-cleanup and live on
+    // as an untracked zombie, each one spawning its own reconnect loop.
+    let ws: WebSocket | null = null;
 
     const connect = async () => {
       if (cancelled) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return; // never run two connections from one effect run
+      }
       setStatus('connecting');
       try {
         const url = await getBackendWebSocketUrl('/ws/code/events');
         if (cancelled) return;
-        const ws = new WebSocket(url);
+        ws = new WebSocket(url);
         wsRef.current = ws;
 
         ws.onopen = () => {
-          retryDelay = 500;
-          ws.send(JSON.stringify({
+          if (cancelled) {
+            ws?.close();
+            return;
+          }
+          ws?.send(JSON.stringify({
             repo_key: session.repo_key,
             session_id: session.session_id,
           }));
         };
 
         ws.onmessage = (msg) => {
+          retryDelay = 1500; // a live, talking connection earns a fresh backoff
           let event: CodeAgentEvent;
           try {
             event = JSON.parse(msg.data);
@@ -97,23 +114,26 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
           });
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           if (cancelled) return;
+          // Close code/reason in the console: if reconnects ever loop
+          // again, this line says who hung up and why.
+          console.warn(`Code agent events ws closed (code ${event.code}${event.reason ? `, ${event.reason}` : ''}); retrying in ${retryDelay}ms`);
           setStatus((current) => (current === 'crashed' || current === 'no_instance' ? current : 'closed'));
           // Reconnect while mounted: a backend restart or an idle-reaped
           // instance shouldn't leave a dead panel. The resubscribe also
           // resyncs the diff view (diffTick bump on 'connected').
           retryTimer = window.setTimeout(connect, retryDelay);
-          retryDelay = Math.min(retryDelay * 2, 8000);
+          retryDelay = Math.min(retryDelay * 2, 15000);
         };
 
         ws.onerror = () => {
-          ws.close();
+          ws?.close();
         };
       } catch (error) {
         console.warn('Code agent events connection failed:', error);
         retryTimer = window.setTimeout(connect, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, 8000);
+        retryDelay = Math.min(retryDelay * 2, 15000);
       }
     };
 
@@ -121,7 +141,13 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
     return () => {
       cancelled = true;
       if (retryTimer) window.clearTimeout(retryTimer);
-      wsRef.current?.close();
+      // Close THIS run's socket specifically (ws), not just whatever wsRef
+      // happens to point at -- see the zombie-socket note above.
+      try {
+        ws?.close();
+      } catch {
+        /* already closed */
+      }
       wsRef.current = null;
     };
     // Reconnect when the agent session identity changes.
