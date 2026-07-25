@@ -1464,10 +1464,10 @@ def _write_history_checkpoints(workspace: str, owner: str, repo: str,
     # The repo outgrew the stride we picked: widen the window instead of
     # writing an unbounded number of checkpoints. Two old windows collapse
     # into one new one, so the count halves with the stride.
-    while total // stride > _MAX_CHECKPOINTS:
+    while (total + stride - 1) // stride > _MAX_CHECKPOINTS:
         stride *= 2
         done //= 2
-    windows = total // stride
+    windows = (total + stride - 1) // stride
     if windows <= done:
         return 0
 

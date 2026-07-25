@@ -10,6 +10,12 @@ class IgnoreLogChangeDetectedFilter(logging.Filter):
         return "Detected file change in" not in record.getMessage()
 
 
+class IgnoreEngraphisCloudWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord):
+        # We explicitly disable managed cloud; this warning is expected but noisy.
+        return "managed cloud operation failed" not in record.getMessage()
+
+
 def setup_logging(format: str = None):
     """
     Configure logging for the application with log rotation.
@@ -93,7 +99,9 @@ def setup_logging(format: str = None):
     # Add filter to suppress "Detected file change" messages
     if file_handler is not None:
         file_handler.addFilter(IgnoreLogChangeDetectedFilter())
+        file_handler.addFilter(IgnoreEngraphisCloudWarningFilter())
     console_handler.addFilter(IgnoreLogChangeDetectedFilter())
+    console_handler.addFilter(IgnoreEngraphisCloudWarningFilter())
 
     # Apply logging configuration
     logging.basicConfig(level=log_level, handlers=handlers, force=True)
