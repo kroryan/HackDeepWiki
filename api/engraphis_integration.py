@@ -1264,7 +1264,8 @@ def is_shallow_clone(clone_dir: Optional[str]) -> bool:
     try:
         out = subprocess.run(
             ["git", "-C", clone_dir, "rev-parse", "--is-shallow-repository"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
         )
         return out.returncode == 0 and out.stdout.strip() == "true"
     except Exception:  # noqa: BLE001
@@ -1289,7 +1290,8 @@ def ensure_deep_clone(clone_dir: Optional[str]) -> bool:
     try:
         subprocess.run(
             ["git", "-C", clone_dir, "fetch", "--unshallow", "--tags"],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=300,
         )
     except Exception as e:  # noqa: BLE001 - offline is a normal outcome
         logger.info("Engraphis: could not deepen %s (%s); history memory will "
@@ -1308,7 +1310,8 @@ def _git_history_records(clone_dir: str) -> list[dict]:
             ["git", "-C", clone_dir, "log", "--no-decorate",
              f"--max-count={_MAX_HISTORY_COMMITS}", "--date=short",
              "--pretty=format:%H\x1f%h\x1f%ad\x1f%an\x1f%s"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120,
         )
         if out.returncode != 0:
             return []
@@ -1368,7 +1371,8 @@ def _git_progress_stat(clone_dir: str, old: str, new: str) -> str:
         out = subprocess.run(
             ["git", "-C", clone_dir, "diff", "--shortstat",
              "--dirstat=files,0,3", old, new],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60,
         )
         if out.returncode != 0:
             return ""
@@ -1508,7 +1512,8 @@ def _git_commit_range_detailed(clone_dir: Optional[str], old: str,
         out = subprocess.run(
             ["git", "-C", clone_dir, "log", "--no-decorate", "--date=short",
              "--pretty=format:%h %ad %an: %s", f"{old}..{new}"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60,
         )
         if out.returncode != 0:
             return []
@@ -1523,21 +1528,25 @@ def _git_history_stats(clone_dir: str) -> str:
     try:
         total = subprocess.run(
             ["git", "-C", clone_dir, "rev-list", "--count", "HEAD"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
         )
         authors = subprocess.run(
             ["git", "-C", clone_dir, "shortlog", "-sne", "--all"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60,
         )
         first = subprocess.run(
             ["git", "-C", clone_dir, "log", "--reverse", "--date=short",
              "--pretty=format:%ad", "--max-count=1"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
         )
         last = subprocess.run(
             ["git", "-C", clone_dir, "log", "-1", "--date=short",
              "--pretty=format:%ad"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
         )
     except Exception:  # noqa: BLE001
         return ""
@@ -1561,7 +1570,8 @@ def _git_commit_range(clone_dir: Optional[str], old: Optional[str],
         out = subprocess.run(
             ["git", "-C", clone_dir, "log", "--oneline", "--no-decorate",
              f"{old}..{new}"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
         )
         if out.returncode != 0:
             return []
@@ -1577,7 +1587,8 @@ def _git_diff_stat(clone_dir: Optional[str], old: Optional[str],
     try:
         out = subprocess.run(
             ["git", "-C", clone_dir, "diff", "--stat=120", f"{old}..{new}"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
         )
         if out.returncode != 0:
             return ""

@@ -221,6 +221,24 @@ def test_checkpoints_extend_instead_of_being_rewritten(memory, repo):
     assert (checkpoints[4]["id"], checkpoints[3]["id"], "follows") in _edges(eng)
 
 
+def test_non_ascii_commit_subjects_survive_the_ingest(memory, repo):
+    """git speaks UTF-8; Python decodes a pipe with the LOCALE encoding, which
+    on Windows is cp1252 -- bytes it has no mapping for would raise and lose
+    the whole history. The git helpers pin UTF-8 for that reason."""
+    eng = memory
+    subject = "feat: señal → café ✅ 日本語"
+    (repo / "api" / "unicode.py").write_text("# ok\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", subject)
+    head = _git(repo, "rev-parse", "HEAD")
+
+    eng._backfill_history("acme_widgets_evolution", "acme", "widgets",
+                          str(repo), head)
+    batches = "\n".join(m["content"] for m in
+                        _memories(eng, "commit_history_batch"))
+    assert subject in batches
+
+
 # -- the shallow clone that caused "1 commit" -----------------------------
 
 @pytest.fixture
