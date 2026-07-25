@@ -10,11 +10,15 @@ the model that if it needs more context than it was given, its ENTIRE
 response should be exactly one line, `<TOOL_PREFIX>: <query>` (e.g.
 `SEARCH_WIKI: <query>`, or `READ_FILE: <path>` for repo chats -- see
 api/search_tool.py's TOOL_LABELS for the full set). This module detects
-that line as it streams in, resolves it via a caller-supplied handler for
-whichever prefix matched, and re-prompts the model with the result
-appended -- transparently to the caller, which only ever sees the final
-answer text (plus a small "(Buscando: ...)"-style marker the backend
-itself emits, never text the model wrote).
+that line as it streams in -- at ANY line start, not only at the start of
+the response, because models routinely narrate first and call the tool
+afterwards -- resolves it via a caller-supplied handler for whichever
+prefix matched, and re-prompts the model with the result appended --
+transparently to the caller, which only ever sees the final answer text
+(plus a small "(Buscando: ...)"-style marker the backend itself emits,
+never text the model wrote). Text written before a tool call, and any
+stray tool-call line in the final round, are routed to the Process panel
+instead of the answer.
 """
 import asyncio
 import json
@@ -42,85 +46,238 @@ MAX_TOOL_ROUNDS = 5
 # just keeps generating without ever closing the line.
 MAX_QUERY_BUFFER = 500
 
+# How much text is held back at the START of a round before any of it reaches
+# the answer. A model that ignores "your ENTIRE response must be exactly one
+# line" typically narrates first ("I need to check the safety module...") and
+# only then writes the tool call: within this window that preamble is routed
+# to the Process panel instead of the answer, which is where it belongs.
+# Small enough that first paint of a normal answer is not visibly delayed.
+HOLD_BACK_CHARS = 400
+
 SendChunk = Callable[[str], Awaitable[None]]
+# Text that was written before a tool call and therefore isn't answer text.
+DiscardSink = Callable[[str], Awaitable[None]]
+
+
+def _find_tool_call(
+    text: str, at_line_start: bool, prefixes: list[str], max_len: int
+) -> tuple[str, Any, str, str]:
+    """Locate a `<PREFIX>: <query>` tool call anywhere in `text`.
+
+    A tool call is only ever recognised at the start of a line (the protocol
+    in api/prompts.py TOOL_CALLING_INSTRUCTIONS), so a sentence that merely
+    mentions "SEARCH_WIKI:" inside prose is not one.
+
+    Returns one of:
+      ``("call", start, prefix, query)`` -- a complete tool-call line found at
+        offset ``start``;
+      ``("wait", boundary, "", "")`` -- the text from ``boundary`` on could
+        still become a tool call (an incomplete line); everything before it is
+        safe to emit;
+      ``("none", len(text), "", "")`` -- no tool call is possible in this
+        text; all of it is safe to emit.
+    """
+    starts = [0] if at_line_start else []
+    starts.extend(i + 1 for i, ch in enumerate(text) if ch == "\n")
+    for position in starts:
+        segment = text[position:].lstrip(" \t")
+        newline = segment.find("\n")
+        line = segment if newline < 0 else segment[:newline]
+        upper = line.upper()
+        matched = [p for p in prefixes if upper.startswith(p)]
+        if matched:
+            prefix = max(matched, key=len)
+            if newline >= 0 or len(line) - len(prefix) > MAX_QUERY_BUFFER:
+                return "call", position, prefix, line[len(prefix):].strip()
+            return "wait", position, "", ""  # tool line still being written
+        if newline < 0:
+            # Trailing, incomplete line: it may still turn into a tool call
+            # once more characters arrive (or be empty so far).
+            if not upper or (len(upper) < max_len
+                             and any(p.startswith(upper) for p in prefixes)):
+                return "wait", position, "", ""
+    return "none", len(text), "", ""
 
 
 async def sniff_and_relay(
-    stream: AsyncIterator[str], send_chunk: SendChunk, prefixes: list[str]
+    stream: AsyncIterator[str],
+    send_chunk: SendChunk,
+    prefixes: list[str],
+    on_discarded: Optional[DiscardSink] = None,
 ) -> Optional[tuple[str, str]]:
-    """Relay `stream` to `send_chunk` verbatim UNLESS it turns out to be a
-    `<prefix>: <query>` tool call for one of `prefixes`, in which case
-    nothing is relayed and `(matched_prefix, query)` is returned instead
-    (None if this was ordinary text).
+    """Relay `stream` to `send_chunk` UNLESS it contains a `<prefix>: <query>`
+    tool call for one of `prefixes`, in which case the call line is consumed
+    and `(matched_prefix, query)` is returned instead (None for a plain
+    answer).
 
-    Only the first few characters need buffering: as soon as the
-    accumulated text (leading whitespace ignored) stops being a valid
-    case-insensitive prefix of ANY candidate, it's flushed in one shot and
-    every later chunk is forwarded immediately -- the buffer never grows
-    past the longest candidate prefix, so this adds no perceptible latency
-    to ordinary answers. Candidates that share a common start (there are
-    none today, but nothing here assumes otherwise) narrow down naturally
-    as more characters arrive, same as a trie.
+    This used to check the prefix only at the very START of the stream: the
+    moment the accumulated text stopped matching a candidate it switched to
+    forwarding everything verbatim. Models that narrate before acting ("We
+    need to search for FIXME or TODO.") therefore never triggered a tool --
+    their `SEARCH_WIKI: ...` lines were relayed as literal answer text, the
+    tool never ran, and the model concluded (out loud, in the answer) that
+    the tools were broken. A tool call is now detected at ANY line start, so
+    the protocol works regardless of whether the model obeyed "your ENTIRE
+    response must be exactly one line".
+
+    Streaming still starts almost immediately: only the first
+    ``HOLD_BACK_CHARS`` of a round are held back, plus whatever trailing
+    partial line could still become a tool call (never more than the longest
+    prefix plus one query line). Text held back when a tool call is found
+    before anything has been shown is pre-call narration, not an answer: it
+    goes to ``on_discarded`` (the Process panel) instead of the answer
+    bubble.
     """
     max_len = max(len(p) for p in prefixes)
-    buffer = ""
-    relaying = False
-    confirmed: Optional[str] = None
+    pending = ""
+    at_line_start = True
+    emitted_any = False
+    streaming = False  # False until the hold-back window has been passed
+
+    async def drop(text: str) -> None:
+        """Route pre-call narration out of the answer."""
+        if text.strip() and on_discarded is not None:
+            await on_discarded(text)
+
+    async def flush(count: int) -> None:
+        nonlocal pending, at_line_start, emitted_any
+        if count <= 0:
+            return
+        head, pending = pending[:count], pending[count:]
+        at_line_start = head.endswith("\n")
+        emitted_any = True
+        await send_chunk(head)
+
     async for chunk in stream:
-        if relaying:
-            await send_chunk(chunk)
+        if not chunk:
             continue
+        pending += chunk
+        kind, boundary, prefix, query = _find_tool_call(
+            pending, at_line_start, prefixes, max_len
+        )
+        if kind == "call":
+            before = pending[:boundary]
+            if query:
+                # Whatever came before the call is not part of the answer
+                # when nothing has been shown yet; mid-answer it is.
+                if emitted_any:
+                    await flush(len(before))
+                else:
+                    await drop(before)
+                return prefix, query
+            # A bare prefix with no query is not actionable -- treat the
+            # whole thing as ordinary text rather than looping on it.
+            kind, boundary = "none", len(pending)
 
-        buffer += chunk
-        stripped = buffer.lstrip()
-        if not stripped:
-            if len(buffer) > MAX_QUERY_BUFFER:
-                await send_chunk(buffer)
-                relaying = True
-            continue
+        if not streaming:
+            if len(pending) < HOLD_BACK_CHARS:
+                continue  # still inside the hold-back window
+            streaming = True
+        await flush(boundary)
 
-        upper = stripped.upper()
-        if confirmed is None:
-            matched = [p for p in prefixes if upper.startswith(p)]
-            if matched:
-                confirmed = max(matched, key=len)
-            elif len(upper) < max_len and any(p.startswith(upper) for p in prefixes):
-                continue  # still an ambiguous prefix, need more characters
-            else:
-                # Definitely not a tool call: flush what we buffered and
-                # relay everything else directly from here on.
-                await send_chunk(buffer)
-                relaying = True
-                continue
-
-        if "\n" in stripped or len(stripped) - len(confirmed) > MAX_QUERY_BUFFER:
-            break
-        continue  # confirmed tool-call line, keep collecting the query
-    else:
-        # Stream ended without ever diverging from (or completing) the
-        # prefix check above.
-        if not relaying and buffer:
-            stripped = buffer.lstrip()
-            upper = stripped.upper()
-            matched = [p for p in prefixes if upper.startswith(p)]
-            if matched:
-                prefix = max(matched, key=len)
-                query = stripped[len(prefix):].strip()
-                if query:
-                    return prefix, query
-            await send_chunk(buffer)
-        return None
-
-    # Reached via `break`: buffer is a confirmed "<prefix>: ..." line.
-    stripped = buffer.lstrip()
-    line, _, _ = stripped.partition("\n")
-    query = line[len(confirmed):].strip()
-    if query:
-        return confirmed, query
-    # Full prefix but an empty query is ambiguous -- treat as ordinary text
-    # rather than looping on a request we can't act on.
-    await send_chunk(buffer)
+    # Stream ended: decide on whatever is still held back.
+    kind, boundary, prefix, query = _find_tool_call(
+        pending, at_line_start, prefixes, max_len
+    )
+    if kind == "wait" and pending[boundary:].strip():
+        # An unterminated final line: complete it here, since no more text is
+        # coming (a model that ends its stream on "SEARCH_WIKI: foo" without a
+        # trailing newline still meant to call the tool).
+        tail = pending[boundary:].lstrip(" \t")
+        upper = tail.upper()
+        matched = [p for p in prefixes if upper.startswith(p)]
+        if matched:
+            prefix = max(matched, key=len)
+            query = tail[len(prefix):].strip()
+            if query:
+                before = pending[:boundary]
+                if emitted_any:
+                    await flush(len(before))
+                else:
+                    await drop(before)
+                return prefix, query
+    if kind == "call" and query:
+        before = pending[:boundary]
+        if emitted_any:
+            await flush(len(before))
+        else:
+            await drop(before)
+        return prefix, query
+    if pending:
+        await flush(len(pending))
     return None
+
+
+async def relay_without_tool_lines(
+    stream: AsyncIterator[str],
+    send_chunk: SendChunk,
+    prefixes: list[str],
+    on_discarded: Optional[DiscardSink] = None,
+) -> None:
+    """Relay a stream to the answer, dropping any stray tool-call LINE.
+
+    Used for the final round, where there is no round left to act on a tool
+    call: relaying raw (what this used to do) is how a literal
+    "SEARCH_WIKI: FIXME" ended up rendered as the answer. The rest of the
+    text is still forwarded, so the user always gets whatever the model
+    actually said.
+    """
+    max_len = max(len(p) for p in prefixes)
+    pending = ""
+    at_line_start = True
+
+    async def emit(count: int) -> None:
+        nonlocal pending, at_line_start
+        if count <= 0:
+            return
+        head, pending = pending[:count], pending[count:]
+        at_line_start = head.endswith("\n")
+        await send_chunk(head)
+
+    async def drop_tool_line(start: int) -> None:
+        """Remove the tool-call line at ``start`` (text before it is answer
+        text and has already been emitted by the caller)."""
+        nonlocal pending, at_line_start
+        rest = pending[start:]
+        newline = rest.find("\n")
+        line, pending = (rest, "") if newline < 0 else (rest[:newline + 1], rest[newline + 1:])
+        at_line_start = True
+        if on_discarded is not None and line.strip():
+            await on_discarded(line)
+
+    async for chunk in stream:
+        if not chunk:
+            continue
+        pending += chunk
+        while True:
+            kind, boundary, _prefix, query = _find_tool_call(
+                pending, at_line_start, prefixes, max_len
+            )
+            if kind != "call" or not query:
+                break
+            await emit(boundary)
+            await drop_tool_line(0)
+        if kind == "wait":
+            await emit(boundary)
+        else:
+            await emit(len(pending))
+
+    while pending:
+        kind, boundary, _prefix, query = _find_tool_call(
+            pending, at_line_start, prefixes, max_len
+        )
+        if kind == "call" and query:
+            await emit(boundary)
+            await drop_tool_line(0)
+            continue
+        # No more text is coming: an unterminated final line that starts with
+        # a prefix is a tool call too, and must not be shown either.
+        tail = pending[boundary:].lstrip(" \t").upper() if kind == "wait" else ""
+        if tail and any(tail.startswith(p) for p in prefixes):
+            await emit(boundary)
+            await drop_tool_line(0)
+            continue
+        await emit(len(pending))
 
 
 async def _run_agent_rounds(
@@ -174,13 +331,29 @@ async def _run_agent_rounds(
 
         if is_last_round:
             # No round left to act on a tool call even if the model ignores
-            # the note above -- relay raw so the user never sees a blank
-            # response because we swallowed a stray "SEARCH_WIKI:" line.
-            async for chunk in stream:
-                await tracked_send_chunk(chunk)
+            # the note above. Relay everything EXCEPT a stray tool-call line:
+            # it can't be executed here, and showing it verbatim is exactly
+            # how "SEARCH_WIKI: FIXME" used to end up rendered as the answer.
+            await relay_without_tool_lines(
+                stream, tracked_send_chunk, list(tools.keys()),
+                on_discarded=(
+                    (lambda text: send_process("thinking", {"text": text}))
+                    if send_process is not None else None
+                ),
+            )
             break
 
-        result = await sniff_and_relay(stream, tracked_send_chunk, list(tools.keys()))
+        async def discarded(text: str) -> None:
+            """Narration the model wrote before its tool call. It is not part
+            of the answer (the answer comes after the tool result), so it goes
+            to the Process panel when one is attached, and is dropped
+            otherwise -- never into the answer bubble."""
+            if send_process is not None:
+                await send_process("thinking", {"text": text})
+
+        result = await sniff_and_relay(
+            stream, tracked_send_chunk, list(tools.keys()), on_discarded=discarded
+        )
         if not result:
             break
         prefix, query = result

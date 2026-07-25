@@ -15,10 +15,13 @@ Portability contract (the same rules the rest of the app follows):
   ``ENGRAPHIS_DB_PATH`` and its private state dir via ``ENGRAPHIS_STATE_DIR``.
   Nothing is ever written to the user's home directory.
 * ``ENGRAPHIS_UPDATE_CHECK=0`` -- zero network activity at runtime.
-* ``ENGRAPHIS_EMBED_MODEL=""`` -- the explicit offline opt-out: Engraphis uses
-  its deterministic embedder (numpy-only) instead of trying to download
-  sentence-transformers models. Recall stays fully functional offline
-  (lexical + graph + deterministic vectors).
+* ``ENGRAPHIS_EMBED_MODEL=""`` -- the explicit offline opt-out: Engraphis never
+  downloads a sentence-transformers model. Semantic search is instead provided
+  by HackDeepWiki's OWN configured embedder (the one RAG indexes repos with),
+  installed over Engraphis's factory by ``_install_embedder`` -- see
+  ``api/engraphis_embedder.py``. When that embedder isn't reachable (no API
+  key, Ollama down, offline) Engraphis keeps its deterministic embedder and
+  recall stays functional (lexical + graph + hashed vectors).
 * The env vars are written BEFORE the first ``import engraphis`` anywhere in
   the process (engraphis.config.settings caches them at import time), which is
   why every import in this module is lazy and goes through ``_bootstrap_env``.
@@ -65,6 +68,20 @@ _dashboard_thread: Optional[threading.Thread] = None
 _dashboard_server = None   # uvicorn.Server, so shutdown() can stop it
 _dashboard_port: Optional[int] = None
 _start_error: Optional[str] = None
+
+# What the semantic-search layer actually ended up being, surfaced to the
+# dashboard banner (see _embedder_payload) and to status(). Populated by
+# _install_embedder before the engine is ever built.
+_embedder_info: dict[str, Any] = {
+    "semantic": False, "model": "", "dim": 0, "reason": "not started",
+}
+
+# Bounds for the one-time re-embed that runs when the vector width changes
+# (switching embedder provider, or going deterministic -> semantic). Recall
+# filters candidates by vector dim, so stale-width vectors are invisible to
+# vector search until they're rewritten; this walks them in the background.
+_REEMBED_BATCH = 32
+_MAX_REEMBED = 5000
 
 # Keep proactive/recall injections bounded so memory can never crowd out the
 # actual question/context in a small-context model.
@@ -121,6 +138,66 @@ _SHIM_JS = b"""\
     ws = q.get('ws');
     view = q.get('view');
   } catch (e) {}
+
+  // --- Honest semantic-search banner ------------------------------------
+  // Upstream's banner says "close the dashboard window and re-launch
+  // scripts/launch_dashboard.ps1 ... it installs the model automatically",
+  // and prints the self-contradictory "loaded at N-dim but your memories are
+  // 384-dim". None of that applies here: HackDeepWiki has no such script and
+  // never downloads models at runtime -- semantic search comes from the
+  // embedder configured for the app itself. Replace the message (built as
+  // DOM, no innerHTML, so it stays inside the strict dashboard CSP) with
+  // what is actually actionable, and only show it when semantic search is
+  // genuinely off.
+  function hdwSemBanner(sb) {
+    var info = window.__hdwEmbedder || {};
+    var notice = document.createElement('div');
+    notice.className = 'system-notice';
+    var details = document.createElement('details');
+    var summary = document.createElement('summary');
+    var title = document.createElement('strong');
+    title.textContent = 'Semantic search is off';
+    var brief = document.createElement('span');
+    brief.className = 'system-notice-brief';
+    brief.textContent = 'Keyword + graph recall is active for Recall, Why and Timeline.';
+    summary.appendChild(title);
+    summary.appendChild(brief);
+    var detail = document.createElement('div');
+    detail.className = 'system-notice-detail';
+    detail.textContent =
+      'Engraphis uses the same embedder HackDeepWiki indexes repositories ' +
+      'with, so meaning-based recall turns on as soon as that embedder is ' +
+      'reachable. Configure it in HackDeepWiki (embedder provider + API key, ' +
+      'or a running Ollama), then restart the app -- nothing is downloaded ' +
+      'and no separate script is needed.';
+    details.appendChild(summary);
+    details.appendChild(detail);
+    if (info.reason) {
+      var reason = document.createElement('div');
+      reason.className = 'system-notice-reason';
+      reason.textContent = 'Why it is off: ' + info.reason;
+      detail.appendChild(reason);
+    }
+    notice.appendChild(details);
+    sb.replaceChildren(notice);
+  }
+  window.renderSemBanner = function (eb) {
+    var sb = document.getElementById('sem-banner');
+    if (!sb) return;
+    window.__emb = eb;
+    var info = window.__hdwEmbedder || {};
+    var semantic = !!((eb && eb.semantic) || info.semantic);
+    if (typeof window.showAs === 'function') window.showAs(sb, !semantic, 'block');
+    else sb.hidden = semantic;
+    if (semantic) { sb.replaceChildren(); return; }
+    hdwSemBanner(sb);
+  };
+  // dashboard.js runs before this shim and its boot() may already have
+  // rendered the upstream banner; re-render ours over it when it did.
+  if (typeof window.__emb !== 'undefined') {
+    try { window.renderSemBanner(window.__emb); } catch (e) {}
+  }
+
   if (!ws) return;
   var tries = 0;
   var timer = setInterval(function () {
@@ -251,7 +328,8 @@ class _EmbeddableDashboard:
         method = (scope.get("method") or "GET").upper()
 
         if method == "GET" and path == "/hackdeepwiki-shim.js":
-            await self._send_asset(send, _SHIM_JS, b"application/javascript; charset=utf-8")
+            await self._send_asset(send, _shim_body(),
+                                   b"application/javascript; charset=utf-8")
             return
 
         if method == "GET" and path == "/":
@@ -297,10 +375,163 @@ class _EmbeddableDashboard:
         await send({"type": "http.response.body", "body": body})
 
 
+def _shim_body() -> bytes:
+    """The shim, prefixed with the real embedder status it renders.
+
+    Served fresh on every request (the dashboard asset is no-store), so a
+    reload after fixing an API key shows the new state without a rebuild.
+    """
+    import json
+    info = dict(_embedder_info)
+    payload = json.dumps(info, ensure_ascii=True).encode("ascii", "replace")
+    return b"window.__hdwEmbedder = " + payload + b";\n" + _SHIM_JS
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _install_embedder() -> None:
+    """Give Engraphis real semantic embeddings, without forking it.
+
+    Engraphis picks its embedder through ``engraphis.backends.embedder_st.
+    get_embedder``, which can only return a sentence-transformers model (a
+    torch download this build deliberately never ships) or the deterministic
+    hashing embedder -- lexical-only, which is why the dashboard reports
+    "semantic search is off". HackDeepWiki already runs a configured text
+    embedder for RAG, so we install an adapter over it (see
+    ``api/engraphis_embedder``) as the factory's result. Same no-fork posture
+    as ``_EmbeddableDashboard``: upstream code is untouched, only the factory
+    it calls is replaced -- and only after ``_bootstrap_env``, before any
+    engine is created.
+
+    ``engraphis.core.engine`` binds ``get_embedder`` at module import, so the
+    engine module's own reference is patched too. When the app's embedder
+    isn't reachable, nothing is patched and Engraphis behaves exactly as it
+    does today.
+    """
+    global _embedder_info
+    try:
+        from api.engraphis_embedder import build_embedder, is_enabled
+    except Exception as e:  # noqa: BLE001
+        _embedder_info = {"semantic": False, "model": "", "dim": 0,
+                          "reason": f"{type(e).__name__}: {e}"}
+        return
+
+    adapter = None
+    try:
+        adapter = build_embedder()
+    except Exception as e:  # noqa: BLE001 - build_embedder shouldn't raise
+        logger.warning("Engraphis embedder adapter failed to build: %s", e)
+
+    if adapter is None:
+        _embedder_info = {
+            "semantic": False, "model": "", "dim": 0,
+            "reason": ("disabled by HACKDEEPWIKI_ENGRAPHIS_EMBEDDER"
+                       if not is_enabled() else
+                       "HackDeepWiki's configured embedder is not reachable "
+                       "(missing API key, Ollama not running, or offline)"),
+        }
+        return
+
+    try:
+        from engraphis.backends import embedder_st
+        import engraphis.core.engine as _engine
+
+        def _hackdeepwiki_get_embedder(model_name=None, dim: int = 256,
+                                       _adapter=adapter):
+            return _adapter
+
+        embedder_st.get_embedder = _hackdeepwiki_get_embedder
+        embedder_st.LAST_EMBEDDER_ERROR = ""
+        _engine.get_embedder = _hackdeepwiki_get_embedder
+    except Exception as e:  # noqa: BLE001
+        _embedder_info = {"semantic": False, "model": "", "dim": 0,
+                          "reason": f"{type(e).__name__}: {e}"}
+        logger.warning("Could not install the HackDeepWiki embedder into "
+                       "Engraphis: %s", e)
+        return
+
+    _embedder_info = {"semantic": True, "model": adapter.model,
+                      "dim": int(adapter.dim), "reason": ""}
+
+
+def _schedule_reembed() -> None:
+    """Rewrite stale-width vectors in the background after an embedder change.
+
+    Recall's vector leg only looks at vectors whose width matches the query
+    vector (``Store.iter_vectors(..., dim=...)``), so every memory written
+    under the previous embedder (typically the 384-dim deterministic one)
+    would be invisible to semantic search forever. This walks them in bounded
+    batches on a daemon thread -- the app never blocks on it, and an
+    interrupted run simply continues on the next launch.
+    """
+    if not _embedder_info.get("semantic"):
+        return  # nothing to gain: deterministic vectors are already 384-dim
+    thread = threading.Thread(target=_reembed_stale_vectors,
+                              name="engraphis-reembed", daemon=True)
+    thread.start()
+
+
+def _reembed_stale_vectors() -> None:
+    svc = _service
+    if svc is None:
+        return
+    try:
+        engine = svc.engine
+        store = engine.store
+        embedder = engine.embedder
+        dim = int(getattr(embedder, "dim", 0))
+        model = str(getattr(embedder, "model", "") or "")
+        if dim <= 0:
+            return
+        state = (_ingest_state().get("__embedder__") or {}).get("vectors") or {}
+        if state.get("dim") == dim and state.get("model") == model:
+            return
+
+        done = 0
+        while done < _MAX_REEMBED:
+            with _LOCK:
+                rows = store.conn.execute(
+                    "SELECT m.id, m.title, m.content FROM memories m "
+                    "LEFT JOIN mem_vectors v ON v.id = m.id "
+                    "WHERE v.dim IS NULL OR v.dim <> ? LIMIT ?",
+                    (dim, _REEMBED_BATCH),
+                ).fetchall()
+            if not rows:
+                _mark_ingested("__embedder__", "vectors", dim=dim, model=model)
+                if done:
+                    logger.info("Engraphis: re-embedded %d memories at %d-dim "
+                                "(%s)", done, dim, model or "semantic")
+                return
+            ids = [str(r["id"]) for r in rows]
+            # Same text the engine embeds on write ("title\ncontent"), so a
+            # rewritten vector is identical to a freshly stored one.
+            texts = [
+                (f"{r['title']}\n{r['content']}" if r["title"] else str(r["content"] or ""))
+                for r in rows
+            ]
+            vectors = embedder.embed(texts)
+            with _LOCK:
+                for mem_id, vector in zip(ids, vectors):
+                    store.put_vector(mem_id, vector, model=model)
+                store.conn.commit()
+                index = getattr(engine, "index", None)
+                # NumpyVectorIndex reads mem_vectors directly (already
+                # written above); an ANN backend keeps its own table.
+                if index is not None and type(index).__name__ != "NumpyVectorIndex":
+                    try:
+                        index.upsert(ids, vectors)
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug("vector index upsert skipped: %s", e)
+            done += len(ids)
+        logger.info("Engraphis: re-embedded the first %d memories at %d-dim; "
+                    "the rest continue on the next launch", done, dim)
+    except Exception as e:  # noqa: BLE001 - never break startup
+        logger.warning("Engraphis vector re-embed skipped: %s: %s",
+                       type(e).__name__, e)
 
 
 def _ensure_started() -> None:
@@ -315,6 +546,9 @@ def _ensure_started() -> None:
             _start_error = "engraphis is not installed in this build"
             return
         _bootstrap_env()
+        # Must precede the first MemoryEngine construction below: the engine
+        # resolves its embedder once, at create().
+        _install_embedder()
 
         dashboard_error: Optional[str] = None
         try:
@@ -381,6 +615,9 @@ def _ensure_started() -> None:
                 _service = None
                 logger.warning("Engraphis integration failed to start: %s", _start_error)
 
+        if _service is not None:
+            _schedule_reembed()
+
 
 def shutdown() -> None:
     """Stop the embedded dashboard server (called from the app lifespan)."""
@@ -408,6 +645,7 @@ def status() -> dict[str, Any]:
             f"http://127.0.0.1:{_dashboard_port}" if _dashboard_port else None
         ),
         "error": _start_error,
+        "embedder": dict(_embedder_info),
     }
 
 
@@ -440,28 +678,101 @@ def ensure_workspace(workspace: str, description: str = "") -> bool:
             return True
 
 
-def remember(workspace: str, content: str, *, mtype: str = "semantic",
-             session_id: Optional[str] = None, source: str = "agent",
-             metadata: Optional[dict] = None, title: str = "") -> str:
-    """Store one memory in a workspace. Returns a short outcome string."""
+def remember_detailed(workspace: str, content: str, *, mtype: str = "semantic",
+                      session_id: Optional[str] = None, source: str = "agent",
+                      metadata: Optional[dict] = None,
+                      title: str = "") -> dict[str, Any]:
+    """Store one memory and return ``{"id", "op", "error"}``.
+
+    The id is what makes a *connected* memory possible: callers that write a
+    memory can immediately ``link`` it to the memories it follows from or
+    refers to, instead of leaving isolated nodes in the graph.
+    """
     svc = get_service()
     if svc is None:
-        return "Memory is unavailable in this build (Engraphis not installed)."
+        return {"id": "", "op": "", "error": "engraphis unavailable"}
     content = (content or "").strip()
     if not content:
-        return "Nothing to remember: empty content."
+        return {"id": "", "op": "", "error": "empty content"}
     with _LOCK:
         try:
             result = svc.remember(
                 content, workspace=workspace, mtype=mtype, title=title,
                 session_id=session_id, source=source, metadata=metadata,
-            )
-            op = (result or {}).get("op") or "add"
-            mem_id = (result or {}).get("id") or ""
-            return f"Remembered ({op}) in workspace '{workspace}' [{mem_id}]."
+            ) or {}
+            return {"id": str(result.get("id") or ""),
+                    "op": str(result.get("op") or "add"), "error": ""}
         except Exception as e:  # noqa: BLE001
             logger.warning("engraphis remember failed: %s", e)
-            return f"Could not store the memory: {e}"
+            return {"id": "", "op": "", "error": f"{e}"}
+
+
+def remember(workspace: str, content: str, *, mtype: str = "semantic",
+             session_id: Optional[str] = None, source: str = "agent",
+             metadata: Optional[dict] = None, title: str = "") -> str:
+    """Store one memory in a workspace. Returns a short outcome string."""
+    if get_service() is None:
+        return "Memory is unavailable in this build (Engraphis not installed)."
+    if not (content or "").strip():
+        return "Nothing to remember: empty content."
+    result = remember_detailed(
+        workspace, content, mtype=mtype, session_id=session_id, source=source,
+        metadata=metadata, title=title,
+    )
+    if result.get("error"):
+        return f"Could not store the memory: {result['error']}"
+    return (f"Remembered ({result['op']}) in workspace '{workspace}' "
+            f"[{result['id']}].")
+
+
+def link(workspace: str, a: str, b: str, *, relation: str = "related",
+         reason: str = "") -> bool:
+    """Draw one edge between two memories. False when it couldn't be drawn.
+
+    Engraphis infers the graph layer from the relation vocabulary
+    (``follows`` -> temporal, ``part_of``/``references`` -> entity,
+    ``depends_on`` -> causal), so callers only pick the relation.
+    """
+    svc = get_service()
+    if svc is None or not a or not b or a == b:
+        return False
+    with _LOCK:
+        try:
+            svc.link(a, b, workspace=workspace, relation=relation,
+                     reason=reason[:180])
+            return True
+        except Exception as e:  # noqa: BLE001 - a missing edge must never break a chat
+            logger.debug("engraphis link %s -> %s (%s) skipped: %s",
+                         a, b, relation, e)
+            return False
+
+
+def recall_ids(workspace: str, query: str, *, k: int = 3) -> list[str]:
+    """Ids of the memories most related to ``query``, best first.
+
+    Passive (no reinforcement, no receipt): this is used to decide what a new
+    memory should be *linked* to, which shouldn't distort the usage signal
+    that an explicit recall carries.
+    """
+    svc = get_service()
+    if svc is None or not (query or "").strip():
+        return []
+    with _LOCK:
+        try:
+            result = svc.recall(query, workspace=workspace, k=k,
+                                reinforce=False, record_receipt=False,
+                                intent="recall")
+        except Exception as e:  # noqa: BLE001
+            logger.debug("engraphis recall_ids skipped: %s", e)
+            return []
+    memories = (result or {}).get("memories") if isinstance(result, dict) else None
+    if not isinstance(memories, list):
+        return []
+    ids = []
+    for mem in memories:
+        if isinstance(mem, dict) and mem.get("id"):
+            ids.append(str(mem["id"]))
+    return ids
 
 
 def recall(workspace: str, query: str, *, k: int = _MAX_INJECTED_MEMORIES) -> str:
@@ -479,6 +790,55 @@ def recall(workspace: str, query: str, *, k: int = _MAX_INJECTED_MEMORIES) -> st
             logger.warning("engraphis recall failed: %s", e)
             return f"Memory recall failed: {e}"
     return _format_recall(result, workspace)
+
+
+def remember_linked(workspace: str, content: str, *, mtype: str = "episodic",
+                    session_id: Optional[str] = None, source: str = "agent",
+                    metadata: Optional[dict] = None, title: str = "",
+                    chain_key: str = "", relate_query: str = "",
+                    max_related: int = 2) -> str:
+    """Store a memory AND wire it into the graph. Returns the memory id.
+
+    A store of unconnected memories is a list, not a graph: recall can find a
+    single row but nothing explains what came before it or what it builds on,
+    and the dashboard's graph view shows a field of isolated dots. Every
+    memory written through here gets two kinds of edge:
+
+    * ``follows`` -- the previous memory of the same ``chain_key`` in this
+      workspace (e.g. the previous chat turn), giving the workspace a real
+      timeline. The chain head is kept in our ingest-state file for the same
+      reason ``_has_memory`` is: Engraphis offers semantic recall, not an
+      exact "the last memory of kind X" lookup.
+    * ``references`` -- the memories most related to ``relate_query``,
+      computed BEFORE the write so the new memory can't match itself. This is
+      what connects a follow-up answer to the wiki page or earlier decision it
+      actually builds on.
+    """
+    related: list[str] = []
+    if relate_query and max_related > 0:
+        related = recall_ids(workspace, relate_query, k=max_related)
+
+    mem_id = remember_detailed(
+        workspace, content, mtype=mtype, session_id=session_id, source=source,
+        metadata=metadata, title=title,
+    )["id"]
+    if not mem_id:
+        return ""
+
+    if chain_key:
+        state_key = f"chain_{_clean_component(chain_key)}"
+        previous = (_ingest_state().get(workspace) or {}).get(state_key) or {}
+        previous_id = str(previous.get("id") or "")
+        if previous_id and previous_id != mem_id:
+            link(workspace, mem_id, previous_id, relation="follows",
+                 reason=f"next {chain_key} in this workspace")
+        _mark_ingested(workspace, state_key, id=mem_id)
+
+    for related_id in related:
+        if related_id != mem_id:
+            link(workspace, mem_id, related_id, relation="references",
+                 reason="answers build on this earlier memory")
+    return mem_id
 
 
 def why(workspace: str, query: str) -> str:
@@ -606,10 +966,24 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
         if previous_version is not None:
             summary += f" Previous release: v{previous_version}"
             summary += f" at commit {previous_commit[:12]}." if previous_commit else "."
-        remember(workspace, summary, mtype="episodic", source="hackdeepwiki",
-                 title=f"Wiki release v{version} of {owner}/{repo}",
-                 metadata={"kind": "wiki_release", "version": version,
-                           "commit": repo_commit or ""})
+        release_id = remember_detailed(
+            workspace, summary, mtype="episodic", source="hackdeepwiki",
+            title=f"Wiki release v{version} of {owner}/{repo}",
+            metadata={"kind": "wiki_release", "version": version,
+                      "commit": repo_commit or ""},
+        )["id"]
+        # Releases form a chain: v3 follows v2 follows v1. The pointer to the
+        # previous release lives in our ingest-state file because Engraphis
+        # exposes semantic recall, not an exact "find the memory whose
+        # metadata says version=2" lookup (same reasoning as _has_memory).
+        previous_release = (_ingest_state().get(workspace) or {}).get("last_release") or {}
+        if release_id and previous_release.get("id"):
+            link(workspace, release_id, str(previous_release["id"]),
+                 relation="follows",
+                 reason=f"wiki v{version} follows v{previous_release.get('version')}")
+        if release_id:
+            _mark_ingested(workspace, "last_release", id=release_id,
+                           version=version)
 
         commits = _git_commit_range(clone_dir, previous_commit, repo_commit)
         if commits:
@@ -617,7 +991,7 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
             extra = len(commits) - _MAX_EVOLUTION_COMMITS
             if extra > 0:
                 listing += f"\n… and {extra} more commits"
-            remember(
+            diff_id = remember_detailed(
                 workspace,
                 f"Changes between wiki v{previous_version} and v{version} of "
                 f"{owner}/{repo} (git log {previous_commit[:12]}..{repo_commit[:12]}):\n"
@@ -626,10 +1000,14 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
                 title=f"Commits between wiki v{previous_version} and v{version}",
                 metadata={"kind": "wiki_diff", "from_version": previous_version,
                           "to_version": version},
-            )
+            )["id"]
+            # These commits are what produced the release: an explicit edge
+            # makes "why did v3 change?" answerable from the graph.
+            link(workspace, diff_id, release_id, relation="part_of",
+                 reason=f"commits that produced wiki v{version}")
         stats = _git_diff_stat(clone_dir, previous_commit, repo_commit)
         if stats:
-            remember(
+            stats_id = remember_detailed(
                 workspace,
                 f"Files changed between wiki v{previous_version} and v{version} "
                 f"of {owner}/{repo}:\n{stats}",
@@ -637,7 +1015,9 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
                 title=f"Files changed between wiki v{previous_version} and v{version}",
                 metadata={"kind": "wiki_diffstat", "from_version": previous_version,
                           "to_version": version},
-            )
+            )["id"]
+            link(workspace, stats_id, release_id, relation="part_of",
+                 reason=f"files changed for wiki v{version}")
 
         # First time we see this repo: ingest the WHOLE commit history, not
         # just the (empty) range since a previous release. Without this the
@@ -669,18 +1049,23 @@ def _backfill_history(workspace: str, owner: str, repo: str,
         return
 
     stats = _git_history_stats(clone_dir)
+    overview_id = ""
     if stats:
-        remember(workspace, stats, mtype="semantic", source="hackdeepwiki",
-                 title=f"Repository history overview -- {owner}/{repo}",
-                 metadata={"kind": "repo_history_overview"})
+        overview_id = remember_detailed(
+            workspace, stats, mtype="semantic", source="hackdeepwiki",
+            title=f"Repository history overview -- {owner}/{repo}",
+            metadata={"kind": "repo_history_overview"},
+        )["id"]
 
     written = 0
+    previous_batch_id = ""
+    newest_batch_id = ""
     for start in range(0, len(commits), _HISTORY_BATCH):
         batch = commits[start:start + _HISTORY_BATCH]
         if not batch:
             continue
         body = "\n".join(batch)
-        remember(
+        batch_id = remember_detailed(
             workspace,
             f"Commit history of {owner}/{repo} "
             f"({start + 1}-{start + len(batch)} of {len(commits)}, newest first):\n{body}",
@@ -688,8 +1073,23 @@ def _backfill_history(workspace: str, owner: str, repo: str,
             title=f"Commits {start + 1}-{start + len(batch)} of {len(commits)} -- {owner}/{repo}",
             metadata={"kind": "commit_history_batch", "offset": start,
                       "count": len(batch)},
-        )
+        )["id"]
+        # History is a chain, and every batch is part of the same repository
+        # history -- batches are written newest-first, so batch N follows the
+        # one written before it in time terms ("comes after it in the log").
+        if batch_id and previous_batch_id:
+            link(workspace, previous_batch_id, batch_id, relation="follows",
+                 reason="later commits in the same history")
+        if batch_id and overview_id:
+            link(workspace, batch_id, overview_id, relation="part_of",
+                 reason=f"commit history of {owner}/{repo}")
+        previous_batch_id = batch_id or previous_batch_id
+        newest_batch_id = newest_batch_id or batch_id
         written += len(batch)
+    # Batches are written newest-first, so the FIRST one is the head of the
+    # chain -- that's what the next (incremental) ingest links onto.
+    if newest_batch_id:
+        _mark_ingested(workspace, "last_commit_batch", id=newest_batch_id)
 
     remember(
         workspace,
@@ -715,9 +1115,10 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
     commits = _git_commit_range_detailed(clone_dir, last, head)
     if not commits:
         return
+    batch_ids: list[str] = []
     for start in range(0, len(commits), _HISTORY_BATCH):
         batch = commits[start:start + _HISTORY_BATCH]
-        remember(
+        batch_ids.append(remember_detailed(
             workspace,
             f"New commits in {owner}/{repo} since {last[:12]} "
             f"(up to {head[:12]}):\n" + "\n".join(batch),
@@ -725,7 +1126,22 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
             title=f"New commits in {owner}/{repo} since {last[:12]}",
             metadata={"kind": "commit_history_batch", "since": last,
                       "head": head, "count": len(batch)},
-        )
+        )["id"])
+
+    # Keep extending the ONE chain the initial backfill built instead of
+    # starting a new island at every update. Batches are newest-first, so the
+    # chain is walked backwards: the oldest new batch follows the previous
+    # head, and each newer batch follows the one before it.
+    head_id = str(
+        ((_ingest_state().get(workspace) or {}).get("last_commit_batch") or {}).get("id") or ""
+    )
+    for batch_id in reversed(batch_ids):
+        if batch_id and head_id:
+            link(workspace, batch_id, head_id, relation="follows",
+                 reason=f"commits after {last[:12]}")
+        head_id = batch_id or head_id
+    if head_id:
+        _mark_ingested(workspace, "last_commit_batch", id=head_id)
     remember(
         workspace,
         f"__history_backfilled__ {owner}/{repo}: extended to {head[:12]} "
@@ -918,25 +1334,44 @@ def record_wiki_content(*, owner: str, repo: str, version: int,
 
         pages = _pages_from_structure(wiki_structure, generated_pages)
         overview = _structure_overview(owner, repo, version, wiki_structure, pages)
+        overview_id = ""
         if overview:
-            remember(workspace, overview, mtype="semantic", source="hackdeepwiki",
-                     title=f"What {owner}/{repo} is -- wiki v{version} overview",
-                     metadata={"kind": "wiki_overview", "version": version})
+            overview_id = remember_detailed(
+                workspace, overview, mtype="semantic", source="hackdeepwiki",
+                title=f"What {owner}/{repo} is -- wiki v{version} overview",
+                metadata={"kind": "wiki_overview", "version": version},
+            )["id"]
 
         written = 0
+        previous_page_id = ""
         for page in pages[:_MAX_WIKI_PAGES]:
             body = _page_memory(owner, repo, version, page)
             if not body:
                 continue
-            remember(workspace, body, mtype="semantic",
-                     source="hackdeepwiki",
-                     title=(page.get("title") or "Wiki page")[:120],
-                     metadata={"kind": "wiki_page", "version": version,
-                               "page_id": page.get("id") or "",
-                               "title": page.get("title") or ""})
+            page_id = remember_detailed(
+                workspace, body, mtype="semantic", source="hackdeepwiki",
+                title=(page.get("title") or "Wiki page")[:120],
+                metadata={"kind": "wiki_page", "version": version,
+                          "page_id": page.get("id") or "",
+                          "title": page.get("title") or ""},
+            )["id"]
+            # The wiki is a structure, not a bag of pages: every page belongs
+            # to the release overview, and consecutive pages keep the reading
+            # order the wiki itself has. Without these edges the graph view
+            # shows one isolated node per page.
+            if page_id and overview_id:
+                link(workspace, page_id, overview_id, relation="part_of",
+                     reason=f"documented by wiki v{version}")
+            if page_id and previous_page_id:
+                link(workspace, page_id, previous_page_id, relation="follows",
+                     reason="next page in the wiki structure")
+            previous_page_id = page_id or previous_page_id
             written += 1
 
         _mark_ingested(workspace, "wiki_content", version=version, pages=written)
+        if overview_id:
+            _mark_ingested(workspace, "wiki_overview", id=overview_id,
+                           version=version)
         logger.info("Engraphis: ingested %s wiki pages of %s/%s v%s into %s",
                     written, owner, repo, version, workspace)
     except Exception as e:  # noqa: BLE001
