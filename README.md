@@ -38,7 +38,7 @@ It ships as a **single portable binary** — an AppImage on Linux, a `.exe` on W
 3. It starts its own local server, waits for it to come up, and opens your browser automatically at `http://127.0.0.1:<port>`.
 4. Paste a repository URL and generate your first wiki. If you have Ollama running locally, no further setup is needed — otherwise open the model settings panel and add an API key for the provider of your choice.
 
-Every push to `main` publishes an updated pre-release build; tagged commits (`vX.Y.Z`) publish a stable release. Both platforms are built and attached automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml).
+Every push to `main` publishes its own versioned pre-release, `vX.Y.Z-pre.<build>`, so development builds never overwrite each other and you can always go back to (or link to) a specific one — the ten most recent are kept. Tagged commits (`vX.Y.Z`) publish the stable release. Both platforms are built and attached automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Configuring a provider
 

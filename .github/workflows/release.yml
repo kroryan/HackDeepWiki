@@ -2,10 +2,17 @@ name: Release Build
 
 # Compile the executables on every push (any branch + tags) so a feature
 # branch push produces downloadable Windows .exe / Linux AppImage artifacts
-# without having to merge to main first. The publish-release job (which
-# creates or updates a GitHub Release) is guarded below so feature-branch
-# pushes only BUILD artifacts and never mutate the public release -- only
-# main/master/tag pushes publish. workflow_dispatch allows a manual run.
+# without having to merge to main first. The publish-release job is guarded
+# below so feature-branch pushes only BUILD artifacts and never touch the
+# releases page -- only main/master/tag pushes publish. workflow_dispatch
+# allows a manual run.
+#
+# What gets published:
+#   * a version tag (vX.Y.Z)  -> the stable release, marked latest;
+#   * a main/master push      -> its OWN pre-release, vX.Y.Z-pre.<run number>,
+#     where X.Y.Z is the version in api/pyproject.toml. Builds no longer
+#     overwrite each other: every development build keeps its own tag, assets
+#     and permalink, and the newest ten are retained (see the prune step).
 on:
   push:
   workflow_dispatch:
@@ -163,14 +170,25 @@ jobs:
           path: HackDeepWiki-x86_64.AppImage
 
   publish-release:
-    # Only create/update a GitHub Release for main/master pushes and version
-    # tags. Feature-branch pushes still run build-windows/build-linux above
-    # (producing downloadable artifacts) but skip this job so they can't
-    # overwrite the public "pre-release" release with a feature-branch build.
+    # Only create a GitHub Release for main/master pushes and version tags.
+    # Feature-branch pushes still run build-windows/build-linux above
+    # (producing downloadable artifacts) but skip this job, so they never
+    # publish anything to the releases page.
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     needs: [build-windows, build-linux]
+    # Every build publishes its OWN release, so two pushes landing close
+    # together no longer fight over one tag -- but they must not run the
+    # retention sweep at the same time either. Serialised, never cancelled:
+    # cancelling would silently drop a commit's pre-release.
+    concurrency:
+      group: publish-release
+      cancel-in-progress: false
     steps:
+      - name: Checkout repository
+        # Only for the version in api/pyproject.toml, which names the release.
+        uses: actions/checkout@v4
+
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
@@ -183,59 +201,99 @@ jobs:
           name: hackdeepwiki-linux
           path: ./artifacts/linux
 
-      - name: Setup environment for Release
+      - name: Work out the release identity and arrange the assets
         run: |
-          # Arrange files
+          set -uo pipefail
           mv ./artifacts/windows/hackdeepwiki.exe ./HackDeepWiki-windows-x64.exe
           mv ./artifacts/linux/HackDeepWiki-x86_64.AppImage ./HackDeepWiki-x86_64.AppImage
-          
-          # Check if this is a tag or a commit push
+
+          # The app's own version, so a pre-release says which release it is
+          # leading up to instead of just "development build".
+          VERSION=$(grep -m1 -E '^version *= *"' api/pyproject.toml | cut -d'"' -f2)
+          VERSION=${VERSION:-0.0.0}
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "TAG_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
-            echo "RELEASE_NAME=Release ${{ github.ref_name }}" >> $GITHUB_ENV
-            echo "IS_PRERELEASE=false" >> $GITHUB_ENV
+            # A version tag is the stable release: its tag already exists and
+            # is the whole point, so nothing is generated here.
+            TAG_NAME="${{ github.ref_name }}"
+            RELEASE_NAME="Release ${{ github.ref_name }}"
+            IS_PRERELEASE=false
           else
-            echo "TAG_NAME=pre-release" >> $GITHUB_ENV
-            echo "RELEASE_NAME=Latest Pre-release (Development Build)" >> $GITHUB_ENV
-            echo "IS_PRERELEASE=true" >> $GITHUB_ENV
+            # ONE RELEASE PER BUILD. Every main push used to land on the same
+            # rolling "pre-release" tag, so each build silently replaced the
+            # previous one and there was no way to go back to (or link to) an
+            # earlier development build. github.run_number is monotonic and
+            # unique for the repository, which makes vX.Y.Z-pre.N a valid
+            # semver pre-release that sorts in build order and BELOW the
+            # stable vX.Y.Z it leads to. Re-running a build reuses its run
+            # number, so a re-run updates its own release instead of adding
+            # a duplicate.
+            TAG_NAME="v${VERSION}-pre.${{ github.run_number }}"
+            RELEASE_NAME="v${VERSION} pre-release #${{ github.run_number }} (${SHORT_SHA})"
+            IS_PRERELEASE=true
           fi
 
-      - name: Remove legacy FreeDeepWiki assets
-        # This repo used to be called FreeDeepWiki -- action-gh-release below
-        # only uploads/replaces the files it's given, it never deletes assets
-        # under a different name, so the old FreeDeepWiki-windows-x64.exe /
-        # FreeDeepWiki-x86_64.AppImage from before the rename kept sitting in
-        # the "continuous" pre-release release forever, alongside the current
-        # HackDeepWiki-named ones. `gh` is preinstalled on GitHub-hosted
-        # runners and already has GITHUB_TOKEN available. `|| true` on each:
-        # the asset may not exist (e.g. a tagged release that never had it),
-        # and that shouldn't fail the whole release step.
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete-asset "${{ env.TAG_NAME }}" "FreeDeepWiki-windows-x64.exe" --repo "${{ github.repository }}" --yes || true
-          gh release delete-asset "${{ env.TAG_NAME }}" "FreeDeepWiki-x86_64.AppImage" --repo "${{ github.repository }}" --yes || true
+          {
+            echo "VERSION=$VERSION"
+            echo "SHORT_SHA=$SHORT_SHA"
+            echo "TAG_NAME=$TAG_NAME"
+            echo "RELEASE_NAME=$RELEASE_NAME"
+            echo "IS_PRERELEASE=$IS_PRERELEASE"
+          } >> $GITHUB_ENV
 
-      - name: Create or update Github Release
+      - name: Create the Github Release
         uses: softprops/action-gh-release@v2
         with:
+          # The tag is created on this commit if it doesn't exist yet.
           tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           name: ${{ env.RELEASE_NAME }}
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           draft: false
           body: |
-            Automatic pre-release builds of HackDeepWiki.
-            
-            - Built from branch: `${{ github.ref_name }}`
-            - Commit: `${{ github.sha }}`
+            ${{ env.IS_PRERELEASE == 'true' && format('Development build **#{0}** of HackDeepWiki v{1} — one release per build, so this one stays put and is not replaced by the next.', github.run_number, env.VERSION) || format('HackDeepWiki {0}.', github.ref_name) }}
+
+            - Branch: `${{ github.ref_name }}`
+            - Commit: [`${{ env.SHORT_SHA }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
             - Built at: ${{ github.event.head_commit.timestamp || 'N/A' }}
-            
+            - Build log: [run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
             ### Standalone Executables
             - **Windows**: [HackDeepWiki-windows-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/HackDeepWiki-windows-x64.exe)
             - **Linux (AppImage)**: [HackDeepWiki-x86_64.AppImage](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/HackDeepWiki-x86_64.AppImage)
-            
+
             *No installation is required. Simply download and run the binary for your platform.*
           files: |
             HackDeepWiki-windows-x64.exe
             HackDeepWiki-x86_64.AppImage
           make_latest: ${{ env.IS_PRERELEASE == 'false' }}
+
+      - name: Prune superseded pre-releases
+        # Keeping every build forever would bury the stable releases (and each
+        # one carries ~600 MB of binaries), so the newest KEEP development
+        # builds are kept and older ones are removed along with their tags.
+        # Strictly scoped to the tags THIS workflow generates: stable vX.Y.Z
+        # releases, the legacy rolling "pre-release", and anything published
+        # by hand are never matched, and a failure here must not fail a
+        # release that already succeeded.
+        if: env.IS_PRERELEASE == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: 10
+        run: |
+          set -uo pipefail
+          # Newest first, then skip the KEEP we are keeping: the arithmetic
+          # stays in the shell so the jq program needs no interpolation.
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease)
+                       | select(.tagName | test("^v[0-9]+(\\.[0-9]+)*-pre\\.[0-9]+$"))]
+                  | sort_by(.createdAt) | reverse | .[].tagName' \
+          | tail -n "+$((KEEP + 1))" \
+          | while read -r tag; do
+              [ -n "$tag" ] || continue
+              echo "Removing superseded pre-release $tag"
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+            done
