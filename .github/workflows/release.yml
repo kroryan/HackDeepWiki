@@ -48,6 +48,10 @@ jobs:
         working-directory: api
         run: |
           poetry config virtualenvs.create false
+          # Regenerate lock-file metadata if pyproject.toml was edited without
+          # running `poetry lock` locally. `--no-update` keeps pinned versions;
+          # it only refreshes the content hash so `poetry install` can proceed.
+          poetry lock --no-update
           poetry install --only main
           pip install pyinstaller
 
@@ -99,6 +103,10 @@ jobs:
         working-directory: api
         run: |
           poetry config virtualenvs.create false
+          # Regenerate lock-file metadata if pyproject.toml was edited without
+          # running `poetry lock` locally. `--no-update` keeps pinned versions;
+          # it only refreshes the content hash so `poetry install` can proceed.
+          poetry lock --no-update
           poetry install --only main
           pip install pyinstaller
 
