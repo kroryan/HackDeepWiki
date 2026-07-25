@@ -273,7 +273,14 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
              bookkeeping), timestamped, so "slow" is diagnosable at a glance. */
           debugEvents.length > 0 ? (
             <div className="p-2 font-mono text-[10px] leading-relaxed">
-              {debugEvents.map((event, index) => (
+              {debugEvents.length > 250 && (
+                <div className="py-0.5 text-[var(--muted)]/60 italic">
+                  … {debugEvents.length - 250} older events (buffer keeps {debugEvents.length})
+                </div>
+              )}
+              {/* DOM-cap: rendering the whole 1000-entry buffer per update
+                  froze the tab during fast streaming. */}
+              {debugEvents.slice(-250).map((event, index) => (
                 <div key={index} className="flex gap-2 py-0.5 border-b border-[var(--border-color)]/20">
                   <span className="shrink-0 text-[var(--muted)]/60">
                     {new Date(Number(event._ts) || Date.now()).toLocaleTimeString(undefined, { hour12: false })}

@@ -26,6 +26,73 @@ logger = logging.getLogger(__name__)
 _MAX_PAGES_LISTED = 60
 
 
+def _cache_file_version(path: str) -> int:
+    """``_vN`` from a cache filename (same rule as api.api._parse_cache_version;
+    re-implemented locally because that helper is private to the huge api
+    module). Legacy files without a suffix count as v0."""
+    import re
+    m = re.search(r"_v(\d+)\.json$", __import__("os").path.basename(path))
+    return int(m.group(1)) if m else 0
+
+
+def _maybe_backfill_wiki_commit(cached, owner: str, repo: str, repo_type: str,
+                                language: str, repo_dir: str) -> Optional[str]:
+    """Anchor a pre-commit-tracking wiki release to a commit when that is
+    SOUND, and persist the anchor into the cache file so the warning never
+    reappears for it.
+
+    Why this is sound for git-host repos: the local clone is made at wiki
+    generation and never pulled afterwards (api/data_pipeline.py -- reuse is
+    the default); the only thing that replaces it is "Refresh Wiki", which
+    re-clones AND mints a NEW wiki release. So for the LATEST release, the
+    clone's HEAD is the very commit the wiki was generated from. Older
+    releases genuinely can't be recovered (the clone has moved on), and
+    ``type='local'`` dirs are live working copies the user may have edited
+    since -- both keep their warning.
+    """
+    existing = getattr(cached, "repo_commit", None)
+    if existing:
+        return existing
+    if repo_type not in ("github", "gitlab", "bitbucket"):
+        return None
+    try:
+        import json
+        import os
+        from api.wiki_cache_paths import list_cache_files
+
+        files = list_cache_files(repo_type, owner, repo, language)
+        if not files:
+            return None
+        max_version = max(_cache_file_version(p) for p in files)
+        this_version = cached.version or 0
+        if this_version != max_version:
+            return None  # older release: unknowable, keep the warning
+
+        head = repo_head_commit(repo_dir)
+        if not head:
+            return None
+        for path in files:
+            if _cache_file_version(path) != this_version:
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if not data.get("repo_commit"):
+                    data["repo_commit"] = head
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+            except OSError as e:
+                logger.warning("Could not backfill repo_commit into %s: %s", path, e)
+        cached.repo_commit = head
+        logger.info("Backfilled wiki release v%s of %s/%s with commit %s "
+                    "(clone HEAD; clones are immutable post-generation)",
+                    this_version, owner, repo, head[:12])
+        return head
+    except Exception as e:  # noqa: BLE001 - anchoring must never block coding
+        logger.warning("Wiki commit backfill failed: %s", e)
+        return None
+
+
 async def _load_wiki_cache(owner: str, repo: str, repo_type: str, language: str,
                            wiki_version: Optional[int]):
     """Load the wiki release the user has open (lazy import to avoid a module
@@ -68,7 +135,10 @@ async def build_code_session_context(
     head = repo_head_commit(repo_dir)
 
     version_warning: Optional[str] = None
-    wiki_commit = getattr(cached, "repo_commit", None) if cached else None
+    wiki_commit = (
+        _maybe_backfill_wiki_commit(cached, owner, repo, repo_type, language, repo_dir)
+        if cached is not None else None
+    )
     if cached is None:
         version_warning = "No wiki release found for this repository/language; the agent works from the code alone."
     elif wiki_commit and head and wiki_commit != head:
@@ -78,10 +148,21 @@ async def build_code_session_context(
             "The wiki may describe a different version of the code."
         )
     elif not wiki_commit:
-        version_warning = (
-            "This wiki release predates commit tracking, so wiki/code version "
-            "consistency could not be verified."
-        )
+        # Backfill couldn't anchor it: either an OLDER release (the clone has
+        # moved on to a newer one) or a live 'local' directory. Tell the user
+        # how to get a verified anchor instead of a vague "predates tracking".
+        if repo_type == "local":
+            version_warning = (
+                "This wiki has no commit anchor and the local directory is a live "
+                "working copy -- regenerate/update the wiki to anchor it to the "
+                "current code."
+            )
+        else:
+            version_warning = (
+                f"Wiki release v{cached.version or 0} is not the latest, so it can't "
+                "be anchored to a commit. Open the latest release (or update the "
+                "wiki) for verified wiki/code consistency."
+            )
 
     parts: list[str] = []
     parts.append(

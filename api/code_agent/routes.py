@@ -22,6 +22,7 @@ Transports:
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -227,8 +228,11 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
         # -- stream loop ----------------------------------------------------
         message_roles: dict[str, str] = {}
         part_offsets: dict[str, int] = {}
+        part_types: dict[str, str] = {}
         tool_states: dict[str, str] = {}
         saw_activity = False
+        sent_any_text = False
+        last_assistant_message = ""
 
         while True:
             try:
@@ -262,11 +266,12 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                 if info.get("id"):
                     message_roles[info["id"]] = info.get("role", "")
                 saw_activity = True
-                # Assistant turn finished -> close (Ask.tsx commits the
-                # accumulated text to history on WS close, exactly like the
-                # normal chat).
-                if info.get("role") == "assistant" and (info.get("time") or {}).get("completed"):
-                    break
+                # Deliberately do NOT close when an assistant message
+                # completes: an agentic turn produces SEVERAL assistant
+                # messages ("Let me look at the code..." -> tools -> the
+                # real answer). Closing on the first one ate the final
+                # answer (real-world bug: the user only ever saw the
+                # preamble). The turn ends at session idle, below.
                 continue
 
             if evt_type == "session.status":
@@ -294,17 +299,52 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
             if "idle" in evt_type and saw_activity:
                 break
 
+            # opencode >=1.18.5 streams text token-by-token as
+            # message.part.delta ({messageID, partID, field, delta});
+            # part.updated then carries the cumulative snapshot. Handle both
+            # through the same per-part offset so nothing duplicates
+            # whichever mix a given opencode version emits.
+            if evt_type == "message.part.delta":
+                if props.get("field") != "text":
+                    continue
+                part_id = props.get("partID") or ""
+                delta = props.get("delta") or ""
+                message_id = props.get("messageID") or ""
+                if not delta or message_roles.get(message_id, "") != "assistant":
+                    continue
+                saw_activity = True
+                if part_types.get(part_id) == "reasoning":
+                    await websocket.send_text(encode_process("thinking", {"text": delta}))
+                else:
+                    # Separate consecutive assistant messages ("I'll check
+                    # the code..." / final answer) visually.
+                    if sent_any_text and message_id != last_assistant_message and last_assistant_message:
+                        await websocket.send_text("\n\n")
+                    last_assistant_message = message_id
+                    sent_any_text = True
+                    await websocket.send_text(delta)
+                part_offsets[part_id] = part_offsets.get(part_id, 0) + len(delta)
+                continue
+
             if evt_type == "message.part.updated":
                 part = props.get("part") or {}
                 part_type = part.get("type")
                 part_id = part.get("id") or ""
+                if part_type:
+                    part_types[part_id] = part_type
                 role = message_roles.get(part.get("messageID") or "", "")
 
                 if part_type == "text" and role == "assistant":
-                    # opencode sends cumulative text; emit only the new tail.
+                    # Cumulative snapshot; emit only the tail the deltas
+                    # haven't already delivered.
                     text = part.get("text") or ""
                     sent = part_offsets.get(part_id, 0)
                     if len(text) > sent:
+                        message_id = part.get("messageID") or ""
+                        if sent_any_text and message_id != last_assistant_message and last_assistant_message:
+                            await websocket.send_text("\n\n")
+                        last_assistant_message = message_id
+                        sent_any_text = True
                         await websocket.send_text(text[sent:])
                         part_offsets[part_id] = len(text)
                 elif part_type == "reasoning":
@@ -373,8 +413,49 @@ async def handle_code_events_websocket(websocket: WebSocket) -> None:
             "active_sessions": max(1, len(inst.sessions)),
         })
 
+        # message.part.delta arrives per TOKEN -- hundreds per second during
+        # a streaming answer. Forwarding each one as its own Debug envelope
+        # saturated the browser's main thread (the tab couldn't even answer
+        # WS pings, so connections died and reconnect-looped). Coalesce
+        # deltas per part and flush a compact summary at most ~2x/second.
+        delta_acc: dict[str, dict] = {}
+        _FLUSH_SECONDS = 0.5
+
+        async def drain_deltas() -> None:
+            for pid, acc in list(delta_acc.items()):
+                tail = acc["tail"].replace("\n", "⏎ ")
+                await websocket.send_json({
+                    "t": "debug",
+                    "type": "message.part.delta",
+                    "session": acc["session"],
+                    "summary": f"…{pid[-8:]}: +{acc['count']} deltas ({acc['chars']} chars) …{tail}",
+                })
+            delta_acc.clear()
+
         while True:
             evt = await queue.get()
+            evt_type = evt.get("type")
+
+            if evt_type == "message.part.delta":
+                props = evt.get("properties") or {}
+                if props.get("field") == "text":
+                    pid = str(props.get("partID") or "?")
+                    delta = str(props.get("delta") or "")
+                    acc = delta_acc.setdefault(pid, {
+                        "count": 0, "chars": 0, "tail": "",
+                        "session": oc_events.extract_session_id(evt),
+                        "since": time.monotonic(),
+                    })
+                    acc["count"] += 1
+                    acc["chars"] += len(delta)
+                    acc["tail"] = (acc["tail"] + delta)[-160:]
+                    if time.monotonic() - acc["since"] >= _FLUSH_SECONDS:
+                        await drain_deltas()
+                continue
+
+            # Any non-delta event flushes pending delta summaries first so
+            # the Debug feed keeps its ordering.
+            await drain_deltas()
             envelope = oc_events.normalize_for_panel(evt)
             if envelope is not None:
                 await websocket.send_json(envelope)
@@ -382,7 +463,7 @@ async def handle_code_events_websocket(websocket: WebSocket) -> None:
             # and truncated (see debug_view). Localhost-only traffic, and the
             # frontend keeps a bounded buffer.
             await websocket.send_json(oc_events.debug_view(evt))
-            if evt.get("type") in ("instance.exited", "_fanout.stopped"):
+            if evt_type in ("instance.exited", "_fanout.stopped"):
                 break
     except WebSocketDisconnect:
         logger.info("code events ws: client disconnected")

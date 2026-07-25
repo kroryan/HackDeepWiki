@@ -181,6 +181,49 @@ def test_repo_head_commit(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# wiki<->code commit backfill (version anchoring for pre-tracking wikis)
+# ---------------------------------------------------------------------------
+
+def _make_git_repo(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-q", "--allow-empty", "-m", "x"], cwd=tmp_path, check=True)
+    return repo_head_commit(str(tmp_path))
+
+
+def test_backfill_latest_release_of_git_repo(tmp_path, monkeypatch):
+    import types
+    from api.code_agent import context as oc_context
+
+    head = _make_git_repo(tmp_path)
+    v1 = tmp_path / "cache_github_o_r_en_v1.json"
+    v2 = tmp_path / "cache_github_o_r_en_v2.json"
+    v1.write_text(json.dumps({"version": 1}))
+    v2.write_text(json.dumps({"version": 2}))
+    monkeypatch.setattr("api.wiki_cache_paths.list_cache_files",
+                        lambda *a: [str(v1), str(v2)])
+
+    # Latest release (v2): anchored to the clone HEAD and persisted.
+    cached = types.SimpleNamespace(version=2, repo_commit=None)
+    got = oc_context._maybe_backfill_wiki_commit(cached, "o", "r", "github", "en", str(tmp_path))
+    assert got == head
+    assert json.loads(v2.read_text())["repo_commit"] == head
+    assert "repo_commit" not in json.loads(v1.read_text())
+
+    # Older release (v1): unknowable, stays unanchored.
+    older = types.SimpleNamespace(version=1, repo_commit=None)
+    assert oc_context._maybe_backfill_wiki_commit(older, "o", "r", "github", "en", str(tmp_path)) is None
+
+    # Live local dirs are never inferred.
+    local = types.SimpleNamespace(version=2, repo_commit=None)
+    assert oc_context._maybe_backfill_wiki_commit(local, "o", "r", "local", "en", str(tmp_path)) is None
+
+    # Already-anchored releases pass straight through.
+    anchored = types.SimpleNamespace(version=2, repo_commit="abc123")
+    assert oc_context._maybe_backfill_wiki_commit(anchored, "o", "r", "github", "en", str(tmp_path)) == "abc123"
+
+
+# ---------------------------------------------------------------------------
 # event normalization
 # ---------------------------------------------------------------------------
 

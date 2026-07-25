@@ -54,6 +54,33 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
     // forever: the accept-storm seen in real-world logs.
     let retryDelay = 1500;
     let retryTimer: number | undefined;
+    // Incoming events are BUFFERED and flushed to React state on a timer:
+    // one setState per event meant one re-render per event, and during a
+    // streaming answer that saturated the main thread badly enough that the
+    // tab couldn't service its own WebSockets.
+    const pending: { events: CodeAgentEvent[]; debug: CodeAgentEvent[]; diffHints: number } = {
+      events: [], debug: [], diffHints: 0,
+    };
+    const flushTimer = window.setInterval(() => {
+      if (pending.events.length > 0) {
+        const batch = pending.events.splice(0);
+        setEvents((prev) => {
+          const next = [...prev, ...batch];
+          return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+        });
+      }
+      if (pending.debug.length > 0) {
+        const batch = pending.debug.splice(0);
+        setDebugEvents((prev) => {
+          const next = [...prev, ...batch];
+          return next.length > MAX_DEBUG_EVENTS ? next.slice(next.length - MAX_DEBUG_EVENTS) : next;
+        });
+      }
+      if (pending.diffHints > 0) {
+        pending.diffHints = 0;
+        setDiffTick((tick) => tick + 1);
+      }
+    }, 250);
     // The socket of THIS effect run. Tracked locally (not only via wsRef)
     // so the cleanup always closes the exact socket it created -- if the
     // effect re-runs while getBackendWebSocketUrl() is still in flight,
@@ -93,25 +120,20 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
             return;
           }
           if (event.t === 'status') {
+            // Rare; applied immediately so the header dot stays honest.
             const state = String(event.state || '');
             if (state === 'connected') setStatus('connected');
             else if (state === 'no_instance') setStatus('no_instance');
             else if (state === 'crashed') setStatus('crashed');
           }
           if (event.t === 'diff_hint' || event.t === 'file_edited' || event.t === 'shell') {
-            setDiffTick((tick) => tick + 1);
+            pending.diffHints += 1;
           }
           if (event.t === 'debug') {
-            setDebugEvents((prev) => {
-              const next = [...prev, { ...event, _ts: Date.now() }];
-              return next.length > MAX_DEBUG_EVENTS ? next.slice(next.length - MAX_DEBUG_EVENTS) : next;
-            });
+            pending.debug.push({ ...event, _ts: Date.now() });
             return;
           }
-          setEvents((prev) => {
-            const next = [...prev, { ...event, _ts: Date.now() }];
-            return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
-          });
+          pending.events.push({ ...event, _ts: Date.now() });
         };
 
         ws.onclose = (event) => {
@@ -140,6 +162,7 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
     connect();
     return () => {
       cancelled = true;
+      window.clearInterval(flushTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
       // Close THIS run's socket specifically (ws), not just whatever wsRef
       // happens to point at -- see the zombie-socket note above.
