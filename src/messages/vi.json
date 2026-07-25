@@ -198,6 +198,9 @@
     "update": "Cập nhật tác nhân",
     "updating": "Đang cập nhật…",
     "updated": "Đã cập nhật lên",
-    "updateTooltip": "Tải bản phát hành opencode mới nhất vào thư mục dữ liệu của ứng dụng (giữ nguyên sau khi cập nhật ứng dụng)"
+    "updateTooltip": "Tải bản phát hành opencode mới nhất vào thư mục dữ liệu của ứng dụng (giữ nguyên sau khi cập nhật ứng dụng)",
+    "debugTab": "Debug",
+    "noDebugEvents": "Chưa có sự kiện nào. Mọi thứ tác nhân làm và suy nghĩ sẽ hiển thị ở đây, không lọc.",
+    "updatePending": "các tác nhân đang chạy giữ phiên bản cũ cho đến khi khởi động lại"
   }
 }

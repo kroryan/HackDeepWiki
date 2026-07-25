@@ -196,6 +196,9 @@
     "update": "更新代理",
     "updating": "更新中…",
     "updated": "已更新至",
-    "updateTooltip": "將最新的opencode版本下載到應用資料夾（應用更新後保留）"
+    "updateTooltip": "將最新的opencode版本下載到應用資料夾（應用更新後保留）",
+    "debugTab": "偵錯",
+    "noDebugEvents": "還沒有事件。代理所做和所想的一切都會原樣串流顯示在這裡。",
+    "updatePending": "執行中的代理在重新啟動前繼續使用舊版本"
   }
 }

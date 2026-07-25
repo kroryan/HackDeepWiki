@@ -156,13 +156,24 @@ async def code_agent_status() -> dict:
 async def code_agent_update(request: CodeAgentUpdateRequest) -> dict:
     """Download a release into DATABASE/opencode/bin (the writable override
     that beats the read-only bundled copy). Synchronous: the archives are
-    ~30 MB. Running instances are stopped first; sessions resume on the next
-    prompt via the idempotent /api/code/session."""
+    ~30 MB.
+
+    Deliberately does NOT stop running instances -- the first version of this
+    endpoint did, and clicking Update while the agent was mid-answer killed
+    the session ("the opencode process exited"). The new binary lands in the
+    override dir; running agents keep the old version until they restart
+    naturally (idle reap / app restart / provider change), and every NEW
+    instance picks up the update immediately. ``pending_restart`` tells the
+    UI how many running agents are still on the old version."""
     version = OPENCODE_VERSION if request.version in ("", "pinned") else request.version
-    manager.shutdown_all_sync()
     try:
         path = await asyncio.to_thread(download_opencode, version)
-        return {"status": "ok", "path": path, "version": installed_opencode_version(path)}
+        return {
+            "status": "ok",
+            "path": path,
+            "version": installed_opencode_version(path),
+            "pending_restart": len(manager.instances()),
+        }
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail={"code": "download_failed", "message": str(e)})
 
@@ -341,6 +352,10 @@ async def handle_code_events_websocket(websocket: WebSocket) -> None:
             envelope = oc_events.normalize_for_panel(evt)
             if envelope is not None:
                 await websocket.send_json(envelope)
+            # Unfiltered firehose for the Debug tab: EVERY bus event, compact
+            # and truncated (see debug_view). Localhost-only traffic, and the
+            # frontend keeps a bounded buffer.
+            await websocket.send_json(oc_events.debug_view(evt))
             if evt.get("type") in ("instance.exited", "_fanout.stopped"):
                 break
     except WebSocketDisconnect:

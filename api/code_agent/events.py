@@ -99,6 +99,10 @@ class EventFanout:
                                 evt = json.loads(line[5:].strip())
                             except json.JSONDecodeError:
                                 continue
+                            # A streaming generation makes no REST calls, so
+                            # without this the instance looks idle mid-work
+                            # and the 30-min reaper could kill it mid-answer.
+                            inst.touch()
                             await self._handle_permissions(evt)
                             self._broadcast(evt)
             except (httpx.HTTPError, OSError) as e:
@@ -147,6 +151,52 @@ def get_fanout(instance, manager) -> EventFanout:
 # the panel gets a small, stable envelope instead. Returns None for events
 # the panel doesn't care about.
 # ---------------------------------------------------------------------------
+
+def debug_view(evt: dict) -> dict:
+    """A compact, bounded rendering of ANY bus event for the panel's Debug
+    tab -- the unfiltered firehose (thinking, text deltas, every tool state,
+    session bookkeeping) so the user can tell "slow because it's working"
+    from "slow because it's stuck". Payloads are truncated hard: text parts
+    arrive as cumulative snapshots on every token, so forwarding them whole
+    would ship the full answer N times over."""
+    evt_type = evt.get("type", "")
+    props = evt.get("properties") or {}
+    part = props.get("part") or {}
+    info = props.get("info") or {}
+
+    summary = ""
+    if part:
+        part_type = part.get("type") or "?"
+        if part_type in ("text", "reasoning"):
+            text = part.get("text") or ""
+            tail = text[-160:].replace("\n", "⏎ ")
+            summary = f"{part_type} ({len(text)} chars) …{tail}" if text else part_type
+        elif part_type == "tool":
+            state = part.get("state") or {}
+            bits = [part.get("tool") or "tool", state.get("status") or ""]
+            title = state.get("title") or ""
+            if title:
+                bits.append(title[:120])
+            command = (state.get("input") or {}).get("command")
+            if command:
+                bits.append(f"$ {str(command)[:160]}")
+            summary = " | ".join(b for b in bits if b)
+        else:
+            summary = json.dumps(part, ensure_ascii=False)[:300]
+    elif info:
+        bits = [info.get("role") or "", (info.get("time") or {}) and
+                ("completed" if (info.get("time") or {}).get("completed") else "in-progress")]
+        summary = " | ".join(b for b in bits if b) or json.dumps(info, ensure_ascii=False)[:300]
+    elif props:
+        summary = json.dumps(props, ensure_ascii=False)[:300]
+
+    return {
+        "t": "debug",
+        "type": evt_type,
+        "session": extract_session_id(evt),
+        "summary": summary,
+    }
+
 
 def normalize_for_panel(evt: dict) -> Optional[dict]:
     evt_type = evt.get("type", "")

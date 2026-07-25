@@ -208,6 +208,9 @@ def download_opencode(version: str = OPENCODE_VERSION, progress_cb=None) -> str:
                             report(f"Downloading opencode... {pct}% ({done // (1024*1024)} MB)")
         report("Extracting...")
         final_path = _extract_binary(tmp_archive, dest_dir)
+        # The version cache is keyed by path; an update writes a NEW binary
+        # to the SAME path, so the stale entry must go before re-probing.
+        _version_cache.pop(final_path, None)
         ver = installed_opencode_version(final_path)
         if not ver:
             raise RuntimeError("Downloaded opencode binary did not run (--version failed)")

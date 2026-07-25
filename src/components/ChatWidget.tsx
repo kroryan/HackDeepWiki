@@ -78,7 +78,13 @@ export default function ChatWidget({
 
   if (!repoInfo) return null;
 
-  const splitLayout = codeMode && isMaximized;
+  // Code mode ALWAYS renders fullscreen + split, derived directly from
+  // codeMode rather than requiring isMaximized to agree -- a restored
+  // session (page reload) used to be able to land in "toggle on but normal
+  // fullscreen chat" when the two states diverged. Deriving kills that
+  // whole class of bug.
+  const effectiveMaximized = isMaximized || codeMode;
+  const splitLayout = codeMode;
 
   return (
     <>
@@ -92,7 +98,7 @@ export default function ChatWidget({
 
       <div
         className={`fixed z-50 flex flex-col rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] shadow-[0_8px_40px_rgba(0,0,0,0.35),0_0_0_1px_var(--border-color)] backdrop-blur-xl overflow-hidden origin-bottom-right transition-all duration-250 ease-out ${
-          isMaximized
+          effectiveMaximized
             ? 'inset-4 sm:inset-8'
             : 'bottom-6 right-6 w-[calc(100vw-2rem)] sm:w-[420px] h-[min(680px,calc(100vh-6rem))] max-h-[calc(100vh-6rem)]'
         } ${
@@ -126,10 +132,10 @@ export default function ChatWidget({
                 }
               }}
               className="text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-full p-1.5 hover:bg-[var(--accent-primary)]/10"
-              aria-label={isMaximized ? 'Restore' : 'Maximize'}
-              title={isMaximized ? 'Restore' : 'Maximize'}
+              aria-label={effectiveMaximized ? 'Restore' : 'Maximize'}
+              title={effectiveMaximized ? 'Restore' : 'Maximize'}
             >
-              {isMaximized ? <FaCompress className="text-sm" /> : <FaExpand className="text-sm" />}
+              {effectiveMaximized ? <FaCompress className="text-sm" /> : <FaExpand className="text-sm" />}
             </button>
             <button
               onClick={() => setIsOpen(false)}
@@ -140,11 +146,14 @@ export default function ChatWidget({
             </button>
           </div>
         </div>
-        <div className={splitLayout ? 'flex-1 flex min-h-0' : 'flex-1 overflow-y-auto min-h-0'}>
+        {/* Split: side-by-side on wide viewports; stacked (chat over panel)
+            below lg so the right panel can never be squeezed into an
+            invisible sliver by the left column's min-width. */}
+        <div className={splitLayout ? 'flex-1 flex flex-col lg:flex-row min-h-0' : 'flex-1 overflow-y-auto min-h-0'}>
           <div
             className={
               splitLayout
-                ? 'w-[46%] min-w-[340px] border-r border-[var(--border-color)] overflow-y-auto min-h-0'
+                ? 'h-1/2 lg:h-auto lg:w-[46%] lg:min-w-[340px] border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto min-h-0 shrink-0 lg:shrink'
                 : undefined
             }
           >

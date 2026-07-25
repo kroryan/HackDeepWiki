@@ -103,14 +103,18 @@ function ActivityItem({ event }: { event: CodeAgentEvent }) {
 
 export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
   const { messages } = useLanguage();
-  const { events, status, diffTick } = useCodeAgentEvents(session);
-  const [tab, setTab] = useState<'activity' | 'diffs'>('activity');
+  const { events, debugEvents, status, diffTick } = useCodeAgentEvents(session);
+  const [tab, setTab] = useState<'activity' | 'diffs' | 'debug'>('activity');
   const [updating, setUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
 
   const updateAgent = async () => {
     if (updating) return;
+    // Safe while the agent works: the new binary lands in the DATABASE
+    // override and running agents keep the old version until their next
+    // natural restart -- the backend no longer stops anything (the first
+    // version did, and clicking Update mid-answer killed the session).
     setUpdating(true);
     setUpdateResult(null);
     try {
@@ -120,11 +124,15 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
         body: JSON.stringify({ version: 'latest' }),
       });
       const body = await response.json();
-      setUpdateResult(
-        response.ok
-          ? `${messages.codeAgent?.updated || 'Updated to'} v${body.version || '?'}`
-          : body?.detail?.message || `HTTP ${response.status}`
-      );
+      if (response.ok) {
+        let result = `${messages.codeAgent?.updated || 'Updated to'} v${body.version || '?'}`;
+        if (body.pending_restart > 0) {
+          result += ` — ${messages.codeAgent?.updatePending || 'active agents keep the previous version until they restart'}`;
+        }
+        setUpdateResult(result);
+      } else {
+        setUpdateResult(body?.detail?.message || `HTTP ${response.status}`);
+      }
     } catch (error) {
       setUpdateResult(String(error));
     } finally {
@@ -132,12 +140,12 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
     }
   };
 
-  // Follow the newest activity (feed renders oldest -> newest).
+  // Follow the newest activity (feeds render oldest -> newest).
   useEffect(() => {
-    if (tab === 'activity' && timelineRef.current) {
+    if ((tab === 'activity' || tab === 'debug') && timelineRef.current) {
       timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
     }
-  }, [events, tab]);
+  }, [events, debugEvents, tab]);
 
   const visibleEvents = events.filter((e) => e.t !== 'status' && e.t !== 'diff_hint');
   const crashEvent = events.findLast?.((e) => e.t === 'status' && e.state === 'crashed');
@@ -217,7 +225,7 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
 
       {/* Tabs */}
       <div className="flex border-b border-[var(--border-color)] shrink-0 text-xs">
-        {(['activity', 'diffs'] as const).map((key) => (
+        {(['activity', 'diffs', 'debug'] as const).map((key) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -229,7 +237,9 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
           >
             {key === 'activity'
               ? (messages.codeAgent?.activityTab || 'Activity')
-              : (messages.codeAgent?.diffsTab || 'Diffs')}
+              : key === 'diffs'
+                ? (messages.codeAgent?.diffsTab || 'Diffs')
+                : (messages.codeAgent?.debugTab || 'Debug')}
           </button>
         ))}
       </div>
@@ -248,12 +258,33 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
               {messages.codeAgent?.noActivity || 'No agent activity yet in this session.'}
             </div>
           )
-        ) : (
+        ) : tab === 'diffs' ? (
           <CodeDiffView
             repoKey={session.repo_key}
             sessionId={session.session_id}
             diffTick={diffTick}
           />
+        ) : (
+          /* Debug: the unfiltered firehose -- every bus event opencode emits
+             (thinking/text deltas, every tool state change, session
+             bookkeeping), timestamped, so "slow" is diagnosable at a glance. */
+          debugEvents.length > 0 ? (
+            <div className="p-2 font-mono text-[10px] leading-relaxed">
+              {debugEvents.map((event, index) => (
+                <div key={index} className="flex gap-2 py-0.5 border-b border-[var(--border-color)]/20">
+                  <span className="shrink-0 text-[var(--muted)]/60">
+                    {new Date(Number(event._ts) || Date.now()).toLocaleTimeString(undefined, { hour12: false })}
+                  </span>
+                  <span className="shrink-0 text-[var(--accent-primary)]">{String(event.type || '')}</span>
+                  <span className="text-[var(--muted)] whitespace-pre-wrap break-all">{String(event.summary || '')}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 text-center text-xs text-[var(--muted)]">
+              {messages.codeAgent?.noDebugEvents || 'No events yet. Everything the agent does and thinks will stream here, raw.'}
+            </div>
+          )
         )}
       </div>
     </div>

@@ -28,9 +28,13 @@ export type CodeAgentStatus =
   | 'closed';
 
 const MAX_EVENTS = 500;
+// The Debug feed gets every bus event (text/thinking deltas included), so it
+// churns much faster than the curated activity feed -- separate buffer.
+const MAX_DEBUG_EVENTS = 1000;
 
 export function useCodeAgentEvents(session: CodeSessionInfo | null) {
   const [events, setEvents] = useState<CodeAgentEvent[]>([]);
+  const [debugEvents, setDebugEvents] = useState<CodeAgentEvent[]>([]);
   const [status, setStatus] = useState<CodeAgentStatus>('idle');
   const [diffTick, setDiffTick] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
@@ -38,6 +42,7 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
   useEffect(() => {
     if (!session) {
       setEvents([]);
+      setDebugEvents([]);
       setStatus('idle');
       return;
     }
@@ -79,6 +84,13 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
           if (event.t === 'diff_hint' || event.t === 'file_edited' || event.t === 'shell') {
             setDiffTick((tick) => tick + 1);
           }
+          if (event.t === 'debug') {
+            setDebugEvents((prev) => {
+              const next = [...prev, { ...event, _ts: Date.now() }];
+              return next.length > MAX_DEBUG_EVENTS ? next.slice(next.length - MAX_DEBUG_EVENTS) : next;
+            });
+            return;
+          }
           setEvents((prev) => {
             const next = [...prev, { ...event, _ts: Date.now() }];
             return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
@@ -115,5 +127,5 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
     // Reconnect when the agent session identity changes.
   }, [session?.repo_key, session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { events, status, diffTick };
+  return { events, debugEvents, status, diffTick };
 }

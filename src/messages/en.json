@@ -242,6 +242,9 @@
     "update": "Update agent",
     "updating": "Updating…",
     "updated": "Updated to",
-    "updateTooltip": "Download the latest opencode release into the app data folder (survives app updates)"
+    "updateTooltip": "Download the latest opencode release into the app data folder (survives app updates)",
+    "debugTab": "Debug",
+    "noDebugEvents": "No events yet. Everything the agent does and thinks will stream here, raw.",
+    "updatePending": "active agents keep the previous version until they restart"
   }
 }
