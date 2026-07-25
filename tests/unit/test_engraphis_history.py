@@ -147,12 +147,16 @@ def test_checkpoint_body_reports_range_churn_and_authors():
     assert "Alice (5)" in body and "Bob (5)" in body
 
 
-def test_checkpoint_body_is_bounded():
+def test_checkpoint_body_is_bounded_and_still_names_commits():
+    """A wide repo emits a dirstat line per directory; that must not crowd out
+    the milestones, which say more than the tail of that list."""
     from api.engraphis_integration import _MAX_CHECKPOINT_LINES
 
     body = _checkpoint_body("acme", "widgets", 1, 0, 500, _window(100),
                             "\n".join(f"{i}.0% dir_{i}/" for i in range(30)))
     assert len(body.splitlines()) <= _MAX_CHECKPOINT_LINES
+    assert "Milestones" in body
+    assert "feat: thing 3" in body
 
 
 def test_milestones_prefer_features_then_spread():

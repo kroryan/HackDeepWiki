@@ -108,6 +108,7 @@ _MIN_CHECKPOINT_STRIDE = 10
 _MAX_CHECKPOINT_STRIDE = 100
 _MAX_CHECKPOINTS = 24
 _MAX_CHECKPOINT_LINES = 14
+_MAX_CHURN_LINES = 6
 # git's canonical empty tree: the "before" side of the very first checkpoint,
 # so the initial window is diffed against nothing instead of being skipped.
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -1415,8 +1416,11 @@ def _checkpoint_body(owner: str, repo: str, number: int, start: int,
         f"({window[0]['short']}..{window[-1]['short']}).",
     ]
     if churn:
+        # Bounded so the milestones always fit too: a wide repo can produce a
+        # dirstat line per top-level directory, and which commits landed says
+        # more than the tail of that list.
         lines.append("Churn since the previous checkpoint:")
-        lines.extend("  " + line for line in churn.splitlines())
+        lines.extend("  " + line for line in churn.splitlines()[:_MAX_CHURN_LINES])
     lines.append("Authors: " + ", ".join(f"{name} ({n})" for name, n in top)
                  + (", …" if len(authors) > len(top) else "") + ".")
 
