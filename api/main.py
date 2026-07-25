@@ -1,7 +1,11 @@
 import os
 import sys
 import logging
+import warnings
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
+warnings.filterwarnings("ignore", category=FutureWarning, module="pydantic")
 
 # Load environment variables from .env file
 load_dotenv()

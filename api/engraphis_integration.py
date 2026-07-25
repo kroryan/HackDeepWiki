@@ -270,6 +270,8 @@ def _bootstrap_env() -> None:
     # deterministic numpy embedder is used instead.
     os.environ.setdefault("ENGRAPHIS_UPDATE_CHECK", "0")
     os.environ.setdefault("ENGRAPHIS_EMBED_MODEL", "")
+    os.environ.setdefault("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", "0")
+    os.environ.setdefault("ENGRAPHIS_CLOUD_CONTROL_URL", "http://127.0.0.1:0")
     # Their http_security honors a wholesale CSP override; this is the
     # supported, no-fork way to allow the dashboard inside our iframe.
     os.environ.setdefault("ENGRAPHIS_CSP", _EMBED_CSP)

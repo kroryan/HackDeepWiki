@@ -1203,6 +1203,7 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
 
 
         logger.info(f"Writing cache file to: {cache_path}")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         with open(cache_path, 'w', encoding='utf-8') as f:
             json.dump(payload.model_dump(), f, indent=2)
         logger.info(f"Wiki cache successfully saved to {cache_path} (release v{next_version})")
