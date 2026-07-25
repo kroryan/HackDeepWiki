@@ -1,7 +1,7 @@
 # HackDeepWiki
 <img width="1344" height="759" alt="image" src="https://github.com/user-attachments/assets/b88d40f8-78f9-413e-9327-a10e2610f0cf" />
 <img width="1907" height="780" alt="image" src="https://github.com/user-attachments/assets/3a454f91-39b7-4a25-a4b6-2c49cc3480fc" />
-[![Ver video](https://img.youtube.com/vi/tB1sC5bOQSw/maxresdefault.jpg)](https://www.youtube.com/watch?v=tB1sC5bOQSw)
+https://www.youtube.com/watch?v=tB1sC5bOQSw
 
 
 
