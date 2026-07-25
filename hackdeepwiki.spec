@@ -4,6 +4,15 @@ import os
 import importlib.util
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
+# Make the LOCAL ./scripts and ./api packages win over anything in
+# site-packages for every import this spec performs (collect_submodules,
+# _REQUIRED_IMPORTS). This matters since Engraphis: its pip install ships a
+# top-level `scripts` package, and in CI `pyinstaller hackdeepwiki.spec` runs
+# as a console script (cwd NOT on sys.path), so without this insert
+# collect_submodules('scripts') would import and freeze ENGRAPHIS's scripts
+# package instead of HackDeepWiki's. SPECPATH is the directory of this file.
+sys.path.insert(0, SPECPATH)
+
 block_cipher = None
 
 # ---------------------------------------------------------------------------
