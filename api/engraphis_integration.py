@@ -47,6 +47,7 @@ override their http_security module explicitly supports.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import socket
@@ -95,6 +96,21 @@ _MAX_EVOLUTION_COMMITS = 40
 # 10k-commit repo.
 _HISTORY_BATCH = 25
 _MAX_HISTORY_COMMITS = 2000
+
+# Progress checkpoints: how the project ACTUALLY moved, sampled along its
+# history instead of only listed commit by commit. The stride scales with the
+# repo so the arc always has roughly _CHECKPOINT_TARGET steps -- a checkpoint
+# every 10 commits for a 200-commit project, every 20 at 400, every 30 at 600
+# -- which keeps the cost flat (a couple of local git calls per checkpoint, no
+# model call at all) whatever the repo's size.
+_CHECKPOINT_TARGET = 20
+_MIN_CHECKPOINT_STRIDE = 10
+_MAX_CHECKPOINT_STRIDE = 100
+_MAX_CHECKPOINTS = 24
+_MAX_CHECKPOINT_LINES = 14
+# git's canonical empty tree: the "before" side of the very first checkpoint,
+# so the initial window is diffed against nothing instead of being skipped.
+_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 # Wiki-content ingest: one memory per documented area, bounded so a huge wiki
 # can't balloon the DB or the graph.
@@ -957,6 +973,12 @@ def record_wiki_release(*, owner: str, repo: str, repo_type: str,
             "(commit ranges, changes between versions).",
         )
 
+        # Wikis are built from a --depth=1 clone, where every question about
+        # the past answers "1 commit". Deepen it first so this workspace
+        # records the repo's real history (and so the range against the
+        # previous release resolves at all).
+        ensure_deep_clone(clone_dir)
+
         summary = (
             f"Wiki release v{version} of {owner}/{repo} ({repo_type}, "
             f"language '{language}') was generated"
@@ -1040,11 +1062,23 @@ def _backfill_history(workspace: str, owner: str, repo: str,
     if not clone_dir:
         return
     marker = f"__history_backfilled__ {owner}/{repo}"
+    shallow = is_shallow_clone(clone_dir)
+    previous = (_ingest_state().get(workspace) or {}).get("history_backfill") or {}
+    redo = False
     if _has_memory(workspace, "history_backfill"):
-        _backfill_incremental(workspace, owner, repo, clone_dir, head)
-        return
+        # A first pass over a --depth=1 clone sees exactly ONE commit, whatever
+        # the repo's real length. Once the clone has been deepened, redo the
+        # full ingest instead of stepping incrementally from that stump.
+        if previous.get("shallow") and not shallow:
+            redo = True
+            logger.info("Engraphis: re-ingesting %s/%s -- the first pass only "
+                        "saw a shallow clone", owner, repo)
+        else:
+            _backfill_incremental(workspace, owner, repo, clone_dir, head)
+            return
 
-    commits = _git_full_history(clone_dir)
+    records = _git_history_records(clone_dir)
+    commits = [_record_line(r) for r in records]
     if not commits:
         return
 
@@ -1056,6 +1090,8 @@ def _backfill_history(workspace: str, owner: str, repo: str,
             title=f"Repository history overview -- {owner}/{repo}",
             metadata={"kind": "repo_history_overview"},
         )["id"]
+    if overview_id:
+        _mark_ingested(workspace, "history_overview", id=overview_id)
 
     written = 0
     previous_batch_id = ""
@@ -1091,18 +1127,31 @@ def _backfill_history(workspace: str, owner: str, repo: str,
     if newest_batch_id:
         _mark_ingested(workspace, "last_commit_batch", id=newest_batch_id)
 
+    # How the project moved, sampled along the history (see
+    # _write_history_checkpoints) -- git only, so it costs no tokens.
+    _write_history_checkpoints(workspace, owner, repo, clone_dir,
+                               overview_id=overview_id, records=records)
+
+    # Wording matters on a redo: Engraphis reinforces near-duplicates instead
+    # of inserting them, so "45 commits" phrased like the earlier "1 commits"
+    # would silently keep the stump's text as the memory a human reads.
+    body = (f"{marker}: the full history of {owner}/{repo} was re-ingested "
+            f"after the shallow clone was deepened -- {written} commits, up "
+            f"to {(head or 'HEAD')[:12]}." if redo else
+            f"{marker}: {written} commits of {owner}/{repo} ingested up to "
+            f"{(head or 'HEAD')[:12]}.")
     remember(
-        workspace,
-        f"{marker}: {written} commits of {owner}/{repo} ingested up to "
-        f"{(head or 'HEAD')[:12]}.",
+        workspace, body,
         mtype="semantic", source="hackdeepwiki",
         title=f"History ingested -- {owner}/{repo}",
         metadata={"kind": "history_backfill", "head": head or "",
-                  "count": written},
+                  "count": written, "redo": redo},
     )
-    _mark_ingested(workspace, "history_backfill", head=head or "", count=written)
-    logger.info("Engraphis: backfilled %s commits of %s/%s into %s",
-                written, owner, repo, workspace)
+    _mark_ingested(workspace, "history_backfill", head=head or "",
+                   count=written, shallow=shallow)
+    logger.info("Engraphis: backfilled %s commits of %s/%s into %s%s",
+                written, owner, repo, workspace,
+                " (shallow clone -- only the tip is available)" if shallow else "")
 
 
 def _backfill_incremental(workspace: str, owner: str, repo: str,
@@ -1115,6 +1164,12 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
     commits = _git_commit_range_detailed(clone_dir, last, head)
     if not commits:
         return
+    overview_id = str(
+        ((_ingest_state().get(workspace) or {}).get("history_overview") or {}).get("id") or ""
+    )
+    # New commits may have closed one or more windows since the last save.
+    _write_history_checkpoints(workspace, owner, repo, clone_dir,
+                               overview_id=overview_id)
     batch_ids: list[str] = []
     for start in range(0, len(commits), _HISTORY_BATCH):
         batch = commits[start:start + _HISTORY_BATCH]
@@ -1151,7 +1206,8 @@ def _backfill_incremental(workspace: str, owner: str, repo: str,
         metadata={"kind": "history_backfill", "head": head,
                   "count": len(commits)},
     )
-    _mark_ingested(workspace, "history_backfill", head=head, count=len(commits))
+    _mark_ingested(workspace, "history_backfill", head=head,
+                   count=len(commits), shallow=is_shallow_clone(clone_dir))
     logger.info("Engraphis: +%s new commits of %s/%s into %s",
                 len(commits), owner, repo, workspace)
 
@@ -1200,22 +1256,244 @@ def _mark_ingested(workspace: str, kind: str, **fields: Any) -> None:
             logger.debug("could not persist engraphis ingest state: %s", e)
 
 
-def _git_full_history(clone_dir: str) -> list[str]:
-    """`git log` over the whole repo, one rich line per commit (subject,
-    author, date) -- enough for the regex graph extractor to mint author and
-    concept nodes."""
+def is_shallow_clone(clone_dir: Optional[str]) -> bool:
+    """True for a ``--depth=1`` clone, whose ``git log`` shows ONE commit."""
+    if not clone_dir:
+        return False
+    try:
+        out = subprocess.run(
+            ["git", "-C", clone_dir, "rev-parse", "--is-shallow-repository"],
+            capture_output=True, text=True, timeout=20,
+        )
+        return out.returncode == 0 and out.stdout.strip() == "true"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ensure_deep_clone(clone_dir: Optional[str]) -> bool:
+    """Fetch the full history of a shallow wiki clone. True when the clone has
+    real history afterwards.
+
+    Wiki clones are ``--depth=1 --single-branch`` (api/data_pipeline.py), so
+    every git question about the past answers "1 commit" -- which is exactly
+    what the evolution workspace used to record for a 45-commit repository.
+    Deepening is best-effort: offline or on a slow network the clone simply
+    stays shallow, the backfill records that it did, and the next wiki save
+    tries again (see _backfill_history).
+    """
+    if not clone_dir or not is_shallow_clone(clone_dir):
+        return bool(clone_dir)
+    logger.info("Engraphis: fetching full history for %s (shallow clone)",
+                clone_dir)
+    try:
+        subprocess.run(
+            ["git", "-C", clone_dir, "fetch", "--unshallow", "--tags"],
+            capture_output=True, text=True, timeout=300,
+        )
+    except Exception as e:  # noqa: BLE001 - offline is a normal outcome
+        logger.info("Engraphis: could not deepen %s (%s); history memory will "
+                    "be limited to the commits present", clone_dir, e)
+    return not is_shallow_clone(clone_dir)
+
+
+def _git_history_records(clone_dir: str) -> list[dict]:
+    """Every commit reachable from HEAD, newest first, as structured records.
+
+    One `git log` call; the unit separator keeps subjects containing spaces or
+    colons parseable, which a plain "%h %s" line does not.
+    """
     try:
         out = subprocess.run(
             ["git", "-C", clone_dir, "log", "--no-decorate",
-             f"--max-count={_MAX_HISTORY_COMMITS}",
-             "--date=short", "--pretty=format:%h %ad %an: %s"],
+             f"--max-count={_MAX_HISTORY_COMMITS}", "--date=short",
+             "--pretty=format:%H\x1f%h\x1f%ad\x1f%an\x1f%s"],
             capture_output=True, text=True, timeout=120,
         )
         if out.returncode != 0:
             return []
-        return [line.strip() for line in out.stdout.splitlines() if line.strip()]
     except Exception:  # noqa: BLE001
         return []
+    records = []
+    for line in out.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) != 5:
+            continue
+        records.append({"sha": parts[0], "short": parts[1], "date": parts[2],
+                        "author": parts[3], "subject": parts[4]})
+    return records
+
+
+def _record_line(record: dict) -> str:
+    """The one-line form stored in commit batches -- rich enough for the regex
+    graph extractor to mint author and concept nodes."""
+    return (f"{record['short']} {record['date']} {record['author']}: "
+            f"{record['subject']}")
+
+
+def _git_full_history(clone_dir: str) -> list[str]:
+    """`git log` over the whole repo, one rich line per commit."""
+    return [_record_line(r) for r in _git_history_records(clone_dir)]
+
+
+# --- progress checkpoints -------------------------------------------------
+
+def _history_stride(total: int) -> int:
+    """How many commits one progress checkpoint covers, or 0 for a history too
+    short to sample.
+
+    The stride scales with the repo so the story always has about
+    ``_CHECKPOINT_TARGET`` steps: every 10 commits at 200, every 20 at 400,
+    every 30 at 600, and so on up to the cap.
+    """
+    if total <= _MIN_CHECKPOINT_STRIDE:
+        return 0
+    stride = math.ceil(total / _CHECKPOINT_TARGET / 10) * 10
+    stride = max(_MIN_CHECKPOINT_STRIDE, min(_MAX_CHECKPOINT_STRIDE, stride))
+    # Past the stride cap it is the WINDOW that widens, never the number of
+    # checkpoints: the cost of describing a history stays flat.
+    while total // stride > _MAX_CHECKPOINTS:
+        stride *= 2
+    return stride
+
+
+def _git_progress_stat(clone_dir: str, old: str, new: str) -> str:
+    """Churn plus where it landed, in ONE local git call.
+
+    ``--shortstat`` says how much moved, ``--dirstat`` says which parts of the
+    tree it moved in -- together that is the "quick evaluation" of a window of
+    commits, with no model involved.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", clone_dir, "diff", "--shortstat",
+             "--dirstat=files,0,3", old, new],
+            capture_output=True, text=True, timeout=60,
+        )
+        if out.returncode != 0:
+            return ""
+    except Exception:  # noqa: BLE001
+        return ""
+    return "\n".join(line.strip() for line in out.stdout.splitlines()
+                     if line.strip())
+
+
+_MILESTONE_RE = re.compile(
+    r"^(feat|feature|release|breaking|perf|refactor)\b|!\s*:|BREAKING",
+    re.IGNORECASE,
+)
+
+
+def _pick_milestones(window: list[dict], limit: int) -> list[str]:
+    """The few commits that best describe a window: features and releases
+    first, then evenly spaced ones so the sample still spans the window."""
+    if limit <= 0 or not window:
+        return []
+    chosen: list[int] = [i for i, r in enumerate(window)
+                         if _MILESTONE_RE.search(r["subject"])][:limit]
+    if len(chosen) < limit:
+        step = max(1, len(window) // (limit - len(chosen) + 1))
+        for i in range(0, len(window), step):
+            if i not in chosen:
+                chosen.append(i)
+            if len(chosen) >= limit:
+                break
+    return [window[i]["subject"][:110] for i in sorted(chosen)[:limit]]
+
+
+def _checkpoint_body(owner: str, repo: str, number: int, start: int,
+                     total: int, window: list[dict], churn: str) -> str:
+    """One checkpoint, as plain text bounded by _MAX_CHECKPOINT_LINES."""
+    authors: dict[str, int] = {}
+    for record in window:
+        authors[record["author"]] = authors.get(record["author"], 0) + 1
+    top = sorted(authors.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
+
+    lines = [
+        f"Progress checkpoint #{number} of {owner}/{repo} -- commits "
+        f"{start + 1}-{start + len(window)} of {total}, "
+        f"{window[0]['date']} to {window[-1]['date']} "
+        f"({window[0]['short']}..{window[-1]['short']}).",
+    ]
+    if churn:
+        lines.append("Churn since the previous checkpoint:")
+        lines.extend("  " + line for line in churn.splitlines())
+    lines.append("Authors: " + ", ".join(f"{name} ({n})" for name, n in top)
+                 + (", …" if len(authors) > len(top) else "") + ".")
+
+    room = _MAX_CHECKPOINT_LINES - len(lines) - 1
+    milestones = _pick_milestones(window, room)
+    if milestones:
+        lines.append("Milestones in this window:")
+        lines.extend(f"  - {subject}" for subject in milestones)
+    return "\n".join(lines[:_MAX_CHECKPOINT_LINES])
+
+
+def _write_history_checkpoints(workspace: str, owner: str, repo: str,
+                               clone_dir: Optional[str],
+                               overview_id: str = "",
+                               records: Optional[list[dict]] = None) -> int:
+    """Write one memory per window of the history, chained oldest to newest.
+
+    Commit batches answer "what happened"; checkpoints answer "how the project
+    moved" -- each one summarising a stride of commits with the churn, the
+    directories that changed and the milestone subjects in it. Only COMPLETE
+    windows are written and the count of written windows is remembered, so a
+    later wiki save only pays for the windows that closed since.
+    """
+    if not clone_dir:
+        return 0
+    if records is None:
+        records = _git_history_records(clone_dir)
+    chronological = list(reversed(records or []))
+    total = len(chronological)
+    state = (_ingest_state().get(workspace) or {}).get("checkpoints") or {}
+    stride = int(state.get("stride") or 0) or _history_stride(total)
+    if not stride:
+        return 0
+    done = int(state.get("done") or 0)
+    # The repo outgrew the stride we picked: widen the window instead of
+    # writing an unbounded number of checkpoints. Two old windows collapse
+    # into one new one, so the count halves with the stride.
+    while total // stride > _MAX_CHECKPOINTS:
+        stride *= 2
+        done //= 2
+    windows = total // stride
+    if windows <= done:
+        return 0
+
+    previous_id = str(state.get("last_id") or "")
+    for index in range(done, windows):
+        start = index * stride
+        window = chronological[start:start + stride]
+        # The very first window is diffed against git's empty tree, so the
+        # initial burst of work is measured instead of skipped.
+        before = chronological[start - 1]["sha"] if start else _EMPTY_TREE
+        body = _checkpoint_body(
+            owner, repo, index + 1, start, total, window,
+            _git_progress_stat(clone_dir, before, window[-1]["sha"]),
+        )
+        mem_id = remember_detailed(
+            workspace, body, mtype="episodic", source="hackdeepwiki",
+            title=(f"Progress checkpoint #{index + 1} of {owner}/{repo} "
+                   f"({window[0]['date']} to {window[-1]['date']})"),
+            metadata={"kind": "history_checkpoint", "number": index + 1,
+                      "offset": start, "count": len(window),
+                      "stride": stride, "head": window[-1]["sha"]},
+        )["id"]
+        if mem_id and previous_id:
+            link(workspace, mem_id, previous_id, relation="follows",
+                 reason="the next stretch of the project's history")
+        if mem_id and overview_id:
+            link(workspace, mem_id, overview_id, relation="part_of",
+                 reason=f"progress of {owner}/{repo}")
+        previous_id = mem_id or previous_id
+
+    _mark_ingested(workspace, "checkpoints", stride=stride, done=windows,
+                   last_id=previous_id,
+                   head=chronological[windows * stride - 1]["sha"])
+    logger.info("Engraphis: %s progress checkpoint(s) (every %s commits) for "
+                "%s/%s", windows - done, stride, owner, repo)
+    return windows - done
 
 
 def _git_commit_range_detailed(clone_dir: Optional[str], old: str,
