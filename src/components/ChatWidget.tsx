@@ -149,15 +149,17 @@ export default function ChatWidget({
             </button>
           </div>
         </div>
-        {/* Split: ALWAYS chat left / agent panel right (no vertical stacking
-            -- that read as "the panel disappeared"). Both columns use
-            min-w-0 so on a narrow window they shrink proportionally instead
-            of one squeezing the other out of view. */}
+        {/* Split: ALWAYS chat left / agent panel right. The panel's width is
+            set via inline style + shrink-0, NOT a Tailwind arbitrary class:
+            this project's Tailwind build silently drops percentage arbitrary
+            values (w-[46%] never reached the compiled CSS), which let the
+            chat column's content crush the panel to a sliver. Inline styles
+            can't be dropped by the CSS pipeline. */}
         <div className={splitLayout ? 'flex-1 flex min-h-0' : 'flex-1 overflow-y-auto min-h-0'}>
           <div
             className={
               splitLayout
-                ? 'w-[46%] min-w-0 border-r border-[var(--border-color)] overflow-y-auto min-h-0'
+                ? 'flex-1 min-w-0 border-r border-[var(--border-color)] overflow-y-auto min-h-0'
                 : undefined
             }
           >
@@ -177,7 +179,10 @@ export default function ChatWidget({
             />
           </div>
           {splitLayout && (
-            <div className="flex-1 min-w-0 min-h-0">
+            <div
+              className="shrink-0 min-h-0"
+              style={{ width: '44%', minWidth: 380, maxWidth: 720 }}
+            >
               <CodeAgentPanel session={codeSession} />
             </div>
           )}

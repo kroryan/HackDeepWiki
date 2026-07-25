@@ -201,6 +201,8 @@
     "updateTooltip": "将最新的opencode版本下载到应用数据文件夹（应用更新后保留）",
     "debugTab": "调试",
     "noDebugEvents": "还没有事件。智能体所做和所想的一切都会原样流式显示在这里。",
-    "updatePending": "运行中的智能体在重启前继续使用旧版本"
+    "updatePending": "运行中的智能体在重启前继续使用旧版本",
+    "working": "工作中…",
+    "idle": "就绪"
   }
 }

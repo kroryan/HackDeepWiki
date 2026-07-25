@@ -103,7 +103,7 @@ function ActivityItem({ event }: { event: CodeAgentEvent }) {
 
 export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
   const { messages } = useLanguage();
-  const { events, debugEvents, status, diffTick } = useCodeAgentEvents(session);
+  const { events, debugEvents, status, working, diffTick } = useCodeAgentEvents(session);
   const [tab, setTab] = useState<'activity' | 'diffs' | 'debug'>('activity');
   const [updating, setUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
@@ -176,14 +176,30 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
           >
             {session.repo_dir}
           </code>
-          <button
-            onClick={() => abortCodeSession(session.repo_key, session.session_id)}
-            className="ml-auto shrink-0 flex items-center gap-1 px-2 py-0.5 rounded border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors text-[10px]"
-            title={messages.codeAgent?.abortTooltip || 'Stop the agent’s current operation'}
-          >
-            <FaStop className="text-[8px]" />
-            {messages.codeAgent?.abort || 'Stop'}
-          </button>
+          {/* Honest working/done indicator: the always-red Stop button used
+              to read as "still doing something" after the answer finished.
+              Stop only renders while the agent is actually busy. */}
+          {working ? (
+            <>
+              <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[10px] text-yellow-500">
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
+                {messages.codeAgent?.working || 'Working…'}
+              </span>
+              <button
+                onClick={() => abortCodeSession(session.repo_key, session.session_id)}
+                className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors text-[10px]"
+                title={messages.codeAgent?.abortTooltip || 'Stop the agent’s current operation'}
+              >
+                <FaStop className="text-[8px]" />
+                {messages.codeAgent?.abort || 'Stop'}
+              </button>
+            </>
+          ) : (
+            <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[10px] text-green-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              {messages.codeAgent?.idle || 'Ready'}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 text-[10px] text-[var(--muted)] flex-wrap">
           {session.model_target && (

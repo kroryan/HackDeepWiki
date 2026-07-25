@@ -231,6 +231,8 @@
     "updateTooltip": "Descarga la última versión de opencode en la carpeta de datos de la app (sobrevive a las actualizaciones)",
     "debugTab": "Debug",
     "noDebugEvents": "Aún no hay eventos. Todo lo que el agente hace y piensa aparecerá aquí, sin filtrar.",
-    "updatePending": "los agentes activos mantienen la versión anterior hasta que se reinicien"
+    "updatePending": "los agentes activos mantienen la versión anterior hasta que se reinicien",
+    "working": "Trabajando…",
+    "idle": "Listo"
   }
 }

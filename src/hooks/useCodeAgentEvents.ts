@@ -36,6 +36,9 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
   const [events, setEvents] = useState<CodeAgentEvent[]>([]);
   const [debugEvents, setDebugEvents] = useState<CodeAgentEvent[]>([]);
   const [status, setStatus] = useState<CodeAgentStatus>('idle');
+  // True while the agent session is actually doing something (opencode
+  // session.status busy/idle) -- drives the Stop button and working chip.
+  const [working, setWorking] = useState(false);
   const [diffTick, setDiffTick] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -44,6 +47,7 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
       setEvents([]);
       setDebugEvents([]);
       setStatus('idle');
+      setWorking(false);
       return;
     }
 
@@ -124,7 +128,9 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
             const state = String(event.state || '');
             if (state === 'connected') setStatus('connected');
             else if (state === 'no_instance') setStatus('no_instance');
-            else if (state === 'crashed') setStatus('crashed');
+            else if (state === 'crashed') { setStatus('crashed'); setWorking(false); }
+            else if (state === 'busy') setWorking(true);
+            else if (state === 'idle') setWorking(false);
           }
           if (event.t === 'diff_hint' || event.t === 'file_edited' || event.t === 'shell') {
             pending.diffHints += 1;
@@ -176,5 +182,5 @@ export function useCodeAgentEvents(session: CodeSessionInfo | null) {
     // Reconnect when the agent session identity changes.
   }, [session?.repo_key, session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { events, debugEvents, status, diffTick };
+  return { events, debugEvents, status, working, diffTick };
 }

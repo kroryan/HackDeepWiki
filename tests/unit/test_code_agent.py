@@ -294,7 +294,7 @@ def test_normalize_session_status_retry_and_idle():
         "type": "session.status",
         "properties": {"sessionID": "s", "status": {"type": "busy"}},
     })
-    assert busy is None
+    assert busy == {"t": "status", "state": "busy"}
 
 
 def test_describe_target():

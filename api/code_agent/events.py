@@ -225,6 +225,11 @@ def normalize_for_panel(evt: dict) -> Optional[dict]:
             }
         if stype == "idle":
             return {"t": "status", "state": "idle"}
+        if stype == "busy":
+            # Lets the panel show working/done truthfully -- a permanently
+            # red Stop button read as "still doing something" after the
+            # answer finished.
+            return {"t": "status", "state": "busy"}
         return None
 
     if evt_type.startswith("session") and ("idle" in evt_type or props.get("status") == "idle"):

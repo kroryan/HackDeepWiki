@@ -245,6 +245,8 @@
     "updateTooltip": "Download the latest opencode release into the app data folder (survives app updates)",
     "debugTab": "Debug",
     "noDebugEvents": "No events yet. Everything the agent does and thinks will stream here, raw.",
-    "updatePending": "active agents keep the previous version until they restart"
+    "updatePending": "active agents keep the previous version until they restart",
+    "working": "Working…",
+    "idle": "Ready"
   }
 }
