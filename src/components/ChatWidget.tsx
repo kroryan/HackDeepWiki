@@ -54,6 +54,9 @@ export default function ChatWidget({
     if (enabled) {
       setIsMaximized(true);
     } else {
+      // Leaving code mode returns to the normal small chat window --
+      // fullscreen only makes sense for the split view.
+      setIsMaximized(false);
       setCodeSession(null);
     }
   };
@@ -146,14 +149,15 @@ export default function ChatWidget({
             </button>
           </div>
         </div>
-        {/* Split: side-by-side on wide viewports; stacked (chat over panel)
-            below lg so the right panel can never be squeezed into an
-            invisible sliver by the left column's min-width. */}
-        <div className={splitLayout ? 'flex-1 flex flex-col lg:flex-row min-h-0' : 'flex-1 overflow-y-auto min-h-0'}>
+        {/* Split: ALWAYS chat left / agent panel right (no vertical stacking
+            -- that read as "the panel disappeared"). Both columns use
+            min-w-0 so on a narrow window they shrink proportionally instead
+            of one squeezing the other out of view. */}
+        <div className={splitLayout ? 'flex-1 flex min-h-0' : 'flex-1 overflow-y-auto min-h-0'}>
           <div
             className={
               splitLayout
-                ? 'h-1/2 lg:h-auto lg:w-[46%] lg:min-w-[340px] border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto min-h-0 shrink-0 lg:shrink'
+                ? 'w-[46%] min-w-0 border-r border-[var(--border-color)] overflow-y-auto min-h-0'
                 : undefined
             }
           >

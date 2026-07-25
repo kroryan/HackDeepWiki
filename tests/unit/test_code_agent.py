@@ -209,6 +209,35 @@ def test_normalize_text_and_unknown_events_hidden():
     assert oc_events.normalize_for_panel({"type": "server.connected"}) is None
 
 
+def test_normalize_session_status_retry_and_idle():
+    retry = oc_events.normalize_for_panel({
+        "type": "session.status",
+        "properties": {"sessionID": "s", "status": {
+            "type": "retry", "attempt": 2,
+            "message": "Cannot connect to API: Unable to connect."}},
+    })
+    assert retry["t"] == "error"
+    assert "retry 2" in retry["message"] and "Cannot connect" in retry["message"]
+
+    idle = oc_events.normalize_for_panel({
+        "type": "session.status",
+        "properties": {"sessionID": "s", "status": {"type": "idle"}},
+    })
+    assert idle == {"t": "status", "state": "idle"}
+
+    busy = oc_events.normalize_for_panel({
+        "type": "session.status",
+        "properties": {"sessionID": "s", "status": {"type": "busy"}},
+    })
+    assert busy is None
+
+
+def test_describe_target():
+    from api.code_agent.config import describe_target
+    assert describe_target("ollama", "m", None, None) == "ollama/m → http://localhost:11434/v1"
+    assert describe_target("claude", "c", "k", None) == "anthropic/c → api.anthropic.com"
+
+
 def test_normalize_error_and_exit():
     err = oc_events.normalize_for_panel(
         {"type": "session.error", "properties": {"error": {"message": "boom"}}})

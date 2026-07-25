@@ -58,10 +58,9 @@ interface ChatSession {
   currentStageIndex: number;
   researchIteration: number;
   researchComplete: boolean;
-  // ⚙ Code Editing mode: whether this chat drives the embedded opencode
-  // agent, and the opencode session id so reopening the chat resumes the
-  // same agent session (opencode persists sessions on disk).
-  codeMode?: boolean;
+  // ⚙ Code Editing mode: the opencode session id, so re-enabling the toggle
+  // on this chat resumes the same agent session (opencode persists sessions
+  // on disk). The toggle itself is live UI state and is NOT persisted.
   codeSessionId?: string;
 }
 
@@ -213,7 +212,15 @@ const Ask: React.FC<AskProps> = ({
       const valid = Array.isArray(parsed)
         ? parsed.filter(session => session && session.id && Array.isArray(session.messages))
         : [];
-      const initialSessions = valid.length > 0 ? valid : [createSession()];
+      let initialSessions = valid.length > 0 ? valid : [createSession()];
+      // Entering a wiki always opens a FRESH chat: silently restoring the
+      // previous visit's session (and especially its code-editing state)
+      // proved confusing and bug-prone. Old chats stay one click away in
+      // the history list. Reuse the most recent session when it's already
+      // empty so repeat visits don't mint endless blank "New chat" entries.
+      if (initialSessions[0].messages.length > 0) {
+        initialSessions = [createSession(), ...initialSessions];
+      }
       setSessions(initialSessions);
       setActiveSessionId(initialSessions[0].id);
     } catch (error) {
@@ -246,8 +253,11 @@ const Ask: React.FC<AskProps> = ({
     setCurrentStageIndex(session.currentStageIndex || 0);
     setResearchIteration(session.researchIteration || 0);
     setResearchComplete(Boolean(session.researchComplete));
+    // codeSessionId is restored (re-enabling the toggle resumes the same
+    // opencode session), but codeMode itself is deliberately NOT -- the
+    // toggle is live UI state, and auto-restoring it on load/session-switch
+    // produced inconsistent layouts. The user flips it when they want it.
     setCodeSessionId(session.codeSessionId);
-    onCodeModeChange?.(Boolean(session.codeMode) && CODE_MODE_REPO_TYPES.includes(repoInfo.type));
     const timer = window.setTimeout(() => {
       loadedSessionIdRef.current = activeSessionId;
     }, 0);
@@ -273,7 +283,6 @@ const Ask: React.FC<AskProps> = ({
             currentStageIndex,
             researchIteration,
             researchComplete,
-            codeMode,
             codeSessionId,
           }
         : session
@@ -287,7 +296,6 @@ const Ask: React.FC<AskProps> = ({
     currentStageIndex,
     researchIteration,
     researchComplete,
-    codeMode,
     codeSessionId,
   ]);
 

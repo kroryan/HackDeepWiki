@@ -37,6 +37,9 @@ class CodeSessionResponse(BaseModel):
     opencode_version: Optional[str] = None
     version_warning: Optional[str] = None
     active_sessions: int = 1
+    # "provider/model → endpoint" the agent actually talks to; shown in the
+    # panel header so connection failures are self-diagnosable.
+    model_target: Optional[str] = None
 
 
 class CodeChatRequest(BaseModel):

@@ -211,6 +211,22 @@ def normalize_for_panel(evt: dict) -> Optional[dict]:
         return {"t": "error", "message": str(err.get("data", {}).get("message")
                                              or err.get("message") or err)[:2000]}
 
+    if evt_type == "session.status":
+        # opencode >=1.18 reports session state here: {status: {type: "busy"
+        # | "retry" | "idle", attempt?, message?}}. Retries are the "why is
+        # it hanging" case (provider unreachable) -- surface them loudly.
+        status = props.get("status") or {}
+        stype = status.get("type")
+        if stype == "retry":
+            return {
+                "t": "error",
+                "message": f"retry {status.get('attempt', '?')}: "
+                           f"{str(status.get('message') or 'connection problem')[:500]}",
+            }
+        if stype == "idle":
+            return {"t": "status", "state": "idle"}
+        return None
+
     if evt_type.startswith("session") and ("idle" in evt_type or props.get("status") == "idle"):
         return {"t": "status", "state": "idle"}
 

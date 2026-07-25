@@ -159,6 +159,30 @@ def map_provider(provider: str, model: str, api_key: Optional[str],
     return provider_config, extra_env, model_ref
 
 
+_CLOUD_HOSTS = {
+    "claude": "api.anthropic.com",
+    "openai": "api.openai.com",
+    "google": "generativelanguage.googleapis.com",
+    "openrouter": "openrouter.ai",
+    "bedrock": "AWS Bedrock",
+    "azure": "Azure OpenAI",
+}
+
+
+def describe_target(provider: str, model: str, api_key: Optional[str],
+                    api_endpoint: Optional[str]) -> str:
+    """Human-readable 'where do requests actually go' string, shown in the
+    panel header -- so a 'Cannot connect to API' retry loop is diagnosable at
+    a glance (wrong endpoint, Ollama down, no internet) instead of an
+    opaque hang."""
+    provider_config, _, model_ref = map_provider(provider, model, api_key, api_endpoint)
+    for block in provider_config.values():
+        base = (block.get("options") or {}).get("baseURL")
+        if base:
+            return f"{model_ref} → {base}"
+    return f"{model_ref} → {_CLOUD_HOSTS.get((provider or '').lower(), 'cloud API')}"
+
+
 def provider_signature(provider: str, api_key: Optional[str], api_endpoint: Optional[str]) -> str:
     """Cheap fingerprint of everything that requires an opencode RESTART when
     it changes (credentials/endpoints are read at server startup; the model

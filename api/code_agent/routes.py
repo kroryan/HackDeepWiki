@@ -42,7 +42,7 @@ from api.code_agent.models import (
     CodeSessionRequest,
     CodeSessionResponse,
 )
-from api.code_agent.config import map_provider
+from api.code_agent.config import describe_target, map_provider
 from api.stream_events import encode_process
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,8 @@ async def ensure_code_session(request: CodeSessionRequest) -> CodeSessionRespons
             opencode_version=installed_opencode_version(binary) if binary else None,
             version_warning=version_warning,
             active_sessions=max(1, len(inst.sessions)),
+            model_target=describe_target(
+                request.provider, request.model or "", request.api_key, request.api_endpoint),
         )
     except CodeAgentError as e:
         raise _http_error(e)
@@ -226,6 +228,7 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
         message_roles: dict[str, str] = {}
         part_offsets: dict[str, int] = {}
         tool_states: dict[str, str] = {}
+        saw_activity = False
 
         while True:
             try:
@@ -258,6 +261,7 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                 info = props.get("info") or {}
                 if info.get("id"):
                     message_roles[info["id"]] = info.get("role", "")
+                saw_activity = True
                 # Assistant turn finished -> close (Ask.tsx commits the
                 # accumulated text to history on WS close, exactly like the
                 # normal chat).
@@ -265,7 +269,29 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
                     break
                 continue
 
-            if "idle" in evt_type:
+            if evt_type == "session.status":
+                # opencode >=1.18: {status: {type: busy|retry|idle, ...}}.
+                # Retries (provider unreachable) previously showed as an
+                # eternal "Thinking..." -- forward them so the user sees WHY
+                # nothing is streaming. Idle ends the turn, but only after
+                # some activity: a stale idle right after subscribing must
+                # not close an answer that hasn't started.
+                status = props.get("status") or {}
+                stype = status.get("type")
+                if stype == "busy":
+                    saw_activity = True
+                elif stype == "retry":
+                    saw_activity = True
+                    msg = str(status.get("message") or "connection problem")
+                    await websocket.send_text(encode_process("tool", {
+                        "label": "Code agent",
+                        "query": f"retry {status.get('attempt', '?')}: {msg}"[:400],
+                    }))
+                elif stype == "idle" and saw_activity:
+                    break
+                continue
+
+            if "idle" in evt_type and saw_activity:
                 break
 
             if evt_type == "message.part.updated":

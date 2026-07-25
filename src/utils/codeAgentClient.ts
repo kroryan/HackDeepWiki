@@ -33,6 +33,8 @@ export interface CodeSessionInfo {
   opencode_version?: string | null;
   version_warning?: string | null;
   active_sessions: number;
+  // "provider/model → endpoint" the agent talks to (connection-failure triage)
+  model_target?: string | null;
 }
 
 export interface CodeChatRequest {

@@ -185,7 +185,10 @@ export default function CodeAgentPanel({ session }: CodeAgentPanelProps) {
             {messages.codeAgent?.abort || 'Stop'}
           </button>
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
+        <div className="flex items-center gap-2 text-[10px] text-[var(--muted)] flex-wrap">
+          {session.model_target && (
+            <code className="font-mono" title={session.model_target}>{session.model_target}</code>
+          )}
           {session.opencode_version && <span>opencode v{session.opencode_version}</span>}
           <button
             onClick={updateAgent}
