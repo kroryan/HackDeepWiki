@@ -19,6 +19,12 @@ python = "^3.11"
 # 1.3.1+, which no fastapi <0.120 release accepts.
 fastapi = ">=0.119.0"
 uvicorn = { extras = ["standard"], version = ">=0.21.1" }
+# Engraphis's embedded dashboard mounts routes with Form/UploadFile params;
+# FastAPI refuses to build those without python-multipart (verified live --
+# the dashboard fails to mount and the app degrades to memory-only mode).
+# Tiny pure-python dep. Engraphis itself is NOT declared here: it is
+# installed fresh from upstream on every build by scripts/prepare_assets.py.
+python-multipart = ">=0.0.18"
 pydantic = ">=2.0.0"
 google-generativeai = ">=0.3.0"
 tiktoken = ">=0.5.0"

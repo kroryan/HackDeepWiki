@@ -127,6 +127,52 @@ def setup_opencode_binary(platform):
             os.remove(temp_path)
 
 
+def setup_engraphis():
+    """Install/refresh the Engraphis memory engine (api/engraphis_integration.py)
+    from upstream so EVERY build ships the latest release -- the upstream repo
+    is effectively 'cloned automatically during compilation' via pip's git
+    support. Order of attempts:
+
+      1. latest main from GitHub (pip install git+...)
+      2. latest published release from PyPI (fallback when git/network to
+         GitHub is unavailable)
+      3. keep whatever is already installed (warn) -- the hard gate lives in
+         hackdeepwiki.spec's _REQUIRED_IMPORTS, which aborts the build if
+         engraphis is missing entirely, so a broken bundle can never ship
+         silently.
+
+    Deliberately installed WITHOUT extras: the [server]/[mcp] extras drag in
+    sentence-transformers -> torch (gigabytes) and an `mcp` pin this codebase
+    avoids on purpose (see api/mcp_server.py). The core is numpy-only and the
+    dashboard reuses the fastapi/uvicorn already bundled; recall runs fully
+    offline on Engraphis's deterministic embedder.
+    """
+    import subprocess
+
+    print("Installing latest Engraphis (memory engine + embedded dashboard)...")
+    attempts = [
+        ["--upgrade", "git+https://github.com/Coding-Dev-Tools/engraphis@main"],
+        ["--upgrade", "engraphis"],
+    ]
+    for extra_args in attempts:
+        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + extra_args
+        try:
+            result = subprocess.run(cmd, timeout=600)
+            if result.returncode == 0:
+                break
+            print(f"Warning: {' '.join(cmd)} failed (exit {result.returncode}); trying fallback...")
+        except Exception as e:  # noqa: BLE001 - fall through to the next source
+            print(f"Warning: {' '.join(cmd)} failed ({e}); trying fallback...")
+    try:
+        import importlib.metadata
+        version = importlib.metadata.version("engraphis")
+        print(f"engraphis {version} present in the build environment.")
+    except Exception:
+        print("Warning: engraphis is NOT installed. The PyInstaller spec will "
+              "abort the build (see _REQUIRED_IMPORTS in hackdeepwiki.spec); "
+              "install it manually with: pip install engraphis")
+
+
 def setup_tiktoken_cache():
     print("Preparing offline tiktoken cache...")
     cache_dir = os.path.abspath("tiktoken_cache")
@@ -170,6 +216,9 @@ def main():
 
     # 2.5. Bundle the opencode coding agent (Code Editing mode)
     setup_opencode_binary(platform)
+
+    # 2.7. Install/refresh the Engraphis memory engine (latest on every build)
+    setup_engraphis()
 
     # 3. Setup tiktoken cache
     setup_tiktoken_cache()

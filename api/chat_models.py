@@ -53,6 +53,16 @@ class ChatCompletionRequest(BaseModel):
     owner: Optional[str] = Field(None, description="Repository owner (or 'website' for a crawled site), for security context lookup")
     repo: Optional[str] = Field(None, description="Repository name (or site hostname for a crawled site), for security context lookup")
 
+    # Engraphis memory scoping (api/engraphis_integration.py): the wiki
+    # release the user has OPEN. Memory is hard-isolated per wiki release
+    # (workspace = {owner}_{repo}_v{N}), shared between the chat and the code
+    # editor for that release only -- so the chat needs to know which release
+    # it is talking about, exactly like the code agent already does.
+    wiki_version: Optional[int] = Field(
+        None,
+        description="Wiki release version the chat was opened on (memory scope anchor).",
+    )
+
     # Fase 6 -- Agent skills. Opt-in: a list of skill names (e.g. ["think",
     # "security-review"]) the chat wants applied. Empty/None = no skill
     # workflow injected (default), so chats that don't need structured

@@ -8,6 +8,7 @@ import ModelSelectionModal, { AppliedModelSelection } from '@/components/ModelSe
 import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import VulnSection from '@/components/vuln/VulnSection';
+import EngraphisPanel from '@/components/EngraphisPanel';
 import { VulnReport, VulnScanStatus } from '@/components/vuln/types';
 import WebVulnSection from '@/components/vuln/WebVulnSection';
 import { WebVulnReport } from '@/components/vuln/webTypes';
@@ -46,7 +47,7 @@ import {
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaArchive, FaBitbucket, FaBookOpen, FaDownload, FaEdit, FaExclamationTriangle, FaFileCode, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHistory, FaHome, FaMagic, FaMobileAlt, FaSave, FaSync, FaTimes, FaTrash } from 'react-icons/fa';
+import { FaArchive, FaBitbucket, FaBookOpen, FaBrain, FaDownload, FaEdit, FaExclamationTriangle, FaFileCode, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHistory, FaHome, FaMagic, FaMobileAlt, FaSave, FaSync, FaTimes, FaTrash } from 'react-icons/fa';
 
 export default function RepoWikiPage() {
   // Get route parameters and search params
@@ -177,7 +178,12 @@ export default function RepoWikiPage() {
   const [vulnError, setVulnError] = useState<string | null>(null);
   // 'wiki' shows the normal page content; 'security' swaps the content panel
   // for the vulnerability section without mutating the LLM-generated wiki tree.
-  const [viewMode, setViewMode] = useState<'wiki' | 'security'>('wiki');
+  // 'engraphis' swaps it for the embedded Engraphis memory dashboard.
+  const [viewMode, setViewMode] = useState<'wiki' | 'security' | 'engraphis'>('wiki');
+  // Which Engraphis workspace the embedded dashboard opens: this wiki
+  // release's memory ('version', sidebar button) or the repo's cross-release
+  // evolution memory ('evolution', header button next to the theme toggle).
+  const [engraphisView, setEngraphisView] = useState<'version' | 'evolution'>('version');
   const vulnScanStartedRef = useRef(false);
   // Obsidian export options (only relevant when a vuln report exists).
   const [exportIncludeVulns, setExportIncludeVulns] = useState<boolean>(true);
@@ -3670,6 +3676,23 @@ IMPORTANT:
           )}
         </div>
         <div className="flex items-center gap-3">
+          {/* 🧠 Engraphis wiki-evolution memory: what changed between wiki
+              releases (commit ranges, messages, files). Embedded dashboard,
+              same-window, with the same back-to-wiki flow as everything else. */}
+          {!isLoading && effectiveRepoInfo.owner && effectiveRepoInfo.repo && (
+            <button
+              onClick={() => { setEngraphisView('evolution'); setViewMode('engraphis'); }}
+              title="Engraphis: evolution of this wiki across releases"
+              className={`flex items-center gap-1.5 text-xs font-mono px-2.5 py-1.5 rounded-md border transition-colors hover:cursor-pointer ${
+                viewMode === 'engraphis' && engraphisView === 'evolution'
+                  ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] border-[var(--accent-primary)]/40'
+                  : 'border-[var(--border-color)] text-[var(--muted)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-primary)]'
+              }`}
+            >
+              <FaBrain className="text-xs" />
+              <span className="hidden sm:inline">Evolution</span>
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </header>
@@ -3984,6 +4007,28 @@ IMPORTANT:
                 </div>
               )}
 
+              {/* 🧠 Engraphis memory entry -- same swap-the-panel pattern as
+                  Security Analysis above. Opens the embedded Engraphis
+                  dashboard on THIS wiki release's memory workspace (the one
+                  the chat and the code editor share). Always visible: memory
+                  works for every wiki type. */}
+              <div className="mb-5">
+                <button
+                  onClick={() => { setEngraphisView('version'); setViewMode('engraphis'); }}
+                  className={`flex items-center w-full text-xs px-3 py-2 rounded-md border transition-colors hover:cursor-pointer ${
+                    viewMode === 'engraphis' && engraphisView === 'version'
+                      ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] border-[var(--accent-primary)]/40'
+                      : 'bg-[var(--background)] text-[var(--foreground)] border-[var(--border-color)] hover:bg-[var(--background)]/80'
+                  }`}
+                >
+                  <span className="mr-2">🧠</span>
+                  Engraphis Memory
+                  {selectedWikiVersion != null && (
+                    <span className="ml-auto text-[var(--muted)] font-mono">v{selectedWikiVersion}</span>
+                  )}
+                </button>
+              </div>
+
               {/* Export buttons */}
               {Object.keys(generatedPages).length > 0 && (
                 <div className="mb-5">
@@ -4101,7 +4146,28 @@ IMPORTANT:
 
             {/* Wiki Content */}
             <div id="wiki-content" className="wiki-content">
-              {viewMode === 'security' && effectiveRepoInfo.type === 'website' ? (
+              {viewMode === 'engraphis' ? (
+                <div className="w-full p-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xl font-bold text-[var(--foreground)] font-serif">
+                      🧠 {engraphisView === 'evolution' ? 'Engraphis — Wiki Evolution' : 'Engraphis Memory'}
+                    </h3>
+                    <button
+                      onClick={() => setViewMode('wiki')}
+                      className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1.5 rounded-md border border-[var(--border-color)] text-[var(--muted)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-primary)] transition-colors"
+                    >
+                      <FaBookOpen className="text-xs" />
+                      Back to wiki
+                    </button>
+                  </div>
+                  <EngraphisPanel
+                    owner={effectiveRepoInfo.owner}
+                    repo={effectiveRepoInfo.repo}
+                    wikiVersion={selectedWikiVersion ?? undefined}
+                    view={engraphisView}
+                  />
+                </div>
+              ) : viewMode === 'security' && effectiveRepoInfo.type === 'website' ? (
                 <div className="w-full p-2">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-xl font-bold text-[var(--foreground)] font-serif">

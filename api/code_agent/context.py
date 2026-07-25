@@ -226,4 +226,38 @@ async def build_code_session_context(
                 "repository; use them when the user asks you to fix vulnerabilities."
             )
 
+    # Engraphis memory: per-wiki-release workspace shared with the repository
+    # chat. Instruct the agent on the exact scope arguments AND seed the top
+    # proactive memories so past decisions are visible before the first tool
+    # call. Best-effort -- memory being unavailable must never block coding.
+    try:
+        from api import engraphis_integration
+        if engraphis_integration.is_available():
+            effective_version = wiki_version
+            if effective_version is None and cached is not None:
+                effective_version = cached.version or 0
+            workspace = engraphis_integration.workspace_for_version(
+                owner, repo, effective_version
+            )
+            memory_part = (
+                "PERSISTENT MEMORY: this wiki release has a durable memory store "
+                "shared with the repository chat, reachable through your "
+                "`hackdeepwiki` MCP tools `memory_remember`, `memory_recall`, "
+                "`memory_why` and `memory_timeline`. Always call them with "
+                f"owner='{owner}', repo='{repo}', wiki_version="
+                f"{int(effective_version) if effective_version is not None else 0}. "
+                "Use `memory_recall` before making architectural decisions (earlier "
+                "sessions may have already decided), and `memory_remember` when the "
+                "user states a decision/preference or when you complete a change "
+                "worth knowing about later (one self-contained fact per call)."
+            )
+            seeded = engraphis_integration.proactive_block(
+                workspace, f"{owner}/{repo} decisions preferences recent changes"
+            )
+            if seeded:
+                memory_part += "\n\n" + seeded
+            parts.append(memory_part)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Engraphis memory context skipped: %s", e)
+
     return "\n\n".join(parts), version_warning

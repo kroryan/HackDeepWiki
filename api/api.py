@@ -53,6 +53,19 @@ async def _build_lifespan(_app):
         prune_wiki_cache()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"wiki cache startup prune skipped: {e}")
+    # Engraphis memory + embedded dashboard: warm it up at startup so the
+    # first chat/code session doesn't pay the import cost and the embedded
+    # web UI is already listening. Best-effort -- engraphis being absent or
+    # broken must never stop the app from serving.
+    try:
+        from api import engraphis_integration
+        import threading as _threading
+        _threading.Thread(
+            target=engraphis_integration.get_service,
+            name="engraphis-warmup", daemon=True,
+        ).start()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Engraphis warmup skipped: {e}")
     try:
         yield
     finally:
@@ -71,6 +84,11 @@ async def _build_lifespan(_app):
             _code_agent_manager.shutdown_all_sync()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"code agent shutdown failed: {e}")
+        try:
+            from api import engraphis_integration
+            engraphis_integration.shutdown()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"engraphis shutdown failed: {e}")
 
 
 # Initialize FastAPI app
@@ -1130,15 +1148,38 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
     # agent edits files (api/code_agent/context.py). Best-effort: non-git
     # sources (website/fanwiki/zim) or a missing clone simply store None.
     repo_commit = None
+    clone_dir_for_memory = None
     try:
         from api.code_agent.manager import repo_head_commit, repo_key_for
         if data.repo.type == "local" and data.repo.localPath:
+            clone_dir_for_memory = data.repo.localPath
             repo_commit = repo_head_commit(data.repo.localPath)
         elif data.repo.type in ("github", "gitlab", "bitbucket") and data.repo.repoUrl:
             _, clone_dir = repo_key_for(data.repo.repoUrl, data.repo.type)
+            clone_dir_for_memory = clone_dir
             repo_commit = repo_head_commit(clone_dir)
     except Exception as commit_error:  # noqa: BLE001 - never block a wiki save on this
         logger.debug(f"Could not record repo commit for wiki cache: {commit_error}")
+
+    # Engraphis wiki-evolution memory needs the release we're superseding
+    # (version + commit anchor) BEFORE the new file lands. Best-effort.
+    prev_version_for_memory = None
+    prev_commit_for_memory = None
+    try:
+        prev_files = _list_repo_cache_files(
+            data.repo.type, data.repo.owner, data.repo.repo, data.language
+        )
+        candidates = [
+            (_parse_cache_version(os.path.basename(p)), p)
+            for p in prev_files
+            if _parse_cache_version(os.path.basename(p)) < next_version
+        ]
+        if candidates:
+            prev_version_for_memory, prev_path = max(candidates, key=lambda c: c[0])
+            with open(prev_path, "r", encoding="utf-8") as f:
+                prev_commit_for_memory = (json.load(f) or {}).get("repo_commit")
+    except Exception as prev_error:  # noqa: BLE001
+        logger.debug(f"Could not resolve previous release for memory: {prev_error}")
 
     try:
         payload = WikiCacheData(
@@ -1195,6 +1236,28 @@ async def save_wiki_cache(data: WikiCacheRequest) -> Optional[int]:
             prune_wiki_cache()
         except Exception as ev_e:  # noqa: BLE001
             logger.warning(f"wiki cache prune skipped (cache saved anyway): {ev_e}")
+
+        # Engraphis wiki-evolution memory: record what changed since the
+        # previous release (commit range, messages, diffstat) into the repo's
+        # cross-release workspace. Runs in a thread so a slow git log can't
+        # delay the save response; must never fail the save.
+        try:
+            from api import engraphis_integration
+            import threading as _threading
+            _threading.Thread(
+                target=engraphis_integration.record_wiki_release,
+                kwargs=dict(
+                    owner=data.repo.owner, repo=data.repo.repo,
+                    repo_type=data.repo.type, language=data.language,
+                    version=next_version, repo_commit=repo_commit,
+                    previous_version=prev_version_for_memory,
+                    previous_commit=prev_commit_for_memory,
+                    clone_dir=clone_dir_for_memory,
+                ),
+                name="engraphis-evolution", daemon=True,
+            ).start()
+        except Exception as mem_e:  # noqa: BLE001
+            logger.warning(f"engraphis evolution memory skipped: {mem_e}")
 
         return next_version
     except IOError as e:
@@ -2458,6 +2521,56 @@ async def mcp_token():
     if os.environ.get("HACKDEEPWIKI_MCP_TOKEN"):
         return {"configured": True, "token": token, "hint": "Set via HACKDEEPWIKI_MCP_TOKEN env."}
     return {"configured": False, "token": token, "hint": "Per-process token; rotate on restart. Set HACKDEEPWIKI_MCP_TOKEN to pin it."}
+
+# ---- Engraphis embedded memory dashboard -----------------------------------
+# The Engraphis dashboard runs in-process on its own loopback port (see
+# api/engraphis_integration.py). The frontend embeds it in an iframe; this
+# endpoint reports availability and hands back a deep-linked URL for the
+# requested memory workspace (per-wiki-release, or the repo's cross-release
+# "evolution" workspace), pre-creating the workspace so the deep link always
+# lands somewhere real.
+@app.get("/api/engraphis/status")
+async def engraphis_status(
+    owner: Optional[str] = Query(None, description="Repository owner"),
+    repo: Optional[str] = Query(None, description="Repository name"),
+    wiki_version: Optional[int] = Query(None, description="Open wiki release version"),
+    view: str = Query("version", description="'version' (per-release memory) or 'evolution' (cross-release changes)"),
+):
+    from api import engraphis_integration
+
+    def _resolve() -> dict:
+        info = engraphis_integration.status()
+        if not info.get("available") or not info.get("dashboard_url"):
+            return info
+        if owner and repo:
+            if view == "evolution":
+                workspace = engraphis_integration.workspace_for_evolution(owner, repo)
+                engraphis_integration.ensure_workspace(
+                    workspace,
+                    f"Evolution of the {owner}/{repo} wiki across releases.",
+                )
+            else:
+                workspace = engraphis_integration.workspace_for_version(
+                    owner, repo, wiki_version
+                )
+                engraphis_integration.ensure_workspace(
+                    workspace,
+                    f"Memory of {owner}/{repo} wiki release v{wiki_version or 0} "
+                    "(shared by chat and code editor).",
+                )
+            info = dict(info)
+            info["workspace"] = workspace
+            info["url"] = engraphis_integration.dashboard_url_for(workspace)
+        else:
+            info = dict(info)
+            info["url"] = info.get("dashboard_url")
+        return info
+
+    # First call may import engraphis + start the embedded server; keep the
+    # event loop free while it does.
+    import asyncio as _asyncio
+    return await _asyncio.to_thread(_resolve)
+
 
 # ---- Fase 2: wiki full-text search + shareable links ----------------------
 

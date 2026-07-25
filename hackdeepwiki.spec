@@ -21,6 +21,9 @@ _REQUIRED_IMPORTS = [
     "openai", "ollama", "faiss", "libzim",
     "mwparserfromhell", "playwright", "bs4", "markdownify", "neo4j",
     "httpx",  # api/code_agent (embedded opencode agent)
+    "engraphis",  # Engraphis memory + embedded dashboard (api/engraphis_integration.py);
+                  # installed fresh from upstream by scripts/prepare_assets.py on every build
+    "python_multipart",  # required by the Engraphis dashboard's Form/Upload routes
 ]
 _missing = [m for m in _REQUIRED_IMPORTS if importlib.util.find_spec(m) is None]
 if _missing:
@@ -108,6 +111,13 @@ packages_to_collect = [
     'playwright',
     'bs4',
     'markdownify',
+    # Engraphis memory engine (core is numpy-only; the dashboard reuses the
+    # fastapi/uvicorn already bundled). NOTE: engraphis also installs a
+    # top-level `scripts` package into site-packages -- the local ./scripts
+    # dir shadows it because builds run from the project root, and we
+    # deliberately never collect engraphis's copy.
+    'engraphis',
+    'python_multipart',
 ]
 
 hidden_imports = []
@@ -119,8 +129,10 @@ for pkg in packages_to_collect:
     except Exception as e:
         print(f"Warning: Could not collect submodules for {pkg}: {e}")
 
-# Collect data files if needed
-for pkg in ['adalflow', 'langid', 'playwright']:
+# Collect data files if needed. engraphis ships its whole dashboard SPA as
+# package data (engraphis/static: index.html + dashboard.js/css + vendored
+# d3/marked/DOMPurify) -- without these the embedded memory dashboard 404s.
+for pkg in ['adalflow', 'langid', 'playwright', 'engraphis']:
     try:
         datas.extend(collect_data_files(pkg))
     except Exception as e:

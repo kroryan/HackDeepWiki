@@ -34,10 +34,16 @@ ToolHandler = Callable[[Any], Awaitable[str]]
 # it runs.
 SEARCH_WIKI = "SEARCH_WIKI:"
 READ_FILE = "READ_FILE:"
+# Engraphis memory (api/engraphis_integration.py). Scoped to THIS wiki
+# release's workspace -- memory is never shared across wikis or versions.
+MEMORY_REMEMBER = "MEMORY_REMEMBER:"
+MEMORY_RECALL = "MEMORY_RECALL:"
 
 TOOL_LABELS = {
     SEARCH_WIKI: "Buscando",
     READ_FILE: "Leyendo archivo",
+    MEMORY_REMEMBER: "Guardando en memoria",
+    MEMORY_RECALL: "Recordando",
 }
 
 # One-line usage description per tool, shown to the model in
@@ -47,6 +53,8 @@ TOOL_LABELS = {
 TOOL_DESCRIPTIONS = {
     SEARCH_WIKI: "{SEARCH_WIKI} <a short search query>  -- full-text search over the {subject}",
     READ_FILE: "{READ_FILE} <path to a file, e.g. api/main.py>  -- read a file's FULL content (a search result only gives a short snippet; use this when you need the whole file)",
+    MEMORY_REMEMBER: "{MEMORY_REMEMBER} <one self-contained fact worth keeping>  -- store a durable memory for THIS wiki release (decisions, user preferences, conclusions). Use it whenever the user states a decision/preference or asks you to remember something",
+    MEMORY_RECALL: "{MEMORY_RECALL} <a short question>  -- recall previously stored memories for THIS wiki release (earlier decisions, preferences, findings). Use it before answering questions about past work",
 }
 
 
@@ -111,7 +119,11 @@ def build_tools_block(
     for prefix in tools:
         template = TOOL_DESCRIPTIONS.get(prefix)
         if template:
-            lines.append(template.format(SEARCH_WIKI=SEARCH_WIKI, READ_FILE=READ_FILE, subject=subject))
+            lines.append(template.format(
+                SEARCH_WIKI=SEARCH_WIKI, READ_FILE=READ_FILE,
+                MEMORY_REMEMBER=MEMORY_REMEMBER, MEMORY_RECALL=MEMORY_RECALL,
+                subject=subject,
+            ))
     for ext in external_tools or []:
         desc = (ext.get("description") or "").strip().splitlines()[0:1]
         desc_str = desc[0] if desc else f"External tool {ext.get('tool_name')}"
@@ -149,14 +161,20 @@ NATIVE_TOOL_PROVIDERS = {"claude", "openai", "openai_custom", "litellm"}
 _NATIVE_TOOL_NAMES = {
     SEARCH_WIKI: "search_wiki",
     READ_FILE: "read_file",
+    MEMORY_REMEMBER: "memory_remember",
+    MEMORY_RECALL: "memory_recall",
 }
 _NATIVE_TOOL_PARAMS = {
     SEARCH_WIKI: "query",
     READ_FILE: "path",
+    MEMORY_REMEMBER: "content",
+    MEMORY_RECALL: "query",
 }
 _NATIVE_TOOL_DESCRIPTIONS = {
     SEARCH_WIKI: "Full-text search over the {subject}. Returns matching pages/files with a short snippet each.",
     READ_FILE: "Read one file's FULL content from the repository, given its path (e.g. api/main.py). Use this when a search result's snippet isn't enough to answer.",
+    MEMORY_REMEMBER: "Store one durable, self-contained memory for this exact wiki release (a decision, user preference, or conclusion worth keeping across sessions). Memory is scoped to this wiki version only.",
+    MEMORY_RECALL: "Recall previously stored memories for this exact wiki release (earlier decisions, preferences, findings from past chat or code-editing sessions).",
 }
 
 
@@ -478,6 +496,9 @@ async def resolve_tool_calling(
     repo_type: Optional[str] = None,
     token: Optional[str] = None,
     refs_sink: Optional[list] = None,
+    owner: Optional[str] = None,
+    repo: Optional[str] = None,
+    wiki_version: Optional[int] = None,
 ) -> tuple[bool, dict[str, ToolHandler], list[dict]]:
     """Shared gate + tool resolution for the agent loop (api/agent_loop.py),
     used identically by the WebSocket and HTTP chat handlers so the two
@@ -548,6 +569,35 @@ async def resolve_tool_calling(
 
     if not tools:
         return False, {}, []
+
+    # Engraphis memory tools -- per-wiki-release scope, shared with the code
+    # editor. Only offered when the package is installed AND the request
+    # identifies a wiki (owner+repo); .zim archives have no owner/repo and get
+    # no memory. Handlers run in a thread: recall does numpy/SQLite work that
+    # must not block the event loop.
+    try:
+        from api import engraphis_integration
+        if owner and repo and engraphis_integration.is_available():
+            workspace = engraphis_integration.workspace_for_version(
+                owner, repo, wiki_version
+            )
+
+            async def memory_remember_fn(arg: Any, _ws=workspace) -> str:
+                content = _coerce_str_arg(arg)
+                return await asyncio.to_thread(
+                    engraphis_integration.remember, _ws, content, source="chat"
+                )
+
+            async def memory_recall_fn(arg: Any, _ws=workspace) -> str:
+                q = _coerce_str_arg(arg)
+                return await asyncio.to_thread(
+                    engraphis_integration.recall, _ws, q
+                )
+
+            tools[MEMORY_REMEMBER] = memory_remember_fn
+            tools[MEMORY_RECALL] = memory_recall_fn
+    except Exception as e:  # noqa: BLE001 - memory must never break a chat
+        logger.warning("Engraphis chat tools unavailable: %s", e)
 
     external_tools = await _collect_external_tools()
     for ext in external_tools:

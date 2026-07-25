@@ -271,6 +271,123 @@ def ask_repo(owner: str, repo: str, question: str, repo_type: str = "github") ->
         return f"Could not query {owner}/{repo} RAG index: {e}. Generate the wiki first."
 
 
+# ---------------------------------------------------------------------------
+# Engraphis memory tools (api/engraphis_integration.py). These are the FIRST
+# write-capable tools on this MCP server (everything above is read-only wiki
+# consumption): they write MEMORIES into the per-wiki-release Engraphis
+# workspace, never generated content, and every write is audited/receipted by
+# Engraphis itself. The code agent (opencode) reaches them through the
+# `hackdeepwiki` MCP entry its generated config already carries; the chat has
+# its own in-process handlers (api/search_tool.py) against the SAME shared
+# MemoryService, which is what makes memory shared between chat and editor.
+# Scope contract: workspace = {owner}_{repo}_v{wiki_version} -- memory is
+# hard-isolated per wiki release, never global.
+# ---------------------------------------------------------------------------
+
+_MEMORY_SCOPE_PROPS = {
+    "owner": {"type": "string", "description": "Repository owner"},
+    "repo": {"type": "string", "description": "Repository name"},
+    "wiki_version": {
+        "type": "integer",
+        "description": "Wiki release version the session is anchored to "
+                       "(given in your system prompt). Memory is isolated per release.",
+    },
+}
+
+
+def _memory_workspace(owner: str, repo: str, wiki_version: Any) -> str:
+    from api import engraphis_integration
+    try:
+        version = int(wiki_version) if wiki_version is not None else None
+    except (TypeError, ValueError):
+        version = None
+    return engraphis_integration.workspace_for_version(owner, repo, version)
+
+
+@_tool(
+    "memory_remember",
+    "Store one durable, self-contained memory for this wiki release (a decision, "
+    "user preference, or conclusion worth keeping across sessions). Shared with the "
+    "repository chat for the same release.",
+    {
+        "type": "object",
+        "properties": {
+            **_MEMORY_SCOPE_PROPS,
+            "content": {"type": "string", "description": "The fact to remember (self-contained, one fact)"},
+        },
+        "required": ["owner", "repo", "content"],
+    },
+)
+def memory_remember(owner: str, repo: str, content: str,
+                    wiki_version: Any = None) -> str:
+    from api import engraphis_integration
+    return engraphis_integration.remember(
+        _memory_workspace(owner, repo, wiki_version), content, source="code_agent"
+    )
+
+
+@_tool(
+    "memory_recall",
+    "Recall previously stored memories for this wiki release (earlier decisions, "
+    "preferences, findings from past chat or code-editing sessions).",
+    {
+        "type": "object",
+        "properties": {
+            **_MEMORY_SCOPE_PROPS,
+            "query": {"type": "string", "description": "What to recall"},
+        },
+        "required": ["owner", "repo", "query"],
+    },
+)
+def memory_recall(owner: str, repo: str, query: str,
+                  wiki_version: Any = None) -> str:
+    from api import engraphis_integration
+    return engraphis_integration.recall(
+        _memory_workspace(owner, repo, wiki_version), query
+    )
+
+
+@_tool(
+    "memory_why",
+    "Explain WHY the memories matching a query were recalled (Engraphis's recall "
+    "trace: scope gate, ranking signals, receipts).",
+    {
+        "type": "object",
+        "properties": {
+            **_MEMORY_SCOPE_PROPS,
+            "query": {"type": "string"},
+        },
+        "required": ["owner", "repo", "query"],
+    },
+)
+def memory_why(owner: str, repo: str, query: str, wiki_version: Any = None) -> str:
+    from api import engraphis_integration
+    return engraphis_integration.why(
+        _memory_workspace(owner, repo, wiki_version), query
+    )
+
+
+@_tool(
+    "memory_timeline",
+    "Chronological history of the memories matching a query for this wiki release "
+    "(including superseded versions of changed facts).",
+    {
+        "type": "object",
+        "properties": {
+            **_MEMORY_SCOPE_PROPS,
+            "query": {"type": "string"},
+        },
+        "required": ["owner", "repo", "query"],
+    },
+)
+def memory_timeline(owner: str, repo: str, query: str,
+                    wiki_version: Any = None) -> str:
+    from api import engraphis_integration
+    return engraphis_integration.timeline(
+        _memory_workspace(owner, repo, wiki_version), query
+    )
+
+
 def list_tools() -> list[dict[str, Any]]:
     """MCP tools/list response shape."""
     return [

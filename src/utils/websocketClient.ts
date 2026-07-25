@@ -35,6 +35,10 @@ export interface ChatCompletionRequest {
   include_security_context?: boolean;
   owner?: string;
   repo?: string;
+  // Engraphis memory scope anchor: the wiki release the chat is opened on.
+  // Memory is hard-isolated per wiki release (shared with the code editor
+  // for that same release), so the backend needs to know which one this is.
+  wiki_version?: number;
 }
 
 /**

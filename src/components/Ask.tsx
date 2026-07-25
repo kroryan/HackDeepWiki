@@ -655,6 +655,7 @@ const Ask: React.FC<AskProps> = ({
         include_security_context: includeSecurityContext,
         owner: repoInfo.owner,
         repo: repoInfo.repo,
+        wiki_version: wikiVersion,
         ...getSavedApiCredentials(selectedProvider)
       };
 
@@ -1042,6 +1043,7 @@ const Ask: React.FC<AskProps> = ({
         include_security_context: includeSecurityContext,
         owner: repoInfo.owner,
         repo: repoInfo.repo,
+        wiki_version: wikiVersion,
         ...getSavedApiCredentials(selectedProvider)
       };
 

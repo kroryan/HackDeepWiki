@@ -104,3 +104,34 @@ def apply_skills_to_system_prompt(system_prompt: str, selected_skills) -> str:
     if not block:
         return system_prompt
     return f"{system_prompt}\n\n{block}"
+
+
+def apply_memory_to_system_prompt(system_prompt: str, *, owner, repo,
+                                  wiki_version, query: str) -> str:
+    """Engraphis proactive recall -- prepend previously stored memories for
+    THIS wiki release to the system prompt, so the model starts the answer
+    already knowing earlier decisions/preferences without having to call
+    MEMORY_RECALL first.
+
+    Lives in chat_common for the same reason as the skills helper: BOTH chat
+    transports (simple_chat HTTP + websocket_wiki WS) must call the exact same
+    injection or they drift. No-op (returns the prompt unchanged) when
+    Engraphis is not installed, when the request doesn't identify a wiki
+    (owner/repo missing, e.g. .zim chats), or when nothing relevant is stored.
+    Never raises: memory must never break a chat."""
+    if not owner or not repo:
+        return system_prompt
+    try:
+        from api import engraphis_integration
+        if not engraphis_integration.is_available():
+            return system_prompt
+        workspace = engraphis_integration.workspace_for_version(
+            owner, repo, wiki_version
+        )
+        block = engraphis_integration.proactive_block(workspace, query or "")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Engraphis proactive recall skipped: %s", e)
+        return system_prompt
+    if not block:
+        return system_prompt
+    return f"{system_prompt}\n\n{block}"

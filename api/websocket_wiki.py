@@ -49,6 +49,7 @@ from api.chat_common import (
     is_context_limit_error,
     truncate_query_for_fallback,
     apply_skills_to_system_prompt,
+    apply_memory_to_system_prompt,
 )
 
 # Back-compat alias for the original private name this module used internally
@@ -262,6 +263,9 @@ async def handle_websocket_chat(websocket: WebSocket):
             repo_type=request.type,
             token=request.token,
             refs_sink=collected_refs,
+            owner=request.owner,
+            repo=request.repo,
+            wiki_version=request.wiki_version,
         )
 
         # Only retrieve documents if input is not too large
@@ -424,6 +428,14 @@ async def handle_websocket_chat(websocket: WebSocket):
         # empty/None or no matching skill exists). Shared helper with
         # simple_chat.py so both transports stay in sync.
         system_prompt = apply_skills_to_system_prompt(system_prompt, request.skills)
+
+        # Engraphis proactive memory recall for this wiki release (no-op when
+        # engraphis is not installed or the chat has no owner/repo). Shared
+        # helper with simple_chat.py so both transports stay in sync.
+        system_prompt = apply_memory_to_system_prompt(
+            system_prompt, owner=request.owner, repo=request.repo,
+            wiki_version=request.wiki_version, query=query,
+        )
 
         # Fetch file content if provided
         file_content = ""
