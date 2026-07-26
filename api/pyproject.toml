@@ -62,7 +62,7 @@ azure-core = ">=1.38.0"
 # imports them directly).
 urllib3 = ">=2.7.0"
 idna = ">=3.15"
-protobuf = ">=5.29.6"
+protobuf = ">=7.35.1"
 pyasn1 = ">=0.6.4"
 pygments = ">=2.20.0"
 pyjwt = ">=2.13.0"
