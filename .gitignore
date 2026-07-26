@@ -16,7 +16,10 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
+# PyInstaller/setuptools build output in any subproject. The top-level
+# /build/ is NOT ignored here: it holds the versioned component manifest
+# (see the "production" section below).
+api/build/
 develop-eggs/
 dist/
 downloads/
@@ -84,6 +87,7 @@ certs/
 /AppDir/
 /*.AppImage
 /appimagetool*
+/appimage-runtime-*
 
 /.venv311/
 DATABASE/

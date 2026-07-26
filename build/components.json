@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "node": {
+    "version": "24.18.0",
+    "assets": {
+      "linux-x64": {
+        "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz",
+        "sha256": "55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"
+      },
+      "windows-x64": {
+        "url": "https://nodejs.org/dist/v24.18.0/win-x64/node.exe",
+        "sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de"
+      }
+    }
+  },
+  "opencode": {
+    "repository": "anomalyco/opencode",
+    "version": "v1.18.5",
+    "assets": {
+      "opencode-darwin-arm64.zip": "85f6f9eece174d3bf0c92588086a65284388b891256c8f4102dc317d476ffca6",
+      "opencode-darwin-x64.zip": "f972e376cf7d6af855919093674123f6912ec8388af83c9aee2c2e9d6e536203",
+      "opencode-linux-arm64.tar.gz": "18b643362fdf0b8d5b8711b3e160dafb4e68d0bfc00288f56fd1298fd72da69d",
+      "opencode-linux-x64.tar.gz": "cd4a2557a3d6550f27cb5c0257ebe8d73388bb34beda8b6121e6428a74c1eae2",
+      "opencode-windows-arm64.zip": "33959ea655342f60bf01a46e8ac836f9f3627f76dc0fcb3665693f60c76c56f4",
+      "opencode-windows-x64.zip": "755b9ff083ef4f444a9be1fb59803729a2158e448a526317fa3e54de464b515b"
+    }
+  },
+  "engraphis": {
+    "version": "1.0.1",
+    "commit": "74f58494fa0c57fade8b938fdac43dee939446af"
+  },
+  "appimage": {
+    "tool": {
+      "url": "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage",
+      "sha256": "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0"
+    },
+    "runtime": {
+      "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64",
+      "sha256": "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"
+    }
+  }
+}
