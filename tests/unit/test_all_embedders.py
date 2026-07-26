@@ -165,7 +165,8 @@ class TestEmbedderFactory:
             assert bedrock_embedder is not None, "Bedrock embedder should be created"
         
         # Test OpenAI embedder
-        openai_embedder = get_embedder(embedder_type='openai')
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            openai_embedder = get_embedder(embedder_type='openai')
         assert openai_embedder is not None, "OpenAI embedder should be created"
         
         # Test Ollama embedder (may fail if Ollama not available, but should not crash)
