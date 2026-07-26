@@ -17,6 +17,10 @@ import ProcessedProjects from '@/components/ProcessedProjects';
 import { extractUrlPath, extractUrlDomain } from '@/utils/urlDecoder';
 import { useProcessedProjects } from '@/hooks/useProcessedProjects';
 import { getBackendWebSocketUrl } from '@/utils/backendUrl';
+import {
+  getStoredAuthorization,
+  storeAuthorization,
+} from '@/utils/authorization';
 
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -218,7 +222,7 @@ export default function Home() {
 
   // Authentication state
   const [authRequired, setAuthRequired] = useState<boolean>(false);
-  const [authCode, setAuthCode] = useState<string>('');
+  const [authCode, setAuthCode] = useState<string>(() => getStoredAuthorization());
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   // Fanwiki XML (MediaWiki export) import state. Two steps: inspect (reads
@@ -632,6 +636,10 @@ export default function Home() {
           return false;
         }
         const data = await response.json();
+        if (data.success && typeof data.session_token === 'string') {
+          storeAuthorization(data.session_token);
+          setAuthCode(data.session_token);
+        }
         return data.success || false;
       }
     } catch {

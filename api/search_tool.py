@@ -613,7 +613,9 @@ async def _collect_external_tools() -> list[dict]:
     (logged) so it can never break the chat. Returns [] when MCP is unused."""
     external_tools: list[dict] = []
     try:
-        servers = mcp_client.list_servers()
+        # Chat execution needs the decrypted transport configuration. The
+        # public management route uses the redacted default.
+        servers = mcp_client.list_servers(include_secrets=True)
     except Exception as e:  # noqa: BLE001 - profile.db not ready / corrupt -> no external tools
         logger.warning(f"MCP list_servers failed (external tools disabled): {e}")
         return external_tools

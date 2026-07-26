@@ -24,9 +24,6 @@ def protected_config(monkeypatch):
 def test_exposed_code_agent_requires_auth_even_when_global_auth_is_off(monkeypatch):
     monkeypatch.setattr("api.config.WIKI_AUTH_MODE", False)
     monkeypatch.setattr("api.config.WIKI_AUTH_CODE", "")
-    monkeypatch.delenv(
-        "HACKDEEPWIKI_ALLOW_UNAUTHENTICATED_CODE_AGENT", raising=False
-    )
     monkeypatch.setenv("HACKDEEPWIKI_HOST", "0.0.0.0")
     assert _code_authorization_is_valid(None) is False
 

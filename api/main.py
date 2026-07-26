@@ -90,10 +90,11 @@ if __name__ == "__main__":
     logger.info(f"Starting Streaming API on port {port}")
 
     # Bind loopback by default. The app exposes unauthenticated wiki-cache,
-    # vuln-cache and filesystem-listing endpoints; binding 0.0.0.0 by default
-    # would expose those to the LAN. Set HACKDEEPWIKI_HOST=0.0.0.0 explicitly
-    # (e.g. for a containerized/remote deploy) to override.
+    # vuln-cache and filesystem-listing endpoints; non-loopback binds are
+    # validated fail-closed below.
     host = os.environ.get("HACKDEEPWIKI_HOST", "127.0.0.1")
+    from api.settings import get_settings
+    get_settings(host_override=host).validate_deployment()
 
     # Run the FastAPI app with uvicorn
     uvicorn.run(

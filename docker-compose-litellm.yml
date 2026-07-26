@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16
+    image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
     environment:
       POSTGRES_DB: litellm
       POSTGRES_USER: litellm
@@ -13,7 +13,7 @@ services:
       - hackdeepwiki_litellm_db:/var/lib/postgresql/data
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.83.10-stable
+    image: ghcr.io/berriai/litellm:v1.83.10-stable@sha256:6c82d338a60e7b273ae46bf1d8db814d2856ae010f96c44eeadde574d3893f76
     ports:
       - "4000:4000"
     volumes:

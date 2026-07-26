@@ -7,16 +7,18 @@ from typing import List, Union, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from api.openai_client import OpenAIClient
-from api.litellm_client import LiteLLMClient
-from api.openrouter_client import OpenRouterClient
-from api.anthropic_client import AnthropicClient
-from api.bedrock_client import BedrockClient
-from api.google_embedder_client import GoogleEmbedderClient
-from api.google_genai_client import GoogleGenAIClient
-from api.azureai_client import AzureAIClient
-from api.dashscope_client import DashscopeClient
-from adalflow import OllamaClient
+from api.providers.registry import CLIENT_CLASSES
+
+GoogleGenAIClient = CLIENT_CLASSES["GoogleGenAIClient"]
+GoogleEmbedderClient = CLIENT_CLASSES["GoogleEmbedderClient"]
+OpenAIClient = CLIENT_CLASSES["OpenAIClient"]
+LiteLLMClient = CLIENT_CLASSES["LiteLLMClient"]
+OpenRouterClient = CLIENT_CLASSES["OpenRouterClient"]
+AnthropicClient = CLIENT_CLASSES["AnthropicClient"]
+OllamaClient = CLIENT_CLASSES["OllamaClient"]
+BedrockClient = CLIENT_CLASSES["BedrockClient"]
+AzureAIClient = CLIENT_CLASSES["AzureAIClient"]
+DashscopeClient = CLIENT_CLASSES["DashscopeClient"]
 
 # Get API keys from environment variables
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -59,20 +61,6 @@ EMBEDDER_TYPE = os.environ.get('HACKDEEPWIKI_EMBEDDER_TYPE', 'ollama').lower()
 
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('HACKDEEPWIKI_CONFIG_DIR', None)
-
-# Client class mapping
-CLIENT_CLASSES = {
-    "GoogleGenAIClient": GoogleGenAIClient,
-    "GoogleEmbedderClient": GoogleEmbedderClient,
-    "OpenAIClient": OpenAIClient,
-    "LiteLLMClient" : LiteLLMClient,
-    "OpenRouterClient": OpenRouterClient,
-    "AnthropicClient": AnthropicClient,
-    "OllamaClient": OllamaClient,
-    "BedrockClient": BedrockClient,
-    "AzureAIClient": AzureAIClient,
-    "DashscopeClient": DashscopeClient
-}
 
 def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any]) -> Union[Dict[str, Any], List[Any], str, Any]:
     """

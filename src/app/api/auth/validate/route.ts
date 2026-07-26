@@ -23,7 +23,22 @@ export async function POST(request: NextRequest) {
     }
     
     const data = await response.json();
-    return NextResponse.json(data);
+    const result = NextResponse.json(data);
+    if (data?.success && typeof data?.session_token === 'string') {
+      const configuredLifetime = Number(
+        process.env.HACKDEEPWIKI_AUTH_SESSION_SECONDS || 8 * 60 * 60,
+      );
+      result.cookies.set('hackdeepwiki_session', data.session_token, {
+        httpOnly: true,
+        sameSite: 'strict',
+        secure: request.nextUrl.protocol === 'https:',
+        path: '/',
+        maxAge: Number.isFinite(configuredLifetime)
+          ? configuredLifetime
+          : 8 * 60 * 60,
+      });
+    }
+    return result;
   } catch (error) {
     console.error('Error forwarding request to backend:', error);
     return NextResponse.json(

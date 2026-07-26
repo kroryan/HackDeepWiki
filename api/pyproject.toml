@@ -1,6 +1,6 @@
 [project]
 name = "open-hackdeepwiki-api"
-version = "1.0.0"
+version = "0.0.0"
 description = "Backend API for HackDeepWiki, providing smart code analysis and AI-powered documentation generation."
 license = "MIT"
 requires-python = ">=3.11,<4.0"
@@ -40,6 +40,9 @@ requests = ">=2.33.0"
 # Direct dependency of api/code_agent (talking to the embedded opencode
 # server over REST/SSE). Previously only pulled in transitively via openai.
 httpx = ">=0.27.0"
+# Imported directly by api.security for authenticated AES-GCM provider-profile
+# storage.  Do not rely on Azure/Google pulling it transitively.
+cryptography = ">=46.0.3"
 jinja2 = ">=3.1.6"
 python-dotenv = ">=1.2.2"
 openai = ">=1.76.2"
@@ -99,6 +102,33 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.0.3"
+pytest-cov = ">=6.1.1"
+ruff = ">=0.14.0"
+mypy = ">=1.15.0"
+pip-audit = ">=2.9.0"
 
 [tool.poetry.group.build.dependencies]
 pyinstaller = { version = "==6.21.0", python = ">=3.11,<3.16" }
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["dist", "build", "AppDir", "DATABASE"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "BLE"]
+ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+"api/providers/**.py" = []
+"api/memory/**.py" = []
+"api/security.py" = []
+"api/settings.py" = []
+"api/storage/**.py" = []
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+exclude = "(dist|build|AppDir|DATABASE)"

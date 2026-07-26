@@ -9,12 +9,14 @@ import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import VulnSection from '@/components/vuln/VulnSection';
 import EngraphisPanel from '@/components/EngraphisPanel';
-import { VulnReport, VulnScanStatus } from '@/components/vuln/types';
 import WebVulnSection from '@/components/vuln/WebVulnSection';
-import { WebVulnReport } from '@/components/vuln/webTypes';
 import RescanConfigModal, { RescanSelection } from '@/components/vuln/RescanConfigModal';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { RepoInfo } from '@/types/repoinfo';
+import { useAuthorization } from '@/features/auth/useAuthorization';
+import { useRepositorySecurityScans } from '@/features/security/useRepositorySecurityScans';
+import { useRepoWikiRoute } from '@/features/wiki-workspace/useRepoWikiRoute';
+import { useWikiWorkspace } from '@/features/wiki-workspace/useWikiWorkspace';
+import { apiJson } from '@/lib/apiClient';
 import { getSavedApiCredentials } from '@/utils/apiCredentials';
 import { getBackendWebSocketUrl } from '@/utils/backendUrl';
 import getRepoUrl from '@/utils/getRepoUrl';
@@ -33,119 +35,76 @@ import {
   getCacheKey,
   MAX_RELEVANT_FILES_PER_PAGE,
   treeToFileList,
-  WebVulnScanOverrides,
-  VulnScanOverrides,
   WikiPage,
   WikiRelease,
   WikiSection,
   WikiStructure,
   wikiStyles,
-  ScanRelease,
   WebsiteCrawlScope,
   WebsiteCrawlResult,
 } from '@/utils/repoWikiHelpers';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaArchive, FaBitbucket, FaBookOpen, FaBrain, FaDownload, FaEdit, FaExclamationTriangle, FaFileCode, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHistory, FaHome, FaMagic, FaMobileAlt, FaSave, FaSync, FaTimes, FaTrash } from 'react-icons/fa';
 
 export default function RepoWikiPage() {
-  // Get route parameters and search params
-  const params = useParams();
-  const searchParams = useSearchParams();
-
-  // Extract owner and repo from route params
-  const owner = params.owner as string;
-  const repo = params.repo as string;
-
-  // Extract tokens from search params
-  const token = searchParams.get('token') || '';
-  const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
-  const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
-  const providerParam = searchParams.get('provider') || '';
-  const modelParam = searchParams.get('model') || '';
-  const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
-  const customModelParam = searchParams.get('custom_model') || '';
-  const language = searchParams.get('language') || 'en';
-  const isComprehensiveParam = searchParams.get('comprehensive') !== 'false';
-  const pageCountParam = normalizeWikiPageCount(
-    searchParams.get('pages'),
+  const {
+    searchParams,
+    owner,
+    repo,
+    token,
+    localPath,
+    repoUrl,
+    providerParam,
+    modelParam,
+    isCustomModelParam,
+    customModelParam,
+    language,
     isComprehensiveParam,
-  );
-  // Audience mode: 'developer' (default, current behavior -- architecture/
-  // implementation-focused) vs 'user' (an end-user guide: installation,
-  // configuration, features, workflows, troubleshooting -- no source-code
-  // analysis). Orthogonal to comprehensive/concise (which is about depth,
-  // not audience), so it's its own param/state, mirroring how
-  // isComprehensiveView is wired (editable via WikiTypeSelector, persisted
-  // to the URL) rather than technicalAnalysisEnabled's read-only pattern.
-  const isUserFocusedParam = searchParams.get('audience') === 'user';
-  // Free-text guidance on which topics deserve more/less depth, so the
-  // structure-planning LLM doesn't split attention evenly across topics of
-  // wildly different real complexity (e.g. a game's core simulation systems
-  // vs. a one-line install step) just for lack of any other signal.
-  const focusInstructionsParam = searchParams.get('focus')
-    ? decodeURIComponent(searchParams.get('focus') || '')
-    : '';
-  const repoHost = (() => {
-    if (!repoUrl) return '';
-    try {
-      return new URL(repoUrl).hostname.toLowerCase();
-    } catch (e) {
-      console.warn(`Invalid repoUrl provided: ${repoUrl}`);
-      return '';
-    }
-  })();
-  const repoType = repoHost?.includes('bitbucket')
-    ? 'bitbucket'
-    : repoHost?.includes('gitlab')
-      ? 'gitlab'
-      : repoHost?.includes('github')
-        ? 'github'
-        : searchParams.get('type') || 'github';
-
-  // 🔐 Security Analysis (vulnerability scan) params
-  const vulnScanRequested = searchParams.get('vuln_scan') === '1';
-  const vulnClientEnabled = searchParams.get('vuln_client') !== '0';
-  const vulnServerEnabled = searchParams.get('vuln_server') !== '0';
-  const vulnDepsEnabled = searchParams.get('vuln_deps') !== '0';
-  const nvdKeyParam = searchParams.get('nvd_key')
-    ? decodeURIComponent(searchParams.get('nvd_key') || '')
-    : '';
-
-  // 🌐 Website wiki (crawl) params -- only meaningful when repoType === 'website'.
-  const crawlScopeModeParam = (searchParams.get('crawl_scope_mode') as 'count' | 'subdomains' | 'all') || 'count';
-  const crawlMaxPagesParam = Number(searchParams.get('crawl_max_pages')) || 60;
-  const crawlSubdomainsParam = searchParams.get('crawl_subdomains')
-    ? decodeURIComponent(searchParams.get('crawl_subdomains') || '')
-    : '';
-  const crawlRespectRobotsParam = searchParams.get('crawl_respect_robots') !== '0';
-  const technicalAnalysisEnabled = searchParams.get('technical_analysis') === '1';
-  const deepScanEnabled = searchParams.get('deep_scan') === '1';
+    pageCountParam,
+    isUserFocusedParam,
+    focusInstructionsParam,
+    repoType,
+    repoInfo,
+    vulnScanRequested,
+    vulnClientEnabled,
+    vulnServerEnabled,
+    vulnDepsEnabled,
+    nvdKeyParam,
+    crawlScopeModeParam,
+    crawlMaxPagesParam,
+    crawlSubdomainsParam,
+    crawlRespectRobotsParam,
+    technicalAnalysisEnabled,
+    deepScanEnabled,
+  } = useRepoWikiRoute();
 
   // Import language context for translations
   const { messages } = useLanguage();
 
-  // Initialize repo info
-  const repoInfo = useMemo<RepoInfo>(() => ({
-    owner,
-    repo,
-    type: repoType,
-    token: token || null,
-    localPath: localPath || null,
-    repoUrl: repoUrl || null
-  }), [owner, repo, repoType, localPath, repoUrl, token]);
-
   // State variables
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState<string | undefined>(
-    messages.loading?.initializing || 'Initializing wiki generation...'
+  const {
+    isLoading,
+    setIsLoading,
+    loadingMessage,
+    setLoadingMessage,
+    error,
+    setError,
+    embeddingError,
+    setEmbeddingError,
+    connectionError,
+    setConnectionError,
+    contentGenerationError,
+    setContentGenerationError,
+    structureRequestInProgress,
+    setStructureRequestInProgress,
+  } = useWikiWorkspace(
+    messages.loading?.initializing || 'Initializing wiki generation...',
   );
   // Live progress while the backend clones the repo to disk for the first
   // time (see fetchRepoStructureViaBackendClone) -- null once cloning
   // finishes or wasn't needed (repo already cloned by a previous generation).
   const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [wikiStructure, setWikiStructure] = useState<WikiStructure | undefined>();
   // The full file/page tree used to plan the wiki structure, kept around so
   // the introduction page's content-generation prompt can embed it verbatim
@@ -162,20 +121,11 @@ export default function RepoWikiPage() {
   const [requestInProgress, setRequestInProgress] = useState(false);
   const [currentToken, setCurrentToken] = useState(token); // Track current effective token
   const [effectiveRepoInfo, setEffectiveRepoInfo] = useState(repoInfo); // Track effective repo info with cached data
-  const [embeddingError, setEmbeddingError] = useState(false);
-  const [connectionError, setConnectionError] = useState(false);
   // Set when structure generation fails for a content-quality reason (no
   // pages returned, idle timeout) rather than the repo/URL being invalid --
   // the generic "check your repo exists" hint below is actively misleading
   // for these (the repo/site was already found and read successfully).
-  const [contentGenerationError, setContentGenerationError] = useState(false);
 
-  // 🔐 Vulnerability scan state (Security Analysis)
-  const [vulnReport, setVulnReport] = useState<VulnReport | null>(null);
-  const [vulnStatus, setVulnStatus] = useState<VulnScanStatus>('idle');
-  const [vulnProgressMessage, setVulnProgressMessage] = useState<string | undefined>();
-  const [vulnProgressPercent, setVulnProgressPercent] = useState<number | null>(null);
-  const [vulnError, setVulnError] = useState<string | null>(null);
   // 'wiki' shows the normal page content; 'security' swaps the content panel
   // for the vulnerability section without mutating the LLM-generated wiki tree.
   // 'engraphis' swaps it for the embedded Engraphis memory dashboard.
@@ -184,18 +134,9 @@ export default function RepoWikiPage() {
   // release's memory ('version', sidebar button) or the repo's cross-release
   // evolution memory ('evolution', header button next to the theme toggle).
   const [engraphisView, setEngraphisView] = useState<'version' | 'evolution'>('version');
-  const vulnScanStartedRef = useRef(false);
   // Obsidian export options (only relevant when a vuln report exists).
   const [exportIncludeVulns, setExportIncludeVulns] = useState<boolean>(true);
   const [exportIncludeVulnGraph, setExportIncludeVulnGraph] = useState<boolean>(true);
-  // Lets the wiki-save effect kick off the vuln scan without adding
-  // runVulnScan to its dependency list (which would retrigger saves).
-  const runVulnScanRef = useRef<(overrides?: VulnScanOverrides) => void>(() => {});
-  // Release history (versioned like wiki releases -- see VulnRelease below)
-  // + the "rerun with a chosen provider/model" floating config modal.
-  const [vulnReleases, setVulnReleases] = useState<ScanRelease[]>([]);
-  const [selectedVulnVersion, setSelectedVulnVersion] = useState<number | null>(null);
-  const [isVulnRescanModalOpen, setIsVulnRescanModalOpen] = useState(false);
 
   // Attaching an images folder to this fanwiki after the fact (see
   // api/fanwiki_import.py:attach_images) -- the wiki being viewed IS the
@@ -221,15 +162,15 @@ export default function RepoWikiPage() {
     setAttachImagesError(null);
     setAttachImagesResult(null);
     try {
-      const response = await fetch('/api/fanwiki/attach_images', {
+      const data = await apiJson<{
+        files_scanned: number;
+        images_attached: number;
+        images_still_missing: number;
+      }>('/api/fanwiki/attach_images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ start_url: getRepoUrl(effectiveRepoInfo), images_dir: imagesDir }),
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || data.error || messages.repoPage?.attachImagesFailed || 'Failed to attach images');
-      }
       setAttachImagesResult(data);
     } catch (e: unknown) {
       setAttachImagesError(e instanceof Error ? e.message : (messages.repoPage?.attachImagesFailed || 'Failed to attach images'));
@@ -242,20 +183,6 @@ export default function RepoWikiPage() {
     messages.repoPage?.attachImagesFailed,
     messages.repoPage?.attachImagesPathError,
   ]);
-
-  // 🌐 Website vulnerability scan state -- separate report shape/endpoint
-  // from the dependency scan above (WebVulnReport vs VulnReport), used only
-  // when effectiveRepoInfo.type === 'website'.
-  const [webVulnReport, setWebVulnReport] = useState<WebVulnReport | null>(null);
-  const [webVulnStatus, setWebVulnStatus] = useState<VulnScanStatus>('idle');
-  const [webVulnProgressMessage, setWebVulnProgressMessage] = useState<string | undefined>();
-  const [webVulnProgressPercent, setWebVulnProgressPercent] = useState<number | null>(null);
-  const [webVulnError, setWebVulnError] = useState<string | null>(null);
-  const webVulnScanStartedRef = useRef(false);
-  const runWebVulnScanRef = useRef<(overrides?: WebVulnScanOverrides) => void>(() => {});
-  const [webVulnReleases, setWebVulnReleases] = useState<ScanRelease[]>([]);
-  const [selectedWebVulnVersion, setSelectedWebVulnVersion] = useState<number | null>(null);
-  const [isWebVulnRescanModalOpen, setIsWebVulnRescanModalOpen] = useState(false);
 
   // Page edit mode (manual textarea + AI-assisted rewrite). Never
   // autosaves -- editedContent only replaces generatedPages[pageId] on an
@@ -282,6 +209,59 @@ export default function RepoWikiPage() {
   const [modelIncludedDirs, setModelIncludedDirs] = useState(includedDirs);
   const [modelIncludedFiles, setModelIncludedFiles] = useState(includedFiles);
 
+  const {
+    dependency: {
+      report: vulnReport,
+      setReport: setVulnReport,
+      status: vulnStatus,
+      setStatus: setVulnStatus,
+      progressMessage: vulnProgressMessage,
+      progressPercent: vulnProgressPercent,
+      error: vulnError,
+      setError: setVulnError,
+      releases: vulnReleases,
+      selectedVersion: selectedVulnVersion,
+      setSelectedVersion: setSelectedVulnVersion,
+      rescanModalOpen: isVulnRescanModalOpen,
+      setRescanModalOpen: setIsVulnRescanModalOpen,
+    },
+    website: {
+      report: webVulnReport,
+      status: webVulnStatus,
+      progressMessage: webVulnProgressMessage,
+      progressPercent: webVulnProgressPercent,
+      error: webVulnError,
+      releases: webVulnReleases,
+      selectedVersion: selectedWebVulnVersion,
+      setSelectedVersion: setSelectedWebVulnVersion,
+      rescanModalOpen: isWebVulnRescanModalOpen,
+      setRescanModalOpen: setIsWebVulnRescanModalOpen,
+    },
+    runVulnScan,
+    runWebVulnScan,
+    runVulnScanRef,
+    runWebVulnScanRef,
+    loadVulnRelease,
+    deleteVulnRelease,
+    loadWebVulnRelease,
+    deleteWebVulnRelease,
+  } = useRepositorySecurityScans({
+    effectiveRepoInfo,
+    repoUrl,
+    repoType,
+    language,
+    selectedProvider: selectedProviderState,
+    selectedModel: selectedModelState,
+    currentToken,
+    nvdKey: nvdKeyParam,
+    vulnClientEnabled,
+    vulnServerEnabled,
+    vulnDepsEnabled,
+    deepScanEnabled,
+    excludedDirs: modelExcludedDirs,
+    excludedFiles: modelExcludedFiles,
+  });
+
 
   // Wiki type state - default to comprehensive view
   const [isComprehensiveView, setIsComprehensiveView] = useState(isComprehensiveParam);
@@ -293,7 +273,6 @@ export default function RepoWikiPage() {
   // Note: In a multi-threaded environment, additional synchronization would be needed,
   // but in React's single-threaded model, this is safe as long as we set the flag before any async operations
   const activeContentRequests = useRef(new Map<string, boolean>()).current;
-  const [structureRequestInProgress, setStructureRequestInProgress] = useState(false);
   // Create a flag to track if data was loaded from cache to prevent immediate re-save
   const cacheLoadedSuccessfully = useRef(false);
 
@@ -315,9 +294,12 @@ export default function RepoWikiPage() {
   const [selectedWikiVersion, setSelectedWikiVersion] = useState<number | null>(null);
 
   // Authentication state
-  const [authRequired, setAuthRequired] = useState<boolean>(false);
-  const [authCode, setAuthCode] = useState<string>('');
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const {
+    authRequired,
+    authorizationCode: authCode,
+    setAuthorizationCode: setAuthCode,
+    isAuthLoading,
+  } = useAuthorization();
 
   // Default branch state
   const [defaultBranch, setDefaultBranch] = useState<string>('main');
@@ -367,29 +349,6 @@ export default function RepoWikiPage() {
     }
   }, [currentPageId]);
 
-
-  // Fetch authentication status on component mount
-  useEffect(() => {
-    const fetchAuthStatus = async () => {
-      try {
-        setIsAuthLoading(true);
-        const response = await fetch('/api/auth/status');
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        setAuthRequired(data.auth_required);
-      } catch (err) {
-        console.error("Failed to fetch auth status:", err);
-        // Assuming auth is required if fetch fails to avoid blocking UI for safety
-        setAuthRequired(true);
-      } finally {
-        setIsAuthLoading(false);
-      }
-    };
-
-    fetchAuthStatus();
-  }, []);
 
   // Generate content for a wiki page
   const generatePageContent = useCallback(async (page: WikiPage, owner: string, repo: string) => {
@@ -2315,475 +2274,6 @@ IMPORTANT:
     }
   }, [owner, repo, determineWikiStructure, currentToken, effectiveRepoInfo, requestInProgress, messages.loading, language, crawlScopeModeParam, crawlMaxPagesParam, crawlSubdomainsParam, crawlRespectRobotsParam]);
 
-  // Release history (versioned like wiki releases) for the dependency vuln
-  // scan -- lists every saved scan, loads a specific one, or deletes one.
-  // Mirrors loadWikiReleases/loadWikiRelease/deleteWikiRelease above.
-  const loadVulnReleases = useCallback(async (autoSelectVersion?: number) => {
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo,
-        repo_type: repoType, language,
-      });
-      const response = await fetch(`/api/vuln_cache/releases?${params.toString()}`);
-      if (!response.ok) return;
-      const data = await response.json();
-      const releases: ScanRelease[] = Array.isArray(data?.releases) ? data.releases : [];
-      setVulnReleases(releases);
-      if (autoSelectVersion != null) {
-        setSelectedVulnVersion(autoSelectVersion);
-      } else if (releases.length > 0) {
-        setSelectedVulnVersion(prev => (prev == null ? releases[0].version : prev));
-      }
-    } catch (err) {
-      console.warn('Error loading vuln releases:', err);
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language]);
-
-  const loadVulnRelease = useCallback(async (version: number) => {
-    if (!version) return;
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo,
-        repo_type: repoType, language, version: version.toString(),
-      });
-      const response = await fetch(`/api/vuln_cache?${params.toString()}`);
-      if (!response.ok) throw new Error(`Failed to load release v${version}: ${response.status}`);
-      const data = (await response.json()) as VulnReport;
-      setVulnReport(data);
-      setVulnStatus('done');
-      setSelectedVulnVersion(version);
-    } catch (err) {
-      console.warn('Error loading vuln release:', err);
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language]);
-
-  const deleteVulnRelease = useCallback(async (version: number) => {
-    if (!version) return;
-    if (!window.confirm(`Delete security scan release v${version}? This cannot be undone.`)) return;
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo,
-        repo_type: repoType, language, version: version.toString(),
-      });
-      const response = await fetch(`/api/vuln_cache?${params.toString()}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error(`Failed to delete release v${version}: ${response.status}`);
-      const relRes = await fetch(`/api/vuln_cache/releases?${new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, repo_type: repoType, language,
-      }).toString()}`);
-      const relData = relRes.ok ? await relRes.json() : { releases: [] };
-      const remaining: ScanRelease[] = Array.isArray(relData?.releases) ? relData.releases : [];
-      setVulnReleases(remaining);
-      if (remaining.length > 0) {
-        await loadVulnRelease(remaining[0].version);
-      } else {
-        setSelectedVulnVersion(null);
-        setVulnReport(null);
-        setVulnStatus('idle');
-      }
-    } catch (err) {
-      console.warn('Error deleting vuln release:', err);
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language, loadVulnRelease]);
-
-  // Function to export wiki content
-  // 🔐 Vulnerability scan: open /ws/vuln_scan, stream progress, store report.
-  // Sequential with wiki generation by design -- runs after the wiki is done
-  // and the repo is already cloned locally, reusing that clone.
-  const runVulnScan = useCallback(async (overrides?: VulnScanOverrides) => {
-    if (vulnScanStartedRef.current) return;
-    vulnScanStartedRef.current = true;
-    setVulnStatus('running');
-    setVulnError(null);
-    setVulnReport(null);
-    setVulnProgressMessage('Starting scan…');
-    setVulnProgressPercent(0);
-
-    const vulnScanWebSocketUrl = await getBackendWebSocketUrl('/ws/vuln_scan');
-    const provider = overrides?.provider ?? selectedProviderState;
-    const model = overrides?.model ?? selectedModelState;
-    const creds = getSavedApiCredentials(provider);
-
-    const payload = {
-      repo_url: repoUrl || getRepoUrl(effectiveRepoInfo),
-      repo_type: repoType,
-      owner: effectiveRepoInfo.owner,
-      repo: effectiveRepoInfo.repo,
-      language,
-      provider,
-      model,
-      api_key: creds.api_key || undefined,
-      api_endpoint: creds.api_endpoint || undefined,
-      local_path: effectiveRepoInfo.localPath || undefined,
-      token: currentToken || undefined,
-      // A rescan must reflect the repo's current remote state, not whatever
-      // was cloned whenever the wiki was last generated -- without this,
-      // re-scanning a repo that got new commits upstream silently kept
-      // re-scanning the old clone and reproduced identical findings every
-      // time. `overrides` is set both for a manual rerun (RescanConfigModal)
-      // and for the auto-trigger right after wiki generation/refresh (which
-      // now passes `{}` explicitly instead of calling with no args) -- see
-      // both call sites of runVulnScan for why forcing here is safe even
-      // when it's technically redundant (a repo that was just cloned/
-      // re-cloned moments ago).
-      force: overrides !== undefined,
-      nvd_key: (overrides?.nvdKey ?? nvdKeyParam) || undefined,
-      enable_client: overrides?.vulnClient ?? vulnClientEnabled,
-      enable_server: overrides?.vulnServer ?? vulnServerEnabled,
-      enable_deps: overrides?.vulnDeps ?? vulnDepsEnabled,
-      run_llm: true,
-      excluded_dirs: modelExcludedDirs,
-      excluded_files: modelExcludedFiles,
-    };
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const ws = new WebSocket(vulnScanWebSocketUrl);
-        let settled = false;
-        const timeout = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            try { ws.close(); } catch {}
-            reject(new Error('Vuln scan timed out.'));
-          }
-        }, 10 * 60 * 1000);
-
-        ws.onopen = () => {
-          ws.send(JSON.stringify(payload));
-        };
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === 'progress') {
-              setVulnProgressMessage(msg.message || 'Working…');
-              setVulnProgressPercent(typeof msg.percent === 'number' ? msg.percent : null);
-            } else if (msg.type === 'done') {
-              settled = true;
-              clearTimeout(timeout);
-              setVulnReport(msg.report as VulnReport);
-              setVulnStatus('done');
-              setVulnProgressPercent(100);
-              const newVersion = typeof msg.version === 'number' ? msg.version : undefined;
-              loadVulnReleases(newVersion);
-              try { ws.close(); } catch {}
-              resolve();
-            } else if (msg.type === 'error') {
-              settled = true;
-              clearTimeout(timeout);
-              setVulnError(msg.message || 'Scan failed.');
-              setVulnStatus('error');
-              try { ws.close(); } catch {}
-              reject(new Error(msg.message || 'Scan failed.'));
-            }
-          } catch {
-            /* ignore non-JSON frames */
-          }
-        };
-        // The browser's WebSocket `error` event carries no diagnostic
-        // information whatsoever (by spec) -- the actual close code/reason
-        // (e.g. 1006 abnormal closure, typically connection refused/reset;
-        // or a server-sent reason string) only ever arrives via the `close`
-        // event that always follows it. Settling here on `onerror` alone
-        // discarded that detail and left every failure indistinguishable as
-        // the same generic "WebSocket error during scan.", with nothing to
-        // go on to diagnose it. Just flag that an error happened and let
-        // `onclose` (below) produce the final message with real detail.
-        let hadError = false;
-        ws.onerror = () => {
-          hadError = true;
-        };
-        ws.onclose = (event) => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            // Code 1000 (normal) / 1005 (no status, but not flagged as an
-            // error) with no prior onerror -> a clean close before a
-            // done/error frame arrived; treat as error only if still
-            // "running" (matches the previous behavior for that case).
-            const isAbnormalClose = hadError || (event.code !== 1000 && event.code !== 1005);
-            if (isAbnormalClose) {
-              const detail = event.reason ? `: ${event.reason}` : ` (code ${event.code})`;
-              const message = `WebSocket error during scan${detail}.`;
-              setVulnError(message);
-              setVulnStatus('error');
-              reject(new Error(message));
-            } else {
-              setVulnStatus((prev) => prev === 'running' ? 'error' : prev);
-              resolve();
-            }
-          }
-        };
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Scan failed.';
-      setVulnStatus('error');
-      setVulnError(msg);
-    } finally {
-      vulnScanStartedRef.current = false;
-    }
-  }, [repoUrl, repoType, effectiveRepoInfo, language, selectedProviderState, selectedModelState,
-      nvdKeyParam, vulnClientEnabled, vulnServerEnabled, vulnDepsEnabled,
-      modelExcludedDirs, modelExcludedFiles, loadVulnReleases, currentToken]);
-
-  // Load a previously-saved vuln report (if any) so the Security tab is
-  // populated when opening an already-scanned repo, without re-scanning.
-  const loadVulnCache = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner,
-        repo: effectiveRepoInfo.repo,
-        repo_type: repoType,
-        language,
-      });
-      const res = await fetch(`/api/vuln_cache?${params.toString()}`);
-      if (res.ok) {
-        const data = (await res.json()) as VulnReport;
-        setVulnReport(data);
-        setVulnStatus('done');
-      }
-    } catch {
-      /* no cache yet -- fine */
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, repoType, language]);
-
-  // On mount: always try to restore a saved vuln report from cache, so the
-  // Security tab works on re-open. This used to be skipped whenever
-  // vulnScanRequested was true ("a fresh scan is about to run anyway, don't
-  // bother") -- but vulnScanRequested reads the `vuln_scan=1` URL param,
-  // which the wiki-save effect writes into the browser's address bar via
-  // history.replaceState the first time a scan ever runs. That makes it
-  // permanently "true" for this repo's URL from then on, which permanently
-  // skipped this restore on every future visit -- the report looked like it
-  // never persisted, when it was actually saved correctly on disk the whole
-  // time. If a fresh scan really is about to run (saveCache's
-  // vulnScanRequested && !vulnReport trigger), it overwrites whatever this
-  // loads within moments -- a harmless brief flash, not a bug.
-  useEffect(() => {
-    loadVulnCache();
-  }, [loadVulnCache]);
-
-  // Keep the ref pointing at the latest runVulnScan closure.
-  useEffect(() => { runVulnScanRef.current = runVulnScan; }, [runVulnScan]);
-
-  // Release history for the website security scan -- same versioned pattern
-  // as loadVulnReleases/loadVulnRelease/deleteVulnRelease above.
-  const loadWebVulnReleases = useCallback(async (autoSelectVersion?: number) => {
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language,
-      });
-      const response = await fetch(`/api/web_vuln_cache/releases?${params.toString()}`);
-      if (!response.ok) return;
-      const data = await response.json();
-      const releases: ScanRelease[] = Array.isArray(data?.releases) ? data.releases : [];
-      setWebVulnReleases(releases);
-      if (autoSelectVersion != null) {
-        setSelectedWebVulnVersion(autoSelectVersion);
-      } else if (releases.length > 0) {
-        setSelectedWebVulnVersion(prev => (prev == null ? releases[0].version : prev));
-      }
-    } catch (err) {
-      console.warn('Error loading web vuln releases:', err);
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language]);
-
-  const loadWebVulnRelease = useCallback(async (version: number) => {
-    if (!version) return;
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language, version: version.toString(),
-      });
-      const response = await fetch(`/api/web_vuln_cache?${params.toString()}`);
-      if (!response.ok) throw new Error(`Failed to load release v${version}: ${response.status}`);
-      const data = (await response.json()) as WebVulnReport;
-      setWebVulnReport(data);
-      setWebVulnStatus('done');
-      setSelectedWebVulnVersion(version);
-    } catch (err) {
-      console.warn('Error loading web vuln release:', err);
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language]);
-
-  const deleteWebVulnRelease = useCallback(async (version: number) => {
-    if (!version) return;
-    if (!window.confirm(`Delete website security scan release v${version}? This cannot be undone.`)) return;
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language, version: version.toString(),
-      });
-      const response = await fetch(`/api/web_vuln_cache?${params.toString()}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error(`Failed to delete release v${version}: ${response.status}`);
-      const relRes = await fetch(`/api/web_vuln_cache/releases?${new URLSearchParams({
-        owner: effectiveRepoInfo.owner, repo: effectiveRepoInfo.repo, language,
-      }).toString()}`);
-      const relData = relRes.ok ? await relRes.json() : { releases: [] };
-      const remaining: ScanRelease[] = Array.isArray(relData?.releases) ? relData.releases : [];
-      setWebVulnReleases(remaining);
-      if (remaining.length > 0) {
-        await loadWebVulnRelease(remaining[0].version);
-      } else {
-        setSelectedWebVulnVersion(null);
-        setWebVulnReport(null);
-        setWebVulnStatus('idle');
-      }
-    } catch (err) {
-      console.warn('Error deleting web vuln release:', err);
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language, loadWebVulnRelease]);
-
-  // 🌐 Website vulnerability scan -- mirrors runVulnScan above but talks to
-  // /ws/web_vuln_scan and stores a WebVulnReport. Only meaningful when
-  // effectiveRepoInfo.type === 'website'; the site must already be crawled
-  // (the wiki-save effect triggers this after the crawl+wiki generation
-  // finishes, same sequencing runVulnScan uses for repos).
-  const runWebVulnScan = useCallback(async (overrides?: WebVulnScanOverrides) => {
-    if (webVulnScanStartedRef.current) return;
-    webVulnScanStartedRef.current = true;
-    setWebVulnStatus('running');
-    setWebVulnError(null);
-    setWebVulnReport(null);
-    setWebVulnProgressMessage('Starting scan…');
-    setWebVulnProgressPercent(0);
-
-    const webVulnScanWebSocketUrl = await getBackendWebSocketUrl('/ws/web_vuln_scan');
-    const provider = overrides?.provider ?? selectedProviderState;
-    const model = overrides?.model ?? selectedModelState;
-    const creds = getSavedApiCredentials(provider);
-
-    const payload = {
-      site_url: repoUrl || getRepoUrl(effectiveRepoInfo),
-      owner: effectiveRepoInfo.owner,
-      repo: effectiveRepoInfo.repo,
-      language,
-      provider,
-      model,
-      api_key: creds.api_key || undefined,
-      api_endpoint: creds.api_endpoint || undefined,
-      run_llm: true,
-      enable_deep_scan: overrides?.enableDeepScan ?? deepScanEnabled,
-    };
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const ws = new WebSocket(webVulnScanWebSocketUrl);
-        let settled = false;
-        // The Docker toolkit runs its tools in parallel, but the slowest of
-        // them (nikto, or dalfox against a page with many query-param URLs)
-        // can still take several minutes on its own, plus wpscan
-        // afterward if WordPress is detected -- 10 minutes cut this off
-        // mid-scan in practice. 20 minutes gives real headroom.
-        const timeout = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            try { ws.close(); } catch {}
-            reject(new Error('Website vuln scan timed out.'));
-          }
-        }, 20 * 60 * 1000);
-
-        ws.onopen = () => {
-          ws.send(JSON.stringify(payload));
-        };
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === 'progress') {
-              setWebVulnProgressMessage(msg.message || 'Working…');
-              setWebVulnProgressPercent(typeof msg.percent === 'number' ? msg.percent : null);
-            } else if (msg.type === 'done') {
-              settled = true;
-              clearTimeout(timeout);
-              setWebVulnReport(msg.report as WebVulnReport);
-              setWebVulnStatus('done');
-              setWebVulnProgressPercent(100);
-              { const newVersion = typeof msg.version === 'number' ? msg.version : undefined;
-                loadWebVulnReleases(newVersion); }
-              try { ws.close(); } catch {}
-              resolve();
-            } else if (msg.type === 'error') {
-              settled = true;
-              clearTimeout(timeout);
-              setWebVulnError(msg.message || 'Scan failed.');
-              setWebVulnStatus('error');
-              try { ws.close(); } catch {}
-              reject(new Error(msg.message || 'Scan failed.'));
-            }
-          } catch {
-            /* ignore non-JSON frames */
-          }
-        };
-        // See the equivalent comment in runVulnScan above: `onerror` carries
-        // no diagnostic info, the real close code/reason only arrives via
-        // the `close` event that always follows it.
-        let hadError = false;
-        ws.onerror = () => {
-          hadError = true;
-        };
-        ws.onclose = (event) => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            const isAbnormalClose = hadError || (event.code !== 1000 && event.code !== 1005);
-            if (isAbnormalClose) {
-              const detail = event.reason ? `: ${event.reason}` : ` (code ${event.code})`;
-              const message = `WebSocket error during scan${detail}.`;
-              setWebVulnError(message);
-              setWebVulnStatus('error');
-              reject(new Error(message));
-            } else {
-              setWebVulnStatus((prev) => prev === 'running' ? 'error' : prev);
-              resolve();
-            }
-          }
-        };
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Scan failed.';
-      setWebVulnStatus('error');
-      setWebVulnError(msg);
-    } finally {
-      webVulnScanStartedRef.current = false;
-    }
-  }, [repoUrl, effectiveRepoInfo, language, selectedProviderState, selectedModelState, deepScanEnabled, loadWebVulnReleases]);
-
-  const loadWebVulnCache = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({
-        owner: effectiveRepoInfo.owner,
-        repo: effectiveRepoInfo.repo,
-        language,
-      });
-      const res = await fetch(`/api/web_vuln_cache?${params.toString()}`);
-      if (res.ok) {
-        const data = (await res.json()) as WebVulnReport;
-        setWebVulnReport(data);
-        setWebVulnStatus('done');
-      }
-    } catch {
-      /* no cache yet -- fine */
-    }
-  }, [effectiveRepoInfo.owner, effectiveRepoInfo.repo, language]);
-
-  useEffect(() => {
-    if (effectiveRepoInfo.type === 'website') {
-      loadWebVulnCache();
-    }
-  }, [effectiveRepoInfo.type, loadWebVulnCache]);
-
-  useEffect(() => { runWebVulnScanRef.current = runWebVulnScan; }, [runWebVulnScan]);
-
-  // Populate the release-history dropdowns for both scan types on mount, so
-  // a returning visit shows every past scan even before (or without ever)
-  // triggering a fresh one.
-  useEffect(() => {
-    if (effectiveRepoInfo.type !== 'website' && effectiveRepoInfo.type !== 'fanwiki') {
-      loadVulnReleases();
-    }
-  }, [effectiveRepoInfo.type, loadVulnReleases]);
-
-  useEffect(() => {
-    if (effectiveRepoInfo.type === 'website') {
-      loadWebVulnReleases();
-    }
-  }, [effectiveRepoInfo.type, loadWebVulnReleases]);
 
   const exportWiki = useCallback(async (format: 'markdown' | 'json' | 'obsidian' | 'hdwreader' | 'mediawiki_xml' | 'zim') => {
     if (!wikiStructure || Object.keys(generatedPages).length === 0) {
@@ -2975,7 +2465,6 @@ IMPORTANT:
       } else {
         currentUrl.searchParams.delete('nvd_key');
       }
-      vulnScanStartedRef.current = false;
       setVulnReport(null);
       setVulnStatus('idle');
       setVulnError(null);

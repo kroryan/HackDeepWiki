@@ -34,7 +34,7 @@ services:
     restart: unless-stopped
 
   neo4j:
-    image: neo4j:5-community
+    image: neo4j:5-community@sha256:362542416de6c09a971484d1893878016cc3b5cdec166e54b1c824a220ecd6b9
     container_name: hackdeepwiki-vulnscan-neo4j
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-hackdeepwiki_secret}
@@ -56,7 +56,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     container_name: hackdeepwiki-vulnscan-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hackdeepwiki}

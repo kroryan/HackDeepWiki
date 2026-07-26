@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+SELF=$(readlink -f "$0")
+HERE=$(dirname "$SELF")
+exec "$HERE/usr/bin/hackdeepwiki" "$@"

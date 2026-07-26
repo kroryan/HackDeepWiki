@@ -36,6 +36,7 @@ from contextlib import contextmanager
 from typing import Awaitable, Callable, Optional
 
 from api.data_root import get_data_root
+from api.component_manifest import component_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +44,13 @@ logger = logging.getLogger(__name__)
 # by scripts/prepare_assets.py so the bundled binary and the lazy download
 # agree. NOTE the project moved from sst/opencode to anomalyco/opencode -- the
 # old repo's assets 404.
-OPENCODE_VERSION = "v1.18.5"
-GITHUB_REPO = "anomalyco/opencode"
+_OPENCODE_COMPONENT = component_manifest()["opencode"]
+OPENCODE_VERSION = str(_OPENCODE_COMPONENT["version"])
+GITHUB_REPO = str(_OPENCODE_COMPONENT["repository"])
 
 # SHA-256 digests published by GitHub for the immutable v1.18.5 release
 # assets. Runtime and build-time downloads both use this table.
-OPENCODE_ARCHIVE_SHA256 = {
-    "opencode-darwin-arm64.zip": "85f6f9eece174d3bf0c92588086a65284388b891256c8f4102dc317d476ffca6",
-    "opencode-darwin-x64.zip": "f972e376cf7d6af855919093674123f6912ec8388af83c9aee2c2e9d6e536203",
-    "opencode-linux-arm64.tar.gz": "18b643362fdf0b8d5b8711b3e160dafb4e68d0bfc00288f56fd1298fd72da69d",
-    "opencode-linux-x64.tar.gz": "cd4a2557a3d6550f27cb5c0257ebe8d73388bb34beda8b6121e6428a74c1eae2",
-    "opencode-windows-arm64.zip": "33959ea655342f60bf01a46e8ac836f9f3627f76dc0fcb3665693f60c76c56f4",
-    "opencode-windows-x64.zip": "755b9ff083ef4f444a9be1fb59803729a2158e448a526317fa3e54de464b515b",
-}
+OPENCODE_ARCHIVE_SHA256 = dict(_OPENCODE_COMPONENT["assets"])
 
 _INSTALL_THREAD_LOCK = threading.Lock()
 

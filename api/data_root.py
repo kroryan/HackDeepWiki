@@ -23,9 +23,16 @@ logger = logging.getLogger(__name__)
 _cached_root = None
 
 
+def _harden_private_dir(path: str) -> None:
+    """Restrict local caches and secrets to the current OS user on POSIX."""
+    if os.name != "nt":
+        os.chmod(path, 0o700)
+
+
 def _is_writable_dir(path: str) -> bool:
     try:
-        os.makedirs(path, exist_ok=True)
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        _harden_private_dir(path)
         probe = os.path.join(path, ".write_probe")
         with open(probe, "w") as f:
             f.write("ok")
@@ -110,7 +117,8 @@ def get_data_root() -> str:
 
     if not _cached_root:
         _cached_root = os.path.join(tempfile.gettempdir(), "hackdeepwiki-adalflow")
-        os.makedirs(_cached_root, exist_ok=True)
+        os.makedirs(_cached_root, mode=0o700, exist_ok=True)
+        _harden_private_dir(_cached_root)
 
     default_root = candidates[0]
     if _cached_root != default_root:
@@ -136,7 +144,10 @@ def _patch_adalflow_root(root: str) -> None:
     """
     try:
         import adalflow.utils.global_config as _agc
-        _target = (lambda r=root: r)
+
+        def _target(r: str = root) -> str:
+            return r
+
         _agc.get_adalflow_default_root_path = _target
         try:
             import adalflow.utils as _au

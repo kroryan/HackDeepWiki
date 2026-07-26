@@ -1,3 +1,5 @@
+import { withWebSocketAuthorization } from '@/utils/authorization';
+
 let backendBaseUrlPromise: Promise<string> | null = null;
 
 export function getBackendBaseUrl(): Promise<string> {
@@ -20,8 +22,14 @@ export function getBackendBaseUrl(): Promise<string> {
   return backendBaseUrlPromise;
 }
 
-export async function getBackendWebSocketUrl(path: string): Promise<string> {
+export async function getBackendWebSocketUrl(
+  path: string,
+  authorizationCode?: string,
+): Promise<string> {
   const baseUrl = await getBackendBaseUrl();
   const wsBaseUrl = baseUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
-  return `${wsBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  return withWebSocketAuthorization(
+    `${wsBaseUrl}${path.startsWith('/') ? path : `/${path}`}`,
+    authorizationCode,
+  );
 }

@@ -1,0 +1,19 @@
+{
+  "exceptions": [
+    {
+      "package": "diskcache",
+      "version": "5.6.3",
+      "advisory": "PYSEC-2026-2447",
+      "expires": "2026-10-01",
+      "reason": "No fixed release exists. diskcache is transitive through adalflow; HackDeepWiki restricts its data root to the current OS user and does not accept cache files from untrusted sources."
+    }
+  ],
+  "allowed_skips": [
+    {
+      "package": "engraphis",
+      "version": "1.0.1",
+      "reason_contains": "Dependency not found on PyPI",
+      "reason": "Engraphis is installed from the exact commit recorded in build/components.json and is covered by the build inventory instead of the PyPI advisory database."
+    }
+  ]
+}

@@ -31,10 +31,9 @@ import asyncio
 import json
 import logging
 import os
-import time
 from typing import Any, Awaitable, Callable, Optional
 
-from api.storage import connect, profile_db_path, repo_key
+from api.storage import connect, profile_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,8 @@ def claim() -> Optional[dict]:
             # treat a 'running' job older than a heartbeat timeout as stale.
             row = conn.execute(
                 "SELECT id, repo_key, kind, payload_json, attempts FROM jobs "
-                "WHERE status = 'queued' "
+                "WHERE (status = 'queued' "
+                "AND COALESCE(available_at, created_at) <= datetime('now')) "
                 "OR (status = 'running' AND started_at < datetime('now', ?)) "
                 "ORDER BY created_at ASC LIMIT 1",
                 (f"-{int(os.environ.get('HACKDEEPWIKI_JOB_STALE_SECONDS', '120'))} seconds",),
@@ -125,20 +125,22 @@ def _fail(job_id: int, error: str, attempts: int) -> None:
     retry (status back to 'queued' but the claim loop's stale-check + the
     attempt count gate it); otherwise move to 'dead' (dead-letter)."""
     status = "queued" if attempts < MAX_ATTEMPTS else "dead"
+    delay = BACKOFF_BASE * (2 ** max(0, attempts - 1))
     with connect(profile_db_path()) as conn:
         conn.execute(
-            "UPDATE jobs SET status=?, error=?, finished_at=datetime('now') WHERE id = ?",
-            (status, error[:1000], job_id),
+            "UPDATE jobs SET status=?, error=?, finished_at=datetime('now'), "
+            "available_at=CASE WHEN ?='queued' THEN datetime('now', ?) "
+            "ELSE available_at END WHERE id = ?",
+            (status, error[:1000], status, f"+{delay:.3f} seconds", job_id),
         )
         conn.commit()
     if status == "queued":
-        # backoff: don't let the claim loop grab it immediately. We encode
-        # the "eligible after" by leaving started_at at the recent value so
-        # the stale-check doesn't fire, and sleeping the worker is the wrong
-        # layer; instead set a not-before via a tiny delay column would be
-        # over-engineering -- the attempts-based backoff + the poll interval
-        # already space retries by ~POLL_INTERVAL each. Good enough for local.
-        logger.info(f"job {job_id} failed (attempt {attempts}), requeued for retry")
+        logger.info(
+            "job %s failed (attempt %s), retry available in %.3fs",
+            job_id,
+            attempts,
+            delay,
+        )
 
 
 def list_jobs(repo_key_value: Optional[str] = None, status: Optional[str] = None,
@@ -147,9 +149,11 @@ def list_jobs(repo_key_value: Optional[str] = None, status: Optional[str] = None
     sql = "SELECT id, repo_key, kind, status, attempts, error, created_at, started_at, finished_at FROM jobs"
     clauses, params = [], []
     if repo_key_value:
-        clauses.append("repo_key = ?"); params.append(repo_key_value)
+        clauses.append("repo_key = ?")
+        params.append(repo_key_value)
     if status:
-        clauses.append("status = ?"); params.append(status)
+        clauses.append("status = ?")
+        params.append(status)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id DESC LIMIT ?"
@@ -160,7 +164,7 @@ def list_jobs(repo_key_value: Optional[str] = None, status: Optional[str] = None
         try:
             return [dict(r) for r in conn.execute(sql, params).fetchall()]
         except Exception:
-            _ensure_attempts_column(conn)
+            _ensure_queue_columns(conn)
             return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
@@ -177,13 +181,17 @@ def cancel(job_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def _ensure_attempts_column(conn) -> None:
-    """Add the attempts column to a legacy jobs table (pre-Fase-3 schema
-    didn't track retries). Idempotent."""
+def _ensure_queue_columns(conn) -> None:
+    """Make a pre-migration jobs table safe for the worker."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     if "attempts" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
-        conn.commit()
+    if "available_at" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN available_at TEXT")
+        conn.execute(
+            "UPDATE jobs SET available_at=COALESCE(created_at, datetime('now'))"
+        )
+    conn.commit()
 
 
 async def _run_one() -> bool:
@@ -207,7 +215,8 @@ async def _run_one() -> bool:
 
 async def _worker_loop() -> None:
     logger.info("HackDeepWiki job worker started")
-    _ensure_attempts_column(connect(profile_db_path()))
+    with connect(profile_db_path()) as conn:
+        _ensure_queue_columns(conn)
     while True:
         try:
             ran = await _run_one()
@@ -237,3 +246,19 @@ def stop_worker() -> None:
     if _WORKER_TASK is not None and not _WORKER_TASK.done():
         _WORKER_TASK.cancel()
     _WORKER_TASK = None
+
+
+def worker_status() -> dict[str, Any]:
+    """Small, non-blocking readiness snapshot for diagnostics."""
+    task = _WORKER_TASK
+    if task is None:
+        return {"status": "stopped"}
+    if task.cancelled():
+        return {"status": "stopped"}
+    if task.done():
+        error = task.exception()
+        return {
+            "status": "failed" if error else "stopped",
+            "detail": type(error).__name__ if error else None,
+        }
+    return {"status": "ready", "registered_handlers": len(_HANDLERS)}

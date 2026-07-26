@@ -34,14 +34,17 @@ wheels/
 *.egg
 *.venv
 # testing
+/.coverage
 /coverage
+/coverage.xml
 
 # next.js
 /.next/
 /out/
 
 # production
-/build
+/build/*
+!/build/components.json
 
 # misc
 .DS_Store

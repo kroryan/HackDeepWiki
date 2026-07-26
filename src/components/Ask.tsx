@@ -1,6 +1,6 @@
 'use client';
 
-import React, {useState, useRef, useEffect, useMemo, useCallback} from 'react';
+import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {
   FaChevronLeft,
   FaChevronRight,
@@ -23,85 +23,21 @@ import {
   extractLatestAssistantText,
   getCodeSessionMessages,
 } from '@/utils/codeAgentClient';
-
-interface Model {
-  id: string;
-  name: string;
-}
-
-interface Provider {
-  id: string;
-  name: string;
-  models: Model[];
-  supportsCustomModel?: boolean;
-}
-
-interface Message {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-}
-
-interface ResearchStage {
-  title: string;
-  content: string;
-  iteration: number;
-  type: 'plan' | 'update' | 'conclusion';
-}
-
-interface ChatSession {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  messages: Message[];
-  response: string;
-  deepResearch: boolean;
-  researchStages: ResearchStage[];
-  currentStageIndex: number;
-  researchIteration: number;
-  researchComplete: boolean;
-  // ⚙ Code Editing mode state, persisted PER CHAT: reopening a chat from
-  // history must restore it exactly as it was -- same mode, same toggles,
-  // same opencode session (opencode persists sessions on disk, so the agent
-  // conversation resumes too). Entering a wiki still starts a fresh chat
-  // (mode off) because a fresh session carries none of these.
-  codeMode?: boolean;
-  includeSecurityContext?: boolean;
-  codeSessionId?: string;
-}
-
-/** Repo types that have real code on disk to edit. Website/fanwiki/zim
- * sources have nothing for a coding agent to work on. */
-const CODE_MODE_REPO_TYPES = ['github', 'gitlab', 'bitbucket', 'local'];
-
-/** Append process events, MERGING instead of stacking where the stream is
- * incremental: consecutive "thinking" events are token deltas of one thought
- * (one <li> per token rendered as an unreadable word-per-line column), and a
- * tool's pending->running->completed transitions are one call, not three
- * lines -- same-label consecutive tool events update in place. */
-function appendProcessEvents(previous: ProcessEvent[], incoming: ProcessEvent[]): ProcessEvent[] {
-  if (incoming.length === 0) return previous;
-  const next = [...previous];
-  for (const event of incoming) {
-    const last = next[next.length - 1];
-    if (last && event.kind === 'thinking' && last.kind === 'thinking') {
-      next[next.length - 1] = {
-        kind: 'thinking',
-        payload: { ...last.payload, text: String(last.payload.text ?? '') + String(event.payload.text ?? '') },
-      };
-      continue;
-    }
-    if (
-      last && event.kind === 'tool' && last.kind === 'tool' &&
-      String(last.payload.label ?? '') === String(event.payload.label ?? '')
-    ) {
-      next[next.length - 1] = event;
-      continue;
-    }
-    next.push(event);
-  }
-  return next;
-}
+import {
+  appendProcessEvents,
+  CODE_MODE_REPO_TYPES,
+  Message,
+  Provider,
+  ResearchStage,
+} from '@/features/chat/model';
+import {
+  buildResearchContinueMessage,
+  extractResearchStage,
+  isResearchContinueMessage,
+  MAX_RESEARCH_ITERATIONS,
+  researchIsComplete,
+} from '@/features/chat/research';
+import { useChatSessions } from '@/features/chat/useChatSessions';
 
 interface AskProps {
   repoInfo: RepoInfo;
@@ -127,36 +63,6 @@ interface AskProps {
   // not edit code based on a wiki describing another version).
   wikiVersion?: number;
   authorizationCode?: string;
-}
-
-// Maximum deep-research iterations before we force a final synthesis round.
-// Single source of truth -- previously hardcoded as `>= 5` in four places,
-// which made the cap impossible to find or tune. Override via the
-// HACKDEEPWIKI_MAX_RESEARCH_ITERATIONS build-time const if needed.
-const MAX_RESEARCH_ITERATIONS = 5;
-// Sentinel the continuation round injects as a synthetic user message. Hidden
-// from the transcript UI (see the filters below). The text deliberately
-// re-anchors on the *original* question -- early iterations used a bare
-// "Continue the research" that let later rounds drift off-topic.
-const RESEARCH_CONTINUE_SENTINEL = '[DEEP RESEARCH] Continue the research';
-
-/** Build the synthetic continuation user message for a deep-research round.
- * Re-anchors the model on the original question so iteration N>1 stays on
- * topic instead of free-associating from the previous assistant answer. */
-function buildResearchContinueMessage(originalTopic: string): string {
-  const topic = (originalTopic || '').trim().replace(/^\[DEEP RESEARCH\]\s*/i, '');
-  return topic
-    ? `[DEEP RESEARCH] Continue the research on: ${topic}`
-    : RESEARCH_CONTINUE_SENTINEL;
-}
-
-/** True if a conversation message is one of our synthetic deep-research
- * continuation prompts (so the UI/export filters it out of the transcript). */
-function isResearchContinueMessage(content: string): boolean {
-  if (!content) return false;
-  if (content === RESEARCH_CONTINUE_SENTINEL) return true;
-  // buildResearchContinueMessage emits "[DEEP RESEARCH] Continue the research on: ..."
-  return /^\[DEEP RESEARCH\]\s*Continue the research(\s+on:)?/i.test(content);
 }
 
 const Ask: React.FC<AskProps> = ({
@@ -215,148 +121,43 @@ const Ask: React.FC<AskProps> = ({
   const responseRef = useRef<HTMLDivElement>(null);
   const providerRef = useRef(provider);
   const modelRef = useRef(model);
-  const loadedSessionIdRef = useRef<string | null>(null);
-  const storageKey = useMemo(
-    () => `hackdeepwiki-chat-sessions:${repoInfo.type}:${repoInfo.owner}:${repoInfo.repo}`,
-    [repoInfo.type, repoInfo.owner, repoInfo.repo],
-  );
-  const createSession = (title?: string): ChatSession => {
-    const now = Date.now();
-    return {
-      id: `chat-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      title: title || (messages.ask?.newChat || 'New chat'),
-      createdAt: now,
-      updatedAt: now,
-      messages: [],
-      response: '',
-      deepResearch: false,
-      researchStages: [],
-      currentStageIndex: 0,
-      researchIteration: 0,
-      researchComplete: false,
-    };
-  };
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState('');
   const [showHistory, setShowHistory] = useState(false);
-
-  // Load chat sessions independently for each repository.
-  useEffect(() => {
-    loadedSessionIdRef.current = null;
-    try {
-      const stored = localStorage.getItem(storageKey);
-      const parsed = stored ? JSON.parse(stored) as ChatSession[] : [];
-      const valid = Array.isArray(parsed)
-        ? parsed.filter(session => session && session.id && Array.isArray(session.messages))
-        : [];
-      let initialSessions = valid.length > 0 ? valid : [createSession()];
-      // Entering a wiki always opens a FRESH chat: silently restoring the
-      // previous visit's session (and especially its code-editing state)
-      // proved confusing and bug-prone. Old chats stay one click away in
-      // the history list. Reuse the most recent session when it's already
-      // empty so repeat visits don't mint endless blank "New chat" entries.
-      if (initialSessions[0].messages.length > 0) {
-        initialSessions = [createSession(), ...initialSessions];
-      }
-      setSessions(initialSessions);
-      setActiveSessionId(initialSessions[0].id);
-    } catch (error) {
-      console.error('Failed to load chat sessions:', error);
-      const initial = createSession();
-      setSessions([initial]);
-      setActiveSessionId(initial.id);
-    }
-    // createSession deliberately uses the current translated default title.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
-
-  // Restore the selected session without writing stale state into it.
-  // Deliberately excludes `sessions`: the effect below (persist-as-it-streams)
-  // writes conversationHistory/response back into `sessions` on every token,
-  // so depending on `sessions` here would re-fire this restore on every
-  // streamed chunk and stomp the in-progress response with what was just
-  // persisted a moment earlier -- this should only run when the user
-  // actually switches to a different session.
-  useEffect(() => {
-    if (!activeSessionId) return;
-    const session = sessions.find(item => item.id === activeSessionId);
-    if (!session) return;
-    loadedSessionIdRef.current = null;
-    setQuestion('');
-    setConversationHistory(session.messages || []);
-    setResponse(session.response || '');
-    setDeepResearch(Boolean(session.deepResearch));
-    setResearchStages(session.researchStages || []);
-    setCurrentStageIndex(session.currentStageIndex || 0);
-    setResearchIteration(session.researchIteration || 0);
-    setResearchComplete(Boolean(session.researchComplete));
-    // Reopening a chat restores its full mode: toggles, the code-editing
-    // split, and the opencode session id (so the agent conversation
-    // resumes). Fresh sessions carry none of these, which is what keeps
-    // "entering a wiki" on a clean normal chat.
-    setIncludeSecurityContext(Boolean(session.includeSecurityContext));
-    setCodeSessionId(session.codeSessionId);
-    onCodeModeChange?.(Boolean(session.codeMode) && CODE_MODE_REPO_TYPES.includes(repoInfo.type));
-    const timer = window.setTimeout(() => {
-      loadedSessionIdRef.current = activeSessionId;
-    }, 0);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId]);
-
-  // Persist the active conversation as it streams.
-  useEffect(() => {
-    if (
-      !activeSessionId ||
-      loadedSessionIdRef.current !== activeSessionId
-    ) return;
-    setSessions(previous => previous.map(session =>
-      session.id === activeSessionId
-        ? {
-            ...session,
-            updatedAt: Date.now(),
-            messages: conversationHistory,
-            response,
-            deepResearch,
-            researchStages,
-            currentStageIndex,
-            researchIteration,
-            researchComplete,
-            codeMode,
-            includeSecurityContext,
-            codeSessionId,
-          }
-        : session
-    ));
-  }, [
+  const {
+    sessions,
+    setSessions,
     activeSessionId,
-    conversationHistory,
-    response,
-    deepResearch,
-    researchStages,
-    currentStageIndex,
-    researchIteration,
-    researchComplete,
-    codeMode,
-    includeSecurityContext,
-    codeSessionId,
-  ]);
-
-  useEffect(() => {
-    if (sessions.length === 0) return;
-    try {
-      localStorage.setItem(
-        storageKey,
-        JSON.stringify(
-          [...sessions]
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .slice(0, 20),
-        ),
-      );
-    } catch (error) {
-      console.error('Failed to persist chat sessions:', error);
-    }
-  }, [sessions, storageKey]);
+    setActiveSessionId,
+    createSession,
+  } = useChatSessions({
+    repo: repoInfo,
+    defaultTitle: messages.ask?.newChat || 'New chat',
+    snapshot: {
+      messages: conversationHistory,
+      response,
+      deepResearch,
+      researchStages,
+      currentStageIndex,
+      researchIteration,
+      researchComplete,
+      codeMode,
+      includeSecurityContext,
+      codeSessionId,
+    },
+    setters: {
+      question: setQuestion,
+      messages: setConversationHistory,
+      response: setResponse,
+      deepResearch: setDeepResearch,
+      researchStages: setResearchStages,
+      currentStageIndex: setCurrentStageIndex,
+      researchIteration: setResearchIteration,
+      researchComplete: setResearchComplete,
+      includeSecurityContext: setIncludeSecurityContext,
+      codeSessionId: setCodeSessionId,
+    },
+    onRestoreCodeMode: onCodeModeChange,
+    codeModeAvailable,
+  });
 
   // Focus input on component mount
   useEffect(() => {
@@ -497,86 +298,6 @@ const Ask: React.FC<AskProps> = ({
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
-  // Function to check if research is complete based on response content
-  const checkIfResearchComplete = (content: string): boolean => {
-    // Check for explicit final conclusion markers
-    if (content.includes('## Final Conclusion')) {
-      return true;
-    }
-
-    // Check for conclusion sections that don't indicate further research
-    if ((content.includes('## Conclusion') || content.includes('## Summary')) &&
-      !content.includes('I will now proceed to') &&
-      !content.includes('Next Steps') &&
-      !content.includes('next iteration')) {
-      return true;
-    }
-
-    // Check for phrases that explicitly indicate completion
-    if (content.includes('This concludes our research') ||
-      content.includes('This completes our investigation') ||
-      content.includes('This concludes the deep research process') ||
-      content.includes('Key Findings and Implementation Details') ||
-      content.includes('In conclusion,') ||
-      (content.includes('Final') && content.includes('Conclusion'))) {
-      return true;
-    }
-
-    // Check for topic-specific completion indicators
-    if (content.includes('Dockerfile') &&
-      (content.includes('This Dockerfile') || content.includes('The Dockerfile')) &&
-      !content.includes('Next Steps') &&
-      !content.includes('In the next iteration')) {
-      return true;
-    }
-
-    return false;
-  };
-
-  // Function to extract research stages from the response
-  const extractResearchStage = (content: string, iteration: number): ResearchStage | null => {
-    // Check for research plan (first iteration)
-    if (iteration === 1 && content.includes('## Research Plan')) {
-      const planMatch = content.match(/## Research Plan([\s\S]*?)(?:## Next Steps|$)/);
-      if (planMatch) {
-        return {
-          title: 'Research Plan',
-          content: content,
-          iteration: 1,
-          type: 'plan'
-        };
-      }
-    }
-
-    // Check for research updates (iterations 1-4)
-    if (iteration >= 1 && iteration <= 4) {
-      const updateMatch = content.match(new RegExp(`## Research Update ${iteration}([\\s\\S]*?)(?:## Next Steps|$)`));
-      if (updateMatch) {
-        return {
-          title: `Research Update ${iteration}`,
-          content: content,
-          iteration: iteration,
-          type: 'update'
-        };
-      }
-    }
-
-    // Check for final conclusion
-    if (content.includes('## Final Conclusion')) {
-      const conclusionMatch = content.match(/## Final Conclusion([\s\S]*?)$/);
-      if (conclusionMatch) {
-        return {
-          title: 'Final Conclusion',
-          content: content,
-          iteration: iteration,
-          type: 'conclusion'
-        };
-      }
-    }
-
-    return null;
-  };
 
   // Function to navigate to a specific research stage
   const navigateToStage = (index: number) => {
@@ -719,7 +440,7 @@ const Ask: React.FC<AskProps> = ({
         // Close handler
         () => {
           // Check if research is complete when the WebSocket closes
-          const isComplete = checkIfResearchComplete(fullResponse);
+          const isComplete = researchIsComplete(fullResponse);
 
           // Force completion after the maximum number of research iterations.
           const forceComplete = newIteration >= MAX_RESEARCH_ITERATIONS;
@@ -807,7 +528,7 @@ const Ask: React.FC<AskProps> = ({
       }
 
       // Check if research is complete
-      const isComplete = checkIfResearchComplete(fullResponse);
+      const isComplete = researchIsComplete(fullResponse);
 
       // Force completion after the maximum number of research iterations.
       const forceComplete = researchIteration >= MAX_RESEARCH_ITERATIONS;
@@ -841,7 +562,7 @@ const Ask: React.FC<AskProps> = ({
   // Effect to continue research when response is updated
   useEffect(() => {
     if (deepResearch && response && !isLoading && !researchComplete) {
-      const isComplete = checkIfResearchComplete(response);
+      const isComplete = researchIsComplete(response);
       if (isComplete) {
         setResearchComplete(true);
       } else if (researchIteration > 0 && researchIteration < MAX_RESEARCH_ITERATIONS) {
@@ -1114,7 +835,7 @@ const Ask: React.FC<AskProps> = ({
           if (usedHttpFallback) return;
           // If deep research is enabled, check if we should continue
           if (deepResearch) {
-            const isComplete = checkIfResearchComplete(fullResponse);
+            const isComplete = researchIsComplete(fullResponse);
             setResearchComplete(isComplete);
 
             // If not complete, start the research process

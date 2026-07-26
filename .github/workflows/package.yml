@@ -1,0 +1,218 @@
+name: Package executables
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  POETRY_VIRTUALENVS_IN_PROJECT: 'true'
+  POETRY_NO_INTERACTION: '1'
+
+jobs:
+  quality:
+    uses: ./.github/workflows/ci.yml
+
+  metadata:
+    name: Build inventory
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Generate CycloneDX SBOM
+        run: |
+          python scripts/generate_sbom.py \
+            --commit "${GITHUB_SHA}" \
+            --output HackDeepWiki.cdx.json
+      - name: Upload build inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hackdeepwiki-metadata
+          path: |
+            HackDeepWiki.cdx.json
+            build/components.json
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows executable
+    needs: quality
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Build frontend
+        run: |
+          python scripts/check_build_space.py
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Install locked build environment
+        run: |
+          python -m pip install poetry==2.4.1
+          cd api
+          poetry check --lock
+          poetry sync --with build --without dev
+
+      - name: Prepare verified assets
+        run: .\api\.venv\Scripts\python.exe scripts\prepare_assets.py windows
+
+      - name: Build with PyInstaller
+        run: .\api\.venv\Scripts\python.exe -m PyInstaller hackdeepwiki.spec
+
+      - name: Smoke-test Windows executable
+        shell: pwsh
+        run: |
+          $manifest = Get-Content build/components.json | ConvertFrom-Json
+          $nodeVersion = & .\bin\node.exe --version
+          if ($nodeVersion -ne "v$($manifest.node.version)") {
+            throw "Unexpected Node version: $nodeVersion"
+          }
+          $openCodeVersion = & .\bin\opencode.exe --version
+          if ($openCodeVersion -notmatch "^$($manifest.opencode.version.TrimStart('v'))") {
+            throw "Unexpected OpenCode version: $openCodeVersion"
+          }
+          & .\dist\hackdeepwiki.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "Windows executable smoke test failed" }
+
+          $stdout = Join-Path $env:RUNNER_TEMP "hackdeepwiki-smoke.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "hackdeepwiki-smoke.stderr.log"
+          $process = Start-Process `
+            -FilePath ".\dist\hackdeepwiki.exe" `
+            -ArgumentList @("--api-port", "18101", "--port", "13101") `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -PassThru
+          try {
+            $ready = $false
+            for ($attempt = 1; $attempt -le 120; $attempt++) {
+              if ($process.HasExited) { break }
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:18101/health" -TimeoutSec 2
+                $frontend = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:13101/" -TimeoutSec 2
+                if ($health.status -eq "healthy" -and $frontend.StatusCode -eq 200) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $ready) {
+              Get-Content $stdout -ErrorAction SilentlyContinue
+              Get-Content $stderr -ErrorAction SilentlyContinue
+              throw "Packaged Windows backend/frontend startup smoke test failed"
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              & taskkill.exe /PID $process.Id /T /F | Out-Null
+            }
+          }
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hackdeepwiki-windows
+          path: dist/hackdeepwiki.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  build-linux:
+    name: Linux AppImage
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Build frontend
+        run: |
+          python scripts/check_build_space.py
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Install locked build environment
+        run: |
+          python -m pip install poetry==2.4.1
+          cd api
+          poetry check --lock
+          poetry sync --with build --without dev
+
+      - name: Prepare verified assets
+        run: api/.venv/bin/python scripts/prepare_assets.py linux
+
+      - name: Build with PyInstaller
+        run: api/.venv/bin/python -m PyInstaller hackdeepwiki.spec
+
+      - name: Smoke-test Linux onedir executable
+        run: |
+          expected_node="v$(python -c 'import json; print(json.load(open("build/components.json"))["node"]["version"])')"
+          test "$(bin/node --version)" = "$expected_node"
+          expected_opencode="$(python -c 'import json; print(json.load(open("build/components.json"))["opencode"]["version"].lstrip("v"))')"
+          bin/opencode --version | grep -E "^${expected_opencode}"
+          test -x dist/hackdeepwiki/hackdeepwiki
+          test -x dist/hackdeepwiki/_internal/bin/node
+          test -x dist/hackdeepwiki/_internal/bin/opencode
+          timeout 120s dist/hackdeepwiki/hackdeepwiki --help
+
+      - name: Package and smoke-test AppImage
+        run: |
+          scripts/package_appimage.sh
+          scripts/smoke_appimage.sh
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hackdeepwiki-linux
+          path: HackDeepWiki-x86_64.AppImage
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+    needs:
+      - metadata
+      - build-windows
+      - build-linux
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write

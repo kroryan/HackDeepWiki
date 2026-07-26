@@ -47,13 +47,40 @@ override their http_security module explicitly supports.
 from __future__ import annotations
 
 import logging
-import math
 import os
-import re
-import socket
-import subprocess
 import threading
 from typing import Any, Optional
+
+from api.memory.evolution import (
+    EMPTY_TREE as _EMPTY_TREE,
+    HISTORY_BATCH as _HISTORY_BATCH,
+    MAX_CHECKPOINT_LINES as _MAX_CHECKPOINT_LINES,
+    MAX_CHECKPOINTS as _MAX_CHECKPOINTS,
+    checkpoint_body as _checkpoint_body,
+    ensure_deep_clone,
+    git_commit_range as _git_commit_range,
+    git_commit_range_detailed as _git_commit_range_detailed,
+    git_diff_stat as _git_diff_stat,
+    git_history_count as _git_history_count,
+    git_history_records as _git_history_records,
+    git_history_stats as _git_history_stats,
+    git_progress_stat as _git_progress_stat,
+    history_stride as _history_stride,
+    is_shallow_clone,
+    pick_milestones as _pick_milestones,
+    record_line as _record_line,
+)
+from api.memory.dashboard_runtime import (
+    DashboardRuntime,
+    start_dashboard,
+    stop_dashboard,
+)
+from api.memory.ingestion_state import IngestionState
+from api.memory.workspaces import (
+    clean_component as _clean_component,
+    workspace_for_evolution,
+    workspace_for_version,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +95,7 @@ _service = None            # engraphis.service.MemoryService (shared instance)
 _dashboard_thread: Optional[threading.Thread] = None
 _dashboard_server = None   # uvicorn.Server, so shutdown() can stop it
 _dashboard_port: Optional[int] = None
+_dashboard_runtime: Optional[DashboardRuntime] = None
 _start_error: Optional[str] = None
 
 # What the semantic-search layer actually ended up being, surfaced to the
@@ -96,25 +124,6 @@ _MAX_EVOLUTION_COMMITS = 40
 # 100k-commit monorepo. The total reachable count and truncation flag are
 # recorded explicitly; neither the UI nor memory text may call this "full"
 # when the safety bound was hit.
-_HISTORY_BATCH = 25
-_MAX_HISTORY_COMMITS = 2000
-
-# Progress checkpoints: how the project ACTUALLY moved, sampled along its
-# history instead of only listed commit by commit. The stride scales with the
-# repo so the arc always has roughly _CHECKPOINT_TARGET steps -- a checkpoint
-# every 10 commits for a 200-commit project, every 20 at 400, every 30 at 600
-# -- which keeps the cost flat (a couple of local git calls per checkpoint, no
-# model call at all) whatever the repo's size.
-_CHECKPOINT_TARGET = 20
-_MIN_CHECKPOINT_STRIDE = 10
-_MAX_CHECKPOINT_STRIDE = 100
-_MAX_CHECKPOINTS = 24
-_MAX_CHECKPOINT_LINES = 14
-_MAX_CHURN_LINES = 6
-# git's canonical empty tree: the "before" side of the very first checkpoint,
-# so the initial window is diffed against nothing instead of being skipped.
-_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-
 # Wiki-content ingest: one memory per documented area, bounded so a huge wiki
 # can't balloon the DB or the graph.
 _MAX_WIKI_PAGES = 60
@@ -305,27 +314,6 @@ def _dashboard_possible() -> bool:
 # Workspace naming (the isolation boundary)
 # ---------------------------------------------------------------------------
 
-def _clean_component(value: str) -> str:
-    """Engraphis names allow letters, digits, space and . _ - / ; we keep it
-    stricter (no spaces/slashes) so a workspace name is also URL-safe."""
-    cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", str(value or "").strip())
-    return cleaned.strip("._-") or "unknown"
-
-
-def workspace_for_version(owner: str, repo: str,
-                          wiki_version: Optional[int]) -> str:
-    """Per-wiki-release memory scope, shared by chat + code editor."""
-    base = f"{_clean_component(owner)}_{_clean_component(repo)}"[:80]
-    version = int(wiki_version) if wiki_version is not None else 0
-    return f"{base}_v{version}"
-
-
-def workspace_for_evolution(owner: str, repo: str) -> str:
-    """Cross-release scope: what changed between wiki versions/commits."""
-    base = f"{_clean_component(owner)}_{_clean_component(repo)}"[:80]
-    return f"{base}_evolution"
-
-
 # ---------------------------------------------------------------------------
 # Shared MemoryService + embedded dashboard server
 # ---------------------------------------------------------------------------
@@ -406,12 +394,6 @@ def _shim_body() -> bytes:
     info = dict(_embedder_info)
     payload = json.dumps(info, ensure_ascii=True).encode("ascii", "replace")
     return b"window.__hdwEmbedder = " + payload + b";\n" + _SHIM_JS
-
-
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def _install_embedder() -> None:
@@ -558,7 +540,8 @@ def _reembed_stale_vectors() -> None:
 def _ensure_started() -> None:
     """Build the shared MemoryService and (when possible) start the embedded
     dashboard server. Idempotent; failures are recorded, never raised."""
-    global _service, _dashboard_thread, _dashboard_server, _dashboard_port, _start_error
+    global _service, _dashboard_thread, _dashboard_server, _dashboard_port
+    global _dashboard_runtime, _start_error
 
     with _state_lock:
         if _service is not None or _start_error is not None:
@@ -585,28 +568,14 @@ def _ensure_started() -> None:
                 _service = _dash.app.state.service
                 wrapped = _EmbeddableDashboard(_dash.app, str(_dash._INDEX))
 
-                import uvicorn
-
-                port = _find_free_port()
-                config = uvicorn.Config(
-                    wrapped,
-                    host="127.0.0.1",
-                    port=port,
-                    log_level="warning",
-                    # Loopback-only; engraphis validates proxies itself and
-                    # documents proxy_headers=False as the safe setting.
-                    proxy_headers=False,
-                )
-                server = uvicorn.Server(config)
-                thread = threading.Thread(
-                    target=server.run, name="engraphis-dashboard", daemon=True
-                )
-                thread.start()
-                _dashboard_server = server
-                _dashboard_thread = thread
-                _dashboard_port = port
+                runtime = start_dashboard(wrapped)
+                _dashboard_runtime = runtime
+                _dashboard_server = runtime.server
+                _dashboard_thread = runtime.thread
+                _dashboard_port = runtime.port
                 logger.info("Engraphis dashboard embedded at http://127.0.0.1:%s "
-                            "(db: %s)", port, os.environ.get("ENGRAPHIS_DB_PATH"))
+                            "(db: %s)", runtime.port,
+                            os.environ.get("ENGRAPHIS_DB_PATH"))
         except Exception as e:  # noqa: BLE001 - fall back to memory-only below
             dashboard_error = f"{type(e).__name__}: {e}"
             logger.warning("Engraphis dashboard failed to start (falling back "
@@ -642,14 +611,13 @@ def _ensure_started() -> None:
 
 def shutdown() -> None:
     """Stop the embedded dashboard server (called from the app lifespan)."""
-    global _dashboard_server
-    server = _dashboard_server
-    if server is not None:
-        try:
-            server.should_exit = True
-        except Exception:  # noqa: BLE001
-            pass
-        _dashboard_server = None
+    global _dashboard_runtime, _dashboard_server
+    try:
+        stop_dashboard(_dashboard_runtime)
+    except Exception:  # noqa: BLE001 - shutdown must remain best effort
+        pass
+    _dashboard_runtime = None
+    _dashboard_server = None
 
 
 def get_service():
@@ -1270,221 +1238,18 @@ def _ingest_state_path() -> str:
     return os.path.join(_engraphis_root(), "hackdeepwiki_ingest.json")
 
 
+_INGESTION_STATE = IngestionState(_ingest_state_path)
+
+
 def _ingest_state() -> dict:
-    import json as _json
-    try:
-        with open(_ingest_state_path(), "r", encoding="utf-8") as f:
-            data = _json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:  # noqa: BLE001 - absent/corrupt state just means "not done"
-        return {}
+    return _INGESTION_STATE.read()
 
 
 def _mark_ingested(workspace: str, kind: str, **fields: Any) -> None:
-    import json as _json
-    with _LOCK:
-        state = _ingest_state()
-        state.setdefault(workspace, {})[kind] = fields
-        try:
-            path = _ingest_state_path()
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                _json.dump(state, f, indent=2)
-            os.replace(tmp, path)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("could not persist engraphis ingest state: %s", e)
-
-
-def is_shallow_clone(clone_dir: Optional[str]) -> bool:
-    """True for a ``--depth=1`` clone, whose ``git log`` shows ONE commit."""
-    if not clone_dir:
-        return False
     try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "rev-parse", "--is-shallow-repository"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20,
-        )
-        return out.returncode == 0 and out.stdout.strip() == "true"
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def ensure_deep_clone(clone_dir: Optional[str]) -> bool:
-    """Fetch the full history of a shallow wiki clone. True when the clone has
-    real history afterwards.
-
-    Wiki clones are ``--depth=1 --single-branch`` (api/data_pipeline.py), so
-    every git question about the past answers "1 commit" -- which is exactly
-    what the evolution workspace used to record for a 45-commit repository.
-    Deepening is best-effort: offline or on a slow network the clone simply
-    stays shallow, the backfill records that it did, and the next wiki save
-    tries again (see _backfill_history).
-    """
-    if not clone_dir or not is_shallow_clone(clone_dir):
-        return bool(clone_dir)
-    logger.info("Engraphis: fetching full history for %s (shallow clone)",
-                clone_dir)
-    try:
-        subprocess.run(
-            ["git", "-C", clone_dir, "fetch", "--unshallow", "--tags"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=300,
-        )
-    except Exception as e:  # noqa: BLE001 - offline is a normal outcome
-        logger.info("Engraphis: could not deepen %s (%s); history memory will "
-                    "be limited to the commits present", clone_dir, e)
-    return not is_shallow_clone(clone_dir)
-
-
-def _git_history_records(clone_dir: str) -> list[dict]:
-    """The newest bounded commit history, newest first, as structured records.
-
-    One `git log` call; the unit separator keeps subjects containing spaces or
-    colons parseable, which a plain "%h %s" line does not.
-    """
-    try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "log", "--no-decorate",
-             f"--max-count={_MAX_HISTORY_COMMITS}", "--date=short",
-             "--pretty=format:%H\x1f%h\x1f%ad\x1f%an\x1f%s"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=120,
-        )
-        if out.returncode != 0:
-            return []
-    except Exception:  # noqa: BLE001
-        return []
-    records = []
-    for line in out.stdout.splitlines():
-        parts = line.split("\x1f")
-        if len(parts) != 5:
-            continue
-        records.append({"sha": parts[0], "short": parts[1], "date": parts[2],
-                        "author": parts[3], "subject": parts[4]})
-    return records
-
-
-def _git_history_count(clone_dir: str) -> int:
-    """Number of commits reachable from HEAD, or zero when git cannot answer."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "rev-list", "--count", "HEAD"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=120,
-        )
-        return int(out.stdout.strip()) if out.returncode == 0 else 0
-    except Exception:  # noqa: BLE001 - history memory is best-effort
-        return 0
-
-
-def _record_line(record: dict) -> str:
-    """The one-line form stored in commit batches -- rich enough for the regex
-    graph extractor to mint author and concept nodes."""
-    return (f"{record['short']} {record['date']} {record['author']}: "
-            f"{record['subject']}")
-
-
-def _git_full_history(clone_dir: str) -> list[str]:
-    """`git log` over the whole repo, one rich line per commit."""
-    return [_record_line(r) for r in _git_history_records(clone_dir)]
-
-
-# --- progress checkpoints -------------------------------------------------
-
-def _history_stride(total: int) -> int:
-    """How many commits one progress checkpoint covers, or 0 for a history too
-    short to sample.
-
-    The stride scales with the repo so the story always has about
-    ``_CHECKPOINT_TARGET`` steps: every 10 commits at 200, every 20 at 400,
-    every 30 at 600, and so on up to the cap.
-    """
-    if total <= _MIN_CHECKPOINT_STRIDE:
-        return 0
-    stride = math.ceil(total / _CHECKPOINT_TARGET / 10) * 10
-    stride = max(_MIN_CHECKPOINT_STRIDE, min(_MAX_CHECKPOINT_STRIDE, stride))
-    # Past the stride cap it is the WINDOW that widens, never the number of
-    # checkpoints: the cost of describing a history stays flat.
-    while total // stride > _MAX_CHECKPOINTS:
-        stride *= 2
-    return stride
-
-
-def _git_progress_stat(clone_dir: str, old: str, new: str) -> str:
-    """Churn plus where it landed, in ONE local git call.
-
-    ``--shortstat`` says how much moved, ``--dirstat`` says which parts of the
-    tree it moved in -- together that is the "quick evaluation" of a window of
-    commits, with no model involved.
-    """
-    try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "diff", "--shortstat",
-             "--dirstat=files,0,3", old, new],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=60,
-        )
-        if out.returncode != 0:
-            return ""
-    except Exception:  # noqa: BLE001
-        return ""
-    return "\n".join(line.strip() for line in out.stdout.splitlines()
-                     if line.strip())
-
-
-_MILESTONE_RE = re.compile(
-    r"^(feat|feature|release|breaking|perf|refactor)\b|!\s*:|BREAKING",
-    re.IGNORECASE,
-)
-
-
-def _pick_milestones(window: list[dict], limit: int) -> list[str]:
-    """The few commits that best describe a window: features and releases
-    first, then evenly spaced ones so the sample still spans the window."""
-    if limit <= 0 or not window:
-        return []
-    chosen: list[int] = [i for i, r in enumerate(window)
-                         if _MILESTONE_RE.search(r["subject"])][:limit]
-    if len(chosen) < limit:
-        step = max(1, len(window) // (limit - len(chosen) + 1))
-        for i in range(0, len(window), step):
-            if i not in chosen:
-                chosen.append(i)
-            if len(chosen) >= limit:
-                break
-    return [window[i]["subject"][:110] for i in sorted(chosen)[:limit]]
-
-
-def _checkpoint_body(owner: str, repo: str, number: int, start: int,
-                     total: int, window: list[dict], churn: str) -> str:
-    """One checkpoint, as plain text bounded by _MAX_CHECKPOINT_LINES."""
-    authors: dict[str, int] = {}
-    for record in window:
-        authors[record["author"]] = authors.get(record["author"], 0) + 1
-    top = sorted(authors.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
-
-    lines = [
-        f"Progress checkpoint #{number} of {owner}/{repo} -- commits "
-        f"{start + 1}-{start + len(window)} of {total}, "
-        f"{window[0]['date']} to {window[-1]['date']} "
-        f"({window[0]['short']}..{window[-1]['short']}).",
-    ]
-    if churn:
-        # Bounded so the milestones always fit too: a wide repo can produce a
-        # dirstat line per top-level directory, and which commits landed says
-        # more than the tail of that list.
-        lines.append("Churn since the previous checkpoint:")
-        lines.extend("  " + line for line in churn.splitlines()[:_MAX_CHURN_LINES])
-    lines.append("Authors: " + ", ".join(f"{name} ({n})" for name, n in top)
-                 + (", …" if len(authors) > len(top) else "") + ".")
-
-    room = _MAX_CHECKPOINT_LINES - len(lines) - 1
-    milestones = _pick_milestones(window, room)
-    if milestones:
-        lines.append("Milestones in this window:")
-        lines.extend(f"  - {subject}" for subject in milestones)
-    return "\n".join(lines[:_MAX_CHECKPOINT_LINES])
+        _INGESTION_STATE.mark(workspace, kind, **fields)
+    except OSError as exc:
+        logger.debug("could not persist engraphis ingest state: %s", exc)
 
 
 def _write_history_checkpoints(workspace: str, owner: str, repo: str,
@@ -1555,100 +1320,6 @@ def _write_history_checkpoints(workspace: str, owner: str, repo: str,
     logger.info("Engraphis: %s progress checkpoint(s) (every %s commits) for "
                 "%s/%s", windows - done, stride, owner, repo)
     return windows - done
-
-
-def _git_commit_range_detailed(clone_dir: Optional[str], old: str,
-                               new: str) -> list[str]:
-    if not clone_dir:
-        return []
-    try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "log", "--no-decorate", "--date=short",
-             "--pretty=format:%h %ad %an: %s", f"{old}..{new}"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=60,
-        )
-        if out.returncode != 0:
-            return []
-        return [line.strip() for line in out.stdout.splitlines() if line.strip()]
-    except Exception:  # noqa: BLE001
-        return []
-
-
-def _git_history_stats(clone_dir: str) -> str:
-    """A compact, factual overview of the repo's history: size, span, and the
-    people who wrote it. Cheap (a few git calls) and highly recallable."""
-    try:
-        total = subprocess.run(
-            ["git", "-C", clone_dir, "rev-list", "--count", "HEAD"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=30,
-        )
-        authors = subprocess.run(
-            ["git", "-C", clone_dir, "shortlog", "-sne", "--all"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=60,
-        )
-        first = subprocess.run(
-            ["git", "-C", clone_dir, "log", "--reverse", "--date=short",
-             "--pretty=format:%ad", "--max-count=1"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=30,
-        )
-        last = subprocess.run(
-            ["git", "-C", clone_dir, "log", "-1", "--date=short",
-             "--pretty=format:%ad"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=30,
-        )
-    except Exception:  # noqa: BLE001
-        return ""
-    if total.returncode != 0:
-        return ""
-    parts = [f"Repository history overview: {total.stdout.strip()} commits"]
-    if first.returncode == 0 and last.returncode == 0 and first.stdout.strip():
-        parts.append(f"spanning {first.stdout.strip()} to {last.stdout.strip()}")
-    text = ", ".join(parts) + "."
-    if authors.returncode == 0 and authors.stdout.strip():
-        top = "\n".join(authors.stdout.strip().splitlines()[:15])
-        text += f"\nContributors (commits, name, email):\n{top}"
-    return text
-
-
-def _git_commit_range(clone_dir: Optional[str], old: Optional[str],
-                      new: Optional[str]) -> list[str]:
-    if not clone_dir or not old or not new or old == new:
-        return []
-    try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "log", "--oneline", "--no-decorate",
-             f"{old}..{new}"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20,
-        )
-        if out.returncode != 0:
-            return []
-        return [line for line in out.stdout.splitlines() if line.strip()]
-    except Exception:  # noqa: BLE001
-        return []
-
-
-def _git_diff_stat(clone_dir: Optional[str], old: Optional[str],
-                   new: Optional[str]) -> str:
-    if not clone_dir or not old or not new or old == new:
-        return ""
-    try:
-        out = subprocess.run(
-            ["git", "-C", clone_dir, "diff", "--stat=120", f"{old}..{new}"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20,
-        )
-        if out.returncode != 0:
-            return ""
-        lines = out.stdout.splitlines()
-        return "\n".join(lines[-60:]).strip()
-    except Exception:  # noqa: BLE001
-        return ""
 
 
 # ---------------------------------------------------------------------------

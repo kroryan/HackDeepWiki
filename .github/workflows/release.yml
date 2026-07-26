@@ -1,425 +1,103 @@
-name: Release Build
+name: Publish packaged release
 
-# Compile the executables on every push (any branch + tags) so a feature
-# branch push produces downloadable Windows .exe / Linux AppImage artifacts
-# without having to merge to main first. The publish-release job is guarded
-# below so feature-branch pushes only BUILD artifacts and never touch the
-# releases page -- only main/master/tag pushes publish. workflow_dispatch
-# allows a manual run.
-#
-# What gets published:
-#   * an explicit tag         -> the stable release, marked latest;
-#   * a main/master push      -> its OWN build-<run>-<commit> pre-release.
-#     Automatic builds never claim a semantic product version. Every
-#     development build keeps its own tag, assets and permalink, and the
-#     newest ten are retained (see the prune step).
 on:
-  push:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  quality:
-    name: Tests, lint and locked dependencies
+  publish:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Validate frontend
-        run: |
-          npm ci --legacy-peer-deps
-          npm test
-          npm run lint
-          npm run typecheck
-
-      - name: Install locked Python test environment
-        run: |
-          python -m pip install poetry==2.4.1
-          cd api
-          poetry check --lock
-          poetry config virtualenvs.create false
-          poetry sync --with dev --without build
-
-      - name: Validate backend
-        run: |
-          python -m pytest -q
-          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/hackdeepwiki-pycache" python -m compileall -q api scripts tests
-          python -m pip check
-          if grep -R "google\\.generativeai" -n api scripts tests hackdeepwiki.spec; then
-            echo "Deprecated google.generativeai import found"
-            exit 1
-          fi
-
-  build-windows:
-    needs: quality
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          # Match the Node 24 (Krypton) Active LTS runtime that
-          # scripts/prepare_assets.py now bundles into the AppImage/exe, and
-          # that package.json's undici 7 / @types/node 24 are pinned against.
-          node-version: 24
-          cache: 'npm'
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Node.js dependencies and build frontend
-        run: |
-          npm ci --legacy-peer-deps
-          npm run build
-
-      - name: Install Poetry
-        run: |
-          pip install poetry==2.4.1
-
-      - name: Install Python dependencies
-        working-directory: api
-        run: |
-          poetry config virtualenvs.create false
-          poetry check --lock
-          poetry sync --with build --without dev
-
-      - name: Prepare build assets
-        run: |
-          python scripts/prepare_assets.py windows
-
-      - name: Build with PyInstaller
-        run: |
-          pyinstaller hackdeepwiki.spec
-
-      - name: Smoke-test Windows executable
-        shell: pwsh
-        run: |
-          $nodeVersion = & .\bin\node.exe --version
-          if ($nodeVersion -ne "v24.18.0") { throw "Unexpected Node version: $nodeVersion" }
-          $openCodeVersion = & .\bin\opencode.exe --version
-          if ($openCodeVersion -notmatch "^1\.18\.5") { throw "Unexpected OpenCode version: $openCodeVersion" }
-          & .\dist\hackdeepwiki.exe --help
-          if ($LASTEXITCODE -ne 0) { throw "Windows executable smoke test failed" }
-
-          $stdout = Join-Path $env:RUNNER_TEMP "hackdeepwiki-smoke.stdout.log"
-          $stderr = Join-Path $env:RUNNER_TEMP "hackdeepwiki-smoke.stderr.log"
-          $process = Start-Process `
-            -FilePath ".\dist\hackdeepwiki.exe" `
-            -ArgumentList @("--api-port", "18101", "--port", "13101") `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr `
-            -PassThru
-          try {
-            $ready = $false
-            for ($attempt = 1; $attempt -le 120; $attempt++) {
-              if ($process.HasExited) { break }
-              try {
-                $health = Invoke-RestMethod -Uri "http://127.0.0.1:18101/health" -TimeoutSec 2
-                $frontend = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:13101/" -TimeoutSec 2
-                if ($health.status -eq "healthy" -and $frontend.StatusCode -eq 200) {
-                  $ready = $true
-                  break
-                }
-              } catch {
-                Start-Sleep -Milliseconds 500
-              }
-            }
-            if (-not $ready) {
-              Get-Content $stdout -ErrorAction SilentlyContinue
-              Get-Content $stderr -ErrorAction SilentlyContinue
-              throw "Packaged Windows backend/frontend startup smoke test failed"
-            }
-          } finally {
-            if (-not $process.HasExited) {
-              & taskkill.exe /PID $process.Id /T /F | Out-Null
-            }
-          }
-
-      - name: Rename and upload Windows binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: hackdeepwiki-windows
-          path: dist/hackdeepwiki.exe
-          if-no-files-found: error
-
-  build-linux:
-    needs: quality
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          # Match the Node 24 (Krypton) Active LTS runtime that
-          # scripts/prepare_assets.py now bundles into the AppImage/exe, and
-          # that package.json's undici 7 / @types/node 24 are pinned against.
-          node-version: 24
-          cache: 'npm'
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Node.js dependencies and build frontend
-        run: |
-          npm ci --legacy-peer-deps
-          npm run build
-
-      - name: Install Poetry
-        run: |
-          pip install poetry==2.4.1
-
-      - name: Install Python dependencies
-        working-directory: api
-        run: |
-          poetry config virtualenvs.create false
-          poetry check --lock
-          poetry sync --with build --without dev
-
-      - name: Prepare build assets
-        run: |
-          python scripts/prepare_assets.py linux
-
-      - name: Build with PyInstaller
-        run: |
-          pyinstaller hackdeepwiki.spec
-
-      - name: Smoke-test Linux onedir executable
-        run: |
-          test "$(bin/node --version)" = "v24.18.0"
-          bin/opencode --version | grep -E '^1\.18\.5'
-          test -x dist/hackdeepwiki/hackdeepwiki
-          test -x dist/hackdeepwiki/_internal/bin/node
-          test -x dist/hackdeepwiki/_internal/bin/opencode
-          timeout 120s dist/hackdeepwiki/hackdeepwiki --help
-
-      - name: Package AppImage
-        run: |
-          # 1. Create AppDir structure
-          mkdir -p AppDir/usr/bin
-
-          # 2. Copy launcher (onedir build: a folder containing the exe +
-          # _internal/, not a single file) and assets
-          cp -r dist/hackdeepwiki/. AppDir/usr/bin/
-          cp public/hackdeepwiki.png AppDir/hackdeepwiki.png
-          
-          # 3. Create AppRun script
-          cat << 'EOF' > AppDir/AppRun
-          #!/bin/sh
-          SELF=$(readlink -f "$0")
-          HERE=$(dirname "$SELF")
-          exec "$HERE/usr/bin/hackdeepwiki" "$@"
-          EOF
-          chmod +x AppDir/AppRun
-          
-          # 4. Create desktop entry
-          cat << 'EOF' > AppDir/hackdeepwiki.desktop
-          [Desktop Entry]
-          Name=HackDeepWiki
-          Exec=hackdeepwiki
-          Icon=hackdeepwiki
-          Type=Application
-          Categories=Development;
-          Comment=AI-powered wiki generation and code analysis
-          Terminal=true
-          EOF
-          
-          # 5. Download and run appimagetool. Both the tool and the Type-2
-          # runtime it embeds are checksum-pinned: current appimagetool
-          # otherwise fetches a mutable "continuous" runtime internally.
-          curl -fL --retry 3 -o appimagetool-x86_64.AppImage \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool-x86_64.AppImage" \
-            | sha256sum -c -
-          curl -fL --retry 3 -o appimage-runtime-x86_64 \
-            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
-          echo "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  appimage-runtime-x86_64" \
-            | sha256sum -c -
-          chmod +x appimagetool-x86_64.AppImage
-          
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          ./appimagetool-x86_64.AppImage --no-appstream \
-            --runtime-file appimage-runtime-x86_64 \
-            AppDir HackDeepWiki-x86_64.AppImage
-
-      - name: Smoke-test Linux AppImage
-        run: |
-          test -x HackDeepWiki-x86_64.AppImage
-          APPIMAGE_EXTRACT_AND_RUN=1 timeout 120s ./HackDeepWiki-x86_64.AppImage --help
-
-          smoke_log="$RUNNER_TEMP/hackdeepwiki-appimage-smoke.log"
-          health_out="$RUNNER_TEMP/hackdeepwiki-health.json"
-          frontend_out="$RUNNER_TEMP/hackdeepwiki-frontend.html"
-          setsid env BROWSER=/bin/true APPIMAGE_EXTRACT_AND_RUN=1 \
-            ./HackDeepWiki-x86_64.AppImage --api-port 18101 --port 13101 \
-            >"$smoke_log" 2>&1 &
-          app_pid=$!
-          cleanup() {
-            kill -TERM -- "-$app_pid" 2>/dev/null || true
-            wait "$app_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          ready=0
-          for attempt in $(seq 1 120); do
-            if curl --noproxy '*' -fsS http://127.0.0.1:18101/health >"$health_out" 2>/dev/null \
-              && curl --noproxy '*' -fsS http://127.0.0.1:13101/ >"$frontend_out" 2>/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 0.5
-          done
-          if [ "$ready" -ne 1 ]; then
-            tail -100 "$smoke_log"
-            exit 1
-          fi
-          grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"' "$health_out"
-          grep -Eiq '<!doctype html|<html' "$frontend_out"
-          cleanup
-          trap - EXIT
-
-      - name: Upload Linux AppImage
-        uses: actions/upload-artifact@v4
-        with:
-          name: hackdeepwiki-linux
-          path: HackDeepWiki-x86_64.AppImage
-          if-no-files-found: error
-
-  publish-release:
-    # Only create a GitHub Release for main/master pushes and version tags.
-    # Feature-branch pushes still run build-windows/build-linux above
-    # (producing downloadable artifacts) but skip this job, so they never
-    # publish anything to the releases page.
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    needs: [build-windows, build-linux]
-    permissions:
-      contents: write
-    # Every build publishes its OWN release, so two pushes landing close
-    # together no longer fight over one tag -- but they must not run the
-    # retention sweep at the same time either. Serialised, never cancelled:
-    # cancelling would silently drop a commit's pre-release.
+    timeout-minutes: 20
     concurrency:
       group: publish-release
       cancel-in-progress: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Download Windows binary
-        uses: actions/download-artifact@v4
+      - name: Download Windows executable
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: hackdeepwiki-windows
-          path: ./artifacts/windows
+          path: artifacts/windows
 
       - name: Download Linux AppImage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: hackdeepwiki-linux
-          path: ./artifacts/linux
+          path: artifacts/linux
 
-      - name: Work out the release identity and arrange the assets
-        run: |
-          set -uo pipefail
-          mv ./artifacts/windows/hackdeepwiki.exe ./HackDeepWiki-windows-x64.exe
-          mv ./artifacts/linux/HackDeepWiki-x86_64.AppImage ./HackDeepWiki-x86_64.AppImage
-
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # A version tag is the stable release: its tag already exists and
-            # is the whole point, so nothing is generated here.
-            TAG_NAME="${{ github.ref_name }}"
-            RELEASE_NAME="Release ${{ github.ref_name }}"
-            IS_PRERELEASE=false
-          else
-            # ONE RELEASE PER BUILD. Every main push used to land on the same
-            # rolling "pre-release" tag, so each build silently replaced the
-            # previous one and there was no way to go back to (or link to) an
-            # earlier development build. github.run_number is monotonic and
-            # unique for the repository. The commit suffix is human-auditable
-            # and, deliberately, no automatic release claims a product
-            # version. Re-running a build updates its own release.
-            TAG_NAME="build-${{ github.run_number }}-${SHORT_SHA}"
-            RELEASE_NAME="Development build #${{ github.run_number }} (${SHORT_SHA})"
-            IS_PRERELEASE=true
-          fi
-
-          {
-            echo "SHORT_SHA=$SHORT_SHA"
-            echo "TAG_NAME=$TAG_NAME"
-            echo "RELEASE_NAME=$RELEASE_NAME"
-            echo "IS_PRERELEASE=$IS_PRERELEASE"
-          } >> $GITHUB_ENV
-
-      - name: Create the Github Release
-        uses: softprops/action-gh-release@v2
+      - name: Download build inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          # The tag is created on this commit if it doesn't exist yet.
+          name: hackdeepwiki-metadata
+          path: artifacts/metadata
+
+      - name: Arrange assets and derive build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv artifacts/windows/hackdeepwiki.exe HackDeepWiki-windows-x64.exe
+          mv artifacts/linux/HackDeepWiki-x86_64.AppImage HackDeepWiki-x86_64.AppImage
+          cp artifacts/metadata/HackDeepWiki.cdx.json HackDeepWiki.cdx.json
+          cp artifacts/metadata/components.json HackDeepWiki-components.json
+          sha256sum \
+            HackDeepWiki-windows-x64.exe \
+            HackDeepWiki-x86_64.AppImage \
+            HackDeepWiki.cdx.json \
+            HackDeepWiki-components.json > SHA256SUMS
+
+          short_sha="${GITHUB_SHA:0:7}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag_name="$GITHUB_REF_NAME"
+            release_name="Release $GITHUB_REF_NAME"
+            prerelease=false
+          else
+            tag_name="build-${GITHUB_RUN_NUMBER}-${short_sha}"
+            release_name="Development build #${GITHUB_RUN_NUMBER} (${short_sha})"
+            prerelease=true
+          fi
+          {
+            echo "SHORT_SHA=$short_sha"
+            echo "TAG_NAME=$tag_name"
+            echo "RELEASE_NAME=$release_name"
+            echo "IS_PRERELEASE=$prerelease"
+          } >> "$GITHUB_ENV"
+
+      - name: Publish immutable build
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
           tag_name: ${{ env.TAG_NAME }}
           target_commitish: ${{ github.sha }}
           name: ${{ env.RELEASE_NAME }}
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           draft: false
+          make_latest: ${{ env.IS_PRERELEASE == 'false' }}
           body: |
-            ${{ env.IS_PRERELEASE == 'true' && format('Development build **#{0}** of HackDeepWiki — one release per build, so this one stays put and is not replaced by the next.', github.run_number) || format('HackDeepWiki {0}.', github.ref_name) }}
+            ${{ env.IS_PRERELEASE == 'true' && format('Development build #{0} of HackDeepWiki. Automatic builds use a build ID, never a fictitious product version.', github.run_number) || format('HackDeepWiki release {0}.', github.ref_name) }}
 
-            - Branch: `${{ github.ref_name }}`
+            - Branch/tag: `${{ github.ref_name }}`
             - Commit: [`${{ env.SHORT_SHA }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-            - Built at: ${{ github.event.head_commit.timestamp || 'N/A' }}
             - Build log: [run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-            ### Standalone Executables
-            - **Windows**: [HackDeepWiki-windows-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/HackDeepWiki-windows-x64.exe)
-            - **Linux (AppImage)**: [HackDeepWiki-x86_64.AppImage](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/HackDeepWiki-x86_64.AppImage)
-
-            *No installation is required. Simply download and run the binary for your platform.*
+            - Checksums and CycloneDX inventory are attached.
           files: |
             HackDeepWiki-windows-x64.exe
             HackDeepWiki-x86_64.AppImage
-          make_latest: ${{ env.IS_PRERELEASE == 'false' }}
+            HackDeepWiki.cdx.json
+            HackDeepWiki-components.json
+            SHA256SUMS
 
-      - name: Prune superseded pre-releases
-        # Keeping every build forever would bury the stable releases (and each
-        # one carries ~600 MB of binaries), so the newest KEEP development
-        # builds are kept and older ones are removed along with their tags.
-        # Strictly scoped to the build-N-SHA tags THIS workflow generates:
-        # stable releases, legacy tags and anything published by hand are
-        # never matched, and a failure here must not fail a release that
-        # already succeeded.
+      - name: Prune superseded automatic builds
         if: env.IS_PRERELEASE == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           KEEP: 10
+        shell: bash
         run: |
-          set -uo pipefail
-          # Newest first, then skip the KEEP we are keeping: the arithmetic
-          # stays in the shell so the jq program needs no interpolation.
+          set -euo pipefail
           gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
             --json tagName,isPrerelease,createdAt \
             --jq '[.[] | select(.isPrerelease)
@@ -428,6 +106,8 @@ jobs:
           | tail -n "+$((KEEP + 1))" \
           | while read -r tag; do
               [ -n "$tag" ] || continue
-              echo "Removing superseded pre-release $tag"
-              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+              gh release delete "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --cleanup-tag \
+                --yes || true
             done

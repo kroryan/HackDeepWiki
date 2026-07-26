@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=HackDeepWiki
+Exec=hackdeepwiki
+Icon=hackdeepwiki
+Type=Application
+Categories=Development;
+Comment=AI-powered wiki generation and code analysis
+Terminal=true

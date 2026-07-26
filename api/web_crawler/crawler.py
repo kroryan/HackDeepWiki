@@ -21,6 +21,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 from markdownify import markdownify as _html_to_md
 
+from api.network_policy import validate_outbound_url
 from api.web_crawler.models import CrawlPage, CrawlProgress, CrawlScope, ProgressCb
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,7 @@ async def crawl_site(
     response" several steps later (the wiki-structure LLM call failing on
     an empty RAG index, with nothing pointing back at the real cause).
     """
+    validate_outbound_url(start_url)
     if diagnostics is None:
         diagnostics = {}
     diagnostics.update(robots_blocked=0, http_error=0, fetch_failed=0,
@@ -308,6 +310,7 @@ async def crawl_site(
                     continue
                 if _looks_skippable(url):
                     continue
+                validate_outbound_url(url)
                 if not robots.allowed(url):
                     logger.debug("robots.txt disallows %s", url)
                     diagnostics["robots_blocked"] += 1
@@ -316,6 +319,8 @@ async def crawl_site(
                 page = await context.new_page()
                 try:
                     resp = await page.goto(url, timeout=_NAV_TIMEOUT_MS, wait_until="networkidle")
+                    if resp:
+                        validate_outbound_url(resp.url)
                     status = resp.status if resp else 0
                     content_type = (resp.headers.get("content-type", "") if resp else "") or "text/html"
                     if status >= 400 or "text/html" not in content_type:

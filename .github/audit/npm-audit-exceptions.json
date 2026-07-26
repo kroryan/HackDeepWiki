@@ -1,0 +1,10 @@
+{
+  "exceptions": [
+    {
+      "source": 1124334,
+      "advisory": "GHSA-mh99-v99m-4gvg",
+      "expires": "2026-10-01",
+      "reason": "Only reachable through ESLint/Next development plugins. Production dependencies are audited separately with --omit=dev; upstream plugins still require minimatch 3.x."
+    }
+  ]
+}

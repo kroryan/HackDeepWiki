@@ -85,11 +85,14 @@ datas = [
     ('.next/standalone/.next', '.next'),  # Contains required-server-files.json and server files
     ('public', 'public'),
     ('.next/static', '.next/static'),
+    ('build/components.json', 'build'),
 ]
 # Package the python api package and the scripts package (includes
 # hackdeepwiki_config.py for runtime Ollama discovery), sources only.
 datas.extend(_source_tree('api', 'api'))
 datas.extend(_source_tree('scripts', 'scripts'))
+if os.path.exists('build/build-info.json'):
+    datas.append(('build/build-info.json', 'build'))
 
 # Package the Node binary if present
 if os.path.exists(node_source_path):

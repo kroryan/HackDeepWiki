@@ -3,7 +3,7 @@
 # Build argument for custom certificates directory
 ARG CUSTOM_CERT_DIR="certs"
 
-FROM node:20-alpine3.22 AS node_base
+FROM node:24-alpine3.22@sha256:191c9f0080fcbbc6547a85dc0ff7988072214a355aabdc1d2ec55a7dae5eea8a AS node_base
 
 FROM node_base AS node_deps
 WORKDIR /app
@@ -22,7 +22,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN NODE_ENV=production npm run build
 
-FROM python:3.11-slim AS py_deps
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS py_deps
 WORKDIR /api
 COPY api/pyproject.toml .
 COPY api/poetry.lock .
@@ -34,7 +34,7 @@ RUN python -m pip install poetry==2.4.1 --no-cache-dir && \
     poetry cache clear --all .
 
 # Use Python 3.11 as final image
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
 
 # Set working directory
 WORKDIR /app
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y nodejs \
     && apt-get clean \
@@ -87,6 +87,20 @@ RUN echo '#!/bin/bash\n\
 # Load environment variables from .env file if it exists\n\
 if [ -f .env ]; then\n\
   export $(grep -v "^#" .env | xargs -r)\n\
+fi\n\
+\n\
+# Containers bind to every interface.  Default to authenticated operation and\n\
+# create a one-time strong code when the operator did not provide one.  Both\n\
+# processes inherit the private proxy token; it is never exposed to browsers.\n\
+: "${HACKDEEPWIKI_AUTH_MODE:=true}"\n\
+if [ "$HACKDEEPWIKI_AUTH_MODE" = "true" ] && [ -z "$HACKDEEPWIKI_AUTH_CODE" ]; then\n\
+  HACKDEEPWIKI_AUTH_CODE="$(python -c "import secrets; print(secrets.token_urlsafe(24))")"\n\
+  export HACKDEEPWIKI_AUTH_CODE\n\
+  echo "Generated HackDeepWiki access code: $HACKDEEPWIKI_AUTH_CODE"\n\
+fi\n\
+if [ -z "$HACKDEEPWIKI_INTERNAL_PROXY_TOKEN" ]; then\n\
+  HACKDEEPWIKI_INTERNAL_PROXY_TOKEN="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"\n\
+  export HACKDEEPWIKI_INTERNAL_PROXY_TOKEN\n\
 fi\n\
 \n\
 # Check for required environment variables\n\

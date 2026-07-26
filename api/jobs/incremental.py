@@ -21,9 +21,9 @@ import logging
 import os
 from typing import Optional
 
-from api.data_root import get_data_root
 from api.data_pipeline import CODE_EXTENSIONS, DOC_EXTENSIONS
-from api.storage.file_hashes import sha256_of_file, changed_files, upsert_hash, reset
+from api.data_root import get_data_root
+from api.storage.file_hashes import changed_files, reset, sha256_of_file, upsert_hash
 
 logger = logging.getLogger(__name__)
 

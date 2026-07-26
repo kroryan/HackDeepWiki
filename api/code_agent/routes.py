@@ -26,7 +26,6 @@ import os
 import re
 import time
 from typing import Optional
-from urllib.parse import urlparse
 
 from fastapi import (
     APIRouter,
@@ -47,10 +46,10 @@ from api.code_agent.binary import (
 from api.code_agent.context import build_code_session_context
 from api.code_agent.manager import (
     CodeAgentError,
-    manager,
     repo_key_for,
     repo_worktree_fingerprint,
 )
+from api.code_agent.service import code_agent as manager
 from api.code_agent.models import (
     CodeAbortRequest,
     CodeAgentUpdateRequest,
@@ -60,7 +59,11 @@ from api.code_agent.models import (
 )
 from api.code_agent.config import describe_target, map_provider
 from api.chat_common import capture_chat_exchange
-from api.security import authorization_is_valid, sanitize_error_message
+from api.security import (
+    authorization_is_valid,
+    authorize_websocket,
+    sanitize_error_message,
+)
 from api.stream_events import encode_process
 
 logger = logging.getLogger(__name__)
@@ -121,63 +124,24 @@ _AUTH_DEPENDENCY = [Depends(_require_code_authorization)]
 def _code_authorization_is_valid(value: Optional[str]) -> bool:
     """Keep loopback zero-config, but never expose an auto-approved shell.
 
-    A Docker/LAN bind must enable the normal shared auth mode. An operator
-    with a separately isolated trusted network can explicitly opt back into
-    the old behavior via HACKDEEPWIKI_ALLOW_UNAUTHENTICATED_CODE_AGENT=true.
+    A Docker/LAN bind must enable the normal shared auth mode. There is no
+    feature-specific bypass: remote deployment safety is validated at startup
+    and this guard remains fail-closed if the route is imported separately.
     """
     from api.config import WIKI_AUTH_MODE
 
     bind_host = os.environ.get("HACKDEEPWIKI_HOST", "127.0.0.1").strip().lower()
     loopback = bind_host in {"127.0.0.1", "localhost", "::1"}
-    explicit_unsafe_opt_in = os.environ.get(
-        "HACKDEEPWIKI_ALLOW_UNAUTHENTICATED_CODE_AGENT", ""
-    ).lower() in {"1", "true", "yes"}
-    if not loopback and not WIKI_AUTH_MODE and not explicit_unsafe_opt_in:
+    if not loopback and not WIKI_AUTH_MODE:
         return False
     return authorization_is_valid(value)
 
 
-def _websocket_origin_allowed(websocket: WebSocket) -> bool:
-    """Allow non-browser clients and browser connections from the serving
-    origin (plus explicitly configured origins).
-
-    WebSockets are not covered by the application's CORS middleware. Without
-    this check, a malicious web page could drive a localhost CodeAgent when
-    auth is disabled in the normal desktop configuration.
-    """
-    origin = websocket.headers.get("origin")
-    if not origin:
-        return True
-
-    configured = {
-        item.rstrip("/")
-        for item in os.environ.get("HACKDEEPWIKI_ALLOWED_ORIGINS", "").split(",")
-        if item.strip()
-    }
-    if origin.rstrip("/") in configured:
-        return True
-
-    origin_host = (urlparse(origin).hostname or "").lower()
-    request_host = (
-        urlparse(f"//{websocket.headers.get('host', '')}").hostname or ""
-    ).lower()
-    loopback = {"localhost", "127.0.0.1", "::1"}
-    return bool(
-        origin_host
-        and request_host
-        and (origin_host == request_host or {origin_host, request_host} <= loopback)
-    )
-
-
 async def _authorize_websocket(websocket: WebSocket) -> bool:
-    code = (
-        websocket.query_params.get("authorization_code")
-        or websocket.headers.get("x-hackdeepwiki-authorization")
+    return await authorize_websocket(
+        websocket,
+        validator=_code_authorization_is_valid,
     )
-    if not _code_authorization_is_valid(code) or not _websocket_origin_allowed(websocket):
-        await websocket.close(code=1008)
-        return False
-    return True
 
 
 @router.post(
@@ -326,8 +290,6 @@ async def code_agent_update(request: CodeAgentUpdateRequest) -> dict:
 # ---------------------------------------------------------------------------
 
 async def handle_code_chat_websocket(websocket: WebSocket) -> None:
-    if not await _authorize_websocket(websocket):
-        return
     await websocket.accept()
     queue = None
     fanout = None
@@ -593,8 +555,6 @@ async def handle_code_chat_websocket(websocket: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 async def handle_code_events_websocket(websocket: WebSocket) -> None:
-    if not await _authorize_websocket(websocket):
-        return
     await websocket.accept()
     queue = None
     fanout = None
@@ -683,9 +643,13 @@ async def handle_code_events_websocket(websocket: WebSocket) -> None:
 
 @router.websocket("/ws/code/chat")
 async def code_chat_ws(websocket: WebSocket) -> None:
+    if not await _authorize_websocket(websocket):
+        return
     await handle_code_chat_websocket(websocket)
 
 
 @router.websocket("/ws/code/events")
 async def code_events_ws(websocket: WebSocket) -> None:
+    if not await _authorize_websocket(websocket):
+        return
     await handle_code_events_websocket(websocket)

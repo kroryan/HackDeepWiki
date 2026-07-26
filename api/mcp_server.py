@@ -34,6 +34,7 @@ import sys
 from typing import Any, Optional
 
 from api import mcp_tools
+from api.build_info import build_info
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,12 @@ logger = logging.getLogger(__name__)
 # we accept any version and echo this one back.
 _PROTOCOL_VERSION = "2024-11-05"
 _SERVER_NAME = "hackdeepwiki"
-_SERVER_VERSION = "1.0.0"
+
+
+def _server_build() -> str:
+    identity = build_info()
+    commit = str(identity.get("commit") or "unknown")[:12]
+    return f"{identity.get('channel', 'source')}-{commit}"
 
 # Runtime token: explicit env wins; otherwise a random token is generated
 # once per process and can be read by the UI (get_runtime_token) so the user
@@ -98,7 +104,7 @@ def handle_request(req: dict[str, Any], auth_header: Optional[str] = None) -> di
         return _ok(req_id, {
             "protocolVersion": _PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": _SERVER_NAME, "version": _SERVER_VERSION},
+            "serverInfo": {"name": _SERVER_NAME, "version": _server_build()},
         })
 
     # Every other method requires a valid token.

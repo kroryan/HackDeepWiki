@@ -43,7 +43,9 @@ Every push to `main` publishes its own neutral development pre-release,
 never overwrite each other, and remain directly linkable — the ten most
 recent are kept. Explicitly tagged commits publish the stable release under
 the exact tag chosen by the maintainer. Both platforms are built and attached
-automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml).
+automatically by [`.github/workflows/package.yml`](.github/workflows/package.yml);
+the reusable release workflow only publishes artifacts that already passed
+their platform smoke tests.
 
 ## Configuring a provider
 
@@ -80,8 +82,10 @@ python -m pip install poetry==2.4.1
 poetry -C api sync --with build --without dev
 npm ci --legacy-peer-deps
 npm run build
-python scripts/prepare_assets.py linux   # or "windows"
-pyinstaller --noconfirm --clean hackdeepwiki.spec
+api/.venv/bin/python scripts/prepare_assets.py linux
+api/.venv/bin/python -m PyInstaller hackdeepwiki.spec
+scripts/package_appimage.sh
+scripts/smoke_appimage.sh
 ```
 
 This bundles the built Next.js frontend, the FastAPI backend, and a Node.js runtime into a single PyInstaller binary (`scripts/launcher.py` is the entrypoint), which the Linux job then wraps into an AppImage.
@@ -92,6 +96,14 @@ Evolution backfill is deliberately bounded to the newest 2,000 reachable
 commits. Its stored marker and metadata report both the reachable total and
 `truncated=true` when that limit is hit, so a partial history is never
 presented as complete.
+
+Operational and security references:
+
+- [Supported deployment model](docs/adr/ADR-001-deployment-model.md)
+- [HTTP/WebSocket security matrix](docs/security-route-matrix.md)
+- [Backup, restore, health and diagnostics](docs/operations.md)
+- [Dependency and packaged-component updates](docs/dependency-updates.md)
+- [Security reporting policy](SECURITY.md)
 
 ## 🤝 Contributing
 

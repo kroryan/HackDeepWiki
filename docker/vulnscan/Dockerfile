@@ -24,7 +24,7 @@
 # the final image (stage 2) keeps the Go toolchain + module cache (several
 # hundred MB) out of what actually ships.
 # ---------------------------------------------------------------------------
-FROM golang:1-bookworm AS builder
+FROM golang:1-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS builder
 
 RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] && exit 1; echo "Retry $n/$max ..."; sleep $((n*5)); done\n' \
     > /usr/local/bin/retry && chmod +x /usr/local/bin/retry
@@ -48,7 +48,7 @@ RUN retry go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 
 # ---------------------------------------------------------------------------
 # Stage 2: the runtime image.
 # ---------------------------------------------------------------------------
-FROM kalilinux/kali-rolling:latest
+FROM kalilinux/kali-rolling@sha256:b3d7855dd35daa5e56a6806e9c34cb91c954d9a8a97b78c3352438732a61a079
 
 LABEL maintainer="HackDeepWiki"
 LABEL description="Lean vulnerability-scan toolkit -- only the tools api/web_vuln_scanner/docker_tools.py invokes"

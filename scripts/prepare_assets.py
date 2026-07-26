@@ -11,6 +11,7 @@ import tempfile
 # place (api/code_agent/binary.py) -- the runtime lazy-download and this
 # build-time download must agree.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from api.component_manifest import component_manifest
 
 def copy_dir(src, dest):
     if not os.path.exists(src):
@@ -46,6 +47,8 @@ def download_file(url, dest_path, expected_sha256=None):
     print("Download finished.")
 
 def setup_node_binary(platform):
+    node = component_manifest()["node"]
+    version = str(node["version"])
     bin_dir = os.path.abspath("bin")
     os.makedirs(bin_dir, exist_ok=True)
     dest_path = os.path.join(
@@ -54,14 +57,14 @@ def setup_node_binary(platform):
     )
     
     if platform == "windows":
-        node_url = "https://nodejs.org/dist/v24.18.0/win-x64/node.exe"
+        asset = node["assets"]["windows-x64"]
         download_file(
-            node_url,
+            asset["url"],
             dest_path,
-            "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
+            asset["sha256"],
         )
     elif platform == "linux":
-        node_url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz"
+        asset = node["assets"]["linux-x64"]
         
         # Download tarball to a temp file
         with tempfile.NamedTemporaryFile(delete=False) as temp_tar:
@@ -69,9 +72,9 @@ def setup_node_binary(platform):
             
         try:
             download_file(
-                node_url,
+                asset["url"],
                 temp_tar_path,
-                "55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742",
+                asset["sha256"],
             )
             print("Extracting Node.js binary from tarball...")
             with tarfile.open(temp_tar_path, "r:xz") as tar:
@@ -105,8 +108,11 @@ def setup_node_binary(platform):
         text=True,
         timeout=20,
     ).stdout.strip()
-    if node_version != "v24.18.0":
-        raise RuntimeError(f"Bundled Node reported {node_version!r}, expected 'v24.18.0'")
+    expected = f"v{version}"
+    if node_version != expected:
+        raise RuntimeError(
+            f"Bundled Node reported {node_version!r}, expected {expected!r}"
+        )
     print(f"Node {node_version} executable validated at {dest_path}")
 
 def setup_opencode_binary(platform):
@@ -207,6 +213,8 @@ def main():
         sys.exit(1)
         
     print(f"Preparing build assets for platform: {platform}...")
+    from api.build_info import write_build_info
+    print(f"Build identity written to {write_build_info()}")
     
     # 1. Copy Next.js frontend assets to the standalone directory
     copy_dir("public", os.path.join(".next", "standalone", "public"))

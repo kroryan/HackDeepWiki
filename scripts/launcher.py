@@ -7,6 +7,7 @@ import time
 import webbrowser
 import shutil
 import signal
+import secrets
 from pathlib import Path
 
 # BASE_DIR is sys._MEIPASS if compiled with PyInstaller, else the project root directory
@@ -254,6 +255,13 @@ def main():
     
     # Initialize dirs & paths
     setup_persistent_config_and_logs(args)
+    # Authenticate the bundled Next.js server to the loopback FastAPI API.
+    # Both processes inherit this per-launch value; it is never exposed to
+    # browser JavaScript and rotates on every application start.
+    os.environ.setdefault(
+        "HACKDEEPWIKI_INTERNAL_PROXY_TOKEN",
+        secrets.token_urlsafe(32),
+    )
     
     # Find free ports
     backend_port = args.api_port if args.api_port is not None else int(os.environ.get("HACKDEEPWIKI_API_PORT", find_free_port(8001)))

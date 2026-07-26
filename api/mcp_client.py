@@ -27,6 +27,9 @@ import os
 import shutil
 from typing import Any, Optional
 
+from api.build_info import build_info
+from api.network_policy import validate_outbound_url
+from api.security import decrypt_secret, encrypt_secret
 from api.storage import connect, profile_db_path
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,14 @@ logger = logging.getLogger(__name__)
 # list_server_tools / call_server_tool already swallow into "no tools / error
 # string" so the chat proceeds with just the built-in tools.
 STDIO_TIMEOUT = int(os.environ.get("HACKDEEPWIKI_MCP_STDIO_TIMEOUT", "30"))
+
+
+def _client_build() -> str:
+    identity = build_info()
+    return (
+        f"{identity.get('channel', 'source')}-"
+        f"{str(identity.get('commit', 'unknown'))[:12]}"
+    )
 
 
 def _ensure_servers(conn) -> None:
@@ -66,13 +77,42 @@ def add_server(name: str, transport: str, config: dict, enabled: bool = True) ->
             "INSERT INTO mcp_servers (name, transport, config_json, enabled) VALUES (?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET transport=excluded.transport, "
             "config_json=excluded.config_json, enabled=excluded.enabled",
-            (name, transport, json.dumps(config), 1 if enabled else 0),
+            (
+                name,
+                transport,
+                encrypt_secret(json.dumps(config)),
+                1 if enabled else 0,
+            ),
         )
         conn.commit()
         return int(cur.lastrowid)
 
 
-def list_servers() -> list[dict]:
+def _redact_config(value: Any) -> Any:
+    """Return connection metadata without retrievable credentials."""
+    secret_names = {
+        "authorization",
+        "api_key",
+        "apikey",
+        "password",
+        "secret",
+        "token",
+    }
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[configured]"
+                if key.lower().replace("-", "_") in secret_names
+                else _redact_config(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config(item) for item in value]
+    return value
+
+
+def list_servers(*, include_secrets: bool = False) -> list[dict]:
     with connect(profile_db_path()) as conn:
         _ensure_servers(conn)
         rows = conn.execute(
@@ -82,7 +122,9 @@ def list_servers() -> list[dict]:
     for r in rows:
         d = dict(r)
         try:
-            d["config"] = json.loads(d.pop("config_json"))
+            stored = d.pop("config_json")
+            config = json.loads(decrypt_secret(stored))
+            d["config"] = config if include_secrets else _redact_config(config)
         except Exception:  # noqa: BLE001
             d["config"] = {}
         out.append(d)
@@ -171,7 +213,10 @@ class StdioMcpClient:
         await self._call("initialize", {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": {"name": "hackdeepwiki", "version": "1.0.0"},
+            "clientInfo": {
+                "name": "hackdeepwiki",
+                "version": _client_build(),
+            },
         })
         # acknowledge (notification, no response expected)
         await self._notify("notifications/initialized", {})
@@ -244,6 +289,8 @@ async def _http_call(url: str, method: str, params: dict,
     """Single-request JSON-RPC over HTTP POST. Good enough for tools/list +
     tools/call (the streaming/SSE variant is out of scope for local-first)."""
     import urllib.request
+
+    validate_outbound_url(url)
     req_body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     hdrs = {"Content-Type": "application/json", **(headers or {})}
     # run blocking urllib in a thread so the async loop isn't stalled

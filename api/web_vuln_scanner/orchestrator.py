@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from api.network_policy import validate_outbound_url
 from api.web_crawler.site_store import read_site_meta, website_local_dir
 from api.web_vuln_scanner.checks import (
     check_cookies,
@@ -76,6 +77,7 @@ def _dedupe_site_wide(findings: List[WebFinding]) -> List[WebFinding]:
 
 def _fetch_page(url: str) -> Optional[requests.Response]:
     try:
+        validate_outbound_url(url)
         return requests.get(url, timeout=_TIMEOUT, headers={"User-Agent": _USER_AGENT}, allow_redirects=True)
     except requests.RequestException as exc:
         logger.debug("Fetch failed for %s: %s", url, exc)
@@ -176,6 +178,7 @@ async def run_web_vuln_scan(
             except Exception:  # noqa: BLE001
                 pass
 
+    validate_outbound_url(site_url)
     local_dir = website_local_dir(site_url)
     meta = read_site_meta(local_dir)
     pages_meta = meta.get("pages") or []

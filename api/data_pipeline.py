@@ -29,6 +29,7 @@ from urllib.parse import urlparse, urlunparse, quote
 import requests
 from requests.exceptions import RequestException
 
+from api.network_policy import validate_outbound_url
 from api.tools.embedder import get_embedder
 
 # Configure logging
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 # Maximum token limit for OpenAI embedding models
 MAX_EMBEDDING_TOKENS = 8192
+# Explicit connect/read bounds for source-provider APIs.  No remote request in
+# the ingest path may wait forever and pin a FastAPI worker.
+REMOTE_API_TIMEOUT = (10, 60)
 
 # File extensions the indexer embeds. Module-level (not local to
 # read_all_documents) so api.jobs.incremental.compute_diff walks the SAME set
@@ -816,7 +820,10 @@ def get_github_file_content(repo_url: str, file_path: str, access_token: str = N
             headers["Authorization"] = f"token {access_token}"
         logger.info(f"Fetching file content from GitHub API: {api_url}")
         try:
-            response = requests.get(api_url, headers=headers)
+            validate_outbound_url(api_url)
+            response = requests.get(
+                api_url, headers=headers, timeout=REMOTE_API_TIMEOUT
+            )
             response.raise_for_status()
         except RequestException as e:
             raise ValueError(f"Error fetching file content: {e}")
@@ -887,7 +894,12 @@ def get_gitlab_file_content(repo_url: str, file_path: str, access_token: str = N
             if access_token:
                 project_headers["PRIVATE-TOKEN"] = access_token
             
-            project_response = requests.get(project_info_url, headers=project_headers)
+            validate_outbound_url(project_info_url)
+            project_response = requests.get(
+                project_info_url,
+                headers=project_headers,
+                timeout=REMOTE_API_TIMEOUT,
+            )
             if project_response.status_code == 200:
                 project_data = project_response.json()
                 default_branch = project_data.get('default_branch', 'main')
@@ -906,7 +918,10 @@ def get_gitlab_file_content(repo_url: str, file_path: str, access_token: str = N
             headers["PRIVATE-TOKEN"] = access_token
         logger.info(f"Fetching file content from GitLab API: {api_url}")
         try:
-            response = requests.get(api_url, headers=headers)
+            validate_outbound_url(api_url)
+            response = requests.get(
+                api_url, headers=headers, timeout=REMOTE_API_TIMEOUT
+            )
             response.raise_for_status()
             content = response.text
         except RequestException as e:
@@ -958,7 +973,12 @@ def get_bitbucket_file_content(repo_url: str, file_path: str, access_token: str 
             if access_token:
                 repo_headers["Authorization"] = f"Bearer {access_token}"
             
-            repo_response = requests.get(repo_info_url, headers=repo_headers)
+            validate_outbound_url(repo_info_url)
+            repo_response = requests.get(
+                repo_info_url,
+                headers=repo_headers,
+                timeout=REMOTE_API_TIMEOUT,
+            )
             if repo_response.status_code == 200:
                 repo_data = repo_response.json()
                 default_branch = repo_data.get('mainbranch', {}).get('name', 'main')
@@ -980,7 +1000,10 @@ def get_bitbucket_file_content(repo_url: str, file_path: str, access_token: str 
             headers["Authorization"] = f"Bearer {access_token}"
         logger.info(f"Fetching file content from Bitbucket API: {api_url}")
         try:
-            response = requests.get(api_url, headers=headers)
+            validate_outbound_url(api_url)
+            response = requests.get(
+                api_url, headers=headers, timeout=REMOTE_API_TIMEOUT
+            )
             if response.status_code == 200:
                 content = response.text
             elif response.status_code == 404:
