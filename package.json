@@ -32,7 +32,7 @@
     "svg-pan-zoom": "^3.6.2",
     "three": "^0.180.0",
     "three-spritetext": "^1.10.0",
-    "undici": "^7.0.0"
+    "undici": "^8.9.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
