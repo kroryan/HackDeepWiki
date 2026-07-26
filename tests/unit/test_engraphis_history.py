@@ -35,6 +35,9 @@ def _git(cwd, *args, env=None):
     import os
 
     full = dict(os.environ)
+    full.pop("GIT_DIR", None)
+    full.pop("GIT_WORK_TREE", None)
+    full.pop("GIT_INDEX_FILE", None)
     full.update(GIT_ENV)
     full.update(env or {})
     out = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
