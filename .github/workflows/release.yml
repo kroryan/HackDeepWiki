@@ -42,7 +42,7 @@ jobs:
           mv artifacts/windows/hackdeepwiki.exe HackDeepWiki-windows-x64.exe
           mv artifacts/linux/HackDeepWiki-x86_64.AppImage HackDeepWiki-x86_64.AppImage
           cp artifacts/metadata/HackDeepWiki.cdx.json HackDeepWiki.cdx.json
-          cp artifacts/metadata/components.json HackDeepWiki-components.json
+          cp artifacts/metadata/build/components.json HackDeepWiki-components.json
           sha256sum \
             HackDeepWiki-windows-x64.exe \
             HackDeepWiki-x86_64.AppImage \
