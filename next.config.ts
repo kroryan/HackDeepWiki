@@ -29,6 +29,7 @@ const nextConfig: NextConfig = {
     // chunks to be emitted as JavaScript dependencies in Next 15.
     return config;
   },
+  turbopack: {},
 };
 
 export default nextConfig;
