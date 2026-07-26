@@ -26,10 +26,10 @@ export function useAuthorization() {
   useEffect(() => {
     let active = true;
     apiJson<AuthStatus>('/api/auth/status', { cache: 'no-store', timeoutMs: 10_000 })
-      .then(status => {
+      .then((status: AuthStatus) => {
         if (active) setAuthRequired(Boolean(status.auth_required));
       })
-      .catch(error => {
+      .catch((error: unknown) => {
         console.error('Failed to fetch auth status:', error);
         if (active) setAuthRequired(true);
       })
