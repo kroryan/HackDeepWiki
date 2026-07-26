@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image="${1:-HackDeepWiki-x86_64.AppImage}"
+image="${1:-./HackDeepWiki-x86_64.AppImage}"
 test -x "$image"
 APPIMAGE_EXTRACT_AND_RUN=1 timeout 120s "$image" --help
 
