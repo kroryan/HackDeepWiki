@@ -136,7 +136,7 @@ jobs:
         run: |
           api/.venv/bin/python scripts/generate_env_example.py --check
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/hackdeepwiki-pycache" \
-            api/.venv/bin/python -m compileall -q api scripts tests
+            api/.venv/bin/python -m compileall -q -x '/\.venv/' api scripts tests
           api/.venv/bin/python -m pip check
           if rg "google\\.generativeai" api scripts tests hackdeepwiki.spec; then
             echo "Deprecated google.generativeai import found"
