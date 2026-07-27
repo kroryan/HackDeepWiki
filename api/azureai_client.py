@@ -1,27 +1,26 @@
 """AzureOpenAI ModelClient integration."""
 
-import os
-from typing import (
-    Dict,
-    Sequence,
-    Optional,
-    List,
-    Any,
-    TypeVar,
-    Callable,
-    Generator,
-    Union,
-    Literal,
-)
-import re
-
 import logging
+import os
+import re
+import sys
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+)
+
 import backoff
 
 # optional import
-from adalflow.utils.lazy_import import safe_import, OptionalPackages
-
-import sys
+from adalflow.utils.lazy_import import OptionalPackages, safe_import
 
 openai = safe_import(OptionalPackages.OPENAI.value[0], OptionalPackages.OPENAI.value[1])
 # Importing all Azure packages together
@@ -35,32 +34,33 @@ for name, module in zip(azure_module_names, azure_modules):
     sys.modules[name] = module
 
 # Use the modules as if they were imported normally
+from adalflow.components.model_client.utils import parse_embedding_response
+from adalflow.core.model_client import ModelClient
+from adalflow.core.types import (
+    CompletionUsage,
+    EmbedderOutput,
+    GeneratorOutput,
+    ModelType,
+    TokenLogProb,
+)
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 # from azure.core.credentials import AccessToken
-from openai import AzureOpenAI, AsyncAzureOpenAI, Stream
 from openai import (
     APITimeoutError,
+    AsyncAzureOpenAI,
+    AzureOpenAI,
+    BadRequestError,
     InternalServerError,
     RateLimitError,
+    Stream,
     UnprocessableEntityError,
-    BadRequestError,
 )
 from openai.types import (
     Completion,
     CreateEmbeddingResponse,
 )
-from openai.types.chat import ChatCompletionChunk, ChatCompletion
-
-from adalflow.core.model_client import ModelClient
-from adalflow.core.types import (
-    ModelType,
-    EmbedderOutput,
-    TokenLogProb,
-    CompletionUsage,
-    GeneratorOutput,
-)
-from adalflow.components.model_client.utils import parse_embedding_response
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")

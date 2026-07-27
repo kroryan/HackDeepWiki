@@ -1,5 +1,4 @@
 import adalflow as adal
-
 from api.config import configs, get_embedder_type
 
 

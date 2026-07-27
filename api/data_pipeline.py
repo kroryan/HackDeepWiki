@@ -1,23 +1,25 @@
-import adalflow as adal
-from adalflow.core.types import Document, List
-from adalflow.components.data_process import TextSplitter, ToEmbeddings
-import os
-import re
 import asyncio
-import subprocess
-import json
-import tiktoken
-import logging
 import base64
+import fnmatch
 import glob
 import hashlib
+import json
+import logging
+import os
+import re
 import shutil
-import fnmatch
+import subprocess
 from typing import Optional
-from api.data_root import get_data_root as get_adalflow_default_root_path
+from urllib.parse import quote, urlparse, urlunparse
+
+import adalflow as adal
+import requests
+import tiktoken
+from adalflow.components.data_process import ToEmbeddings
 from adalflow.core.db import LocalDB
-from api.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
-from api.ollama_patch import OllamaDocumentProcessor
+from adalflow.core.types import Document, List
+from requests.exceptions import RequestException
+
 # Module-level import so api.code_splitter is loaded (and its
 # EntityMapping.register("CodeAwareSplitter", ...) runs) at app startup, BEFORE
 # any LocalDB.load_state() reload path can run in prepare_db_index. The local
@@ -25,11 +27,11 @@ from api.ollama_patch import OllamaDocumentProcessor
 # early-return path, which would otherwise log "Unknown class type:
 # CodeAwareSplitter" on every reload of a code-split project.
 from api import code_splitter  # noqa: F401
-from urllib.parse import urlparse, urlunparse, quote
-import requests
-from requests.exceptions import RequestException
-
+from api.config import DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES, configs
+from api.data_root import get_data_root as get_adalflow_default_root_path
+from api.git_exe import git_executable
 from api.network_policy import validate_outbound_url
+from api.ollama_patch import OllamaDocumentProcessor
 from api.tools.embedder import get_embedder
 
 # Configure logging
@@ -172,14 +174,10 @@ def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_
         str: The output message from the `git` command.
     """
     try:
-        # Check if Git is installed
+        # Resolve git first: on Windows this provisions a portable MinGit when
+        # git isn't installed, instead of dying later with [WinError 2].
         logger.info(f"Preparing to clone repository to {local_path}")
-        subprocess.run(
-            ["git", "--version"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        git_bin = git_executable()
 
         # Check if repository already exists
         if os.path.exists(local_path) and os.listdir(local_path):
@@ -198,7 +196,7 @@ def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_
         logger.info(f"Cloning repository from {repo_url} to {local_path}")
         # We use repo_url in the log to avoid exposing the token in logs
         result = subprocess.run(
-            ["git", "clone", "--depth=1", "--single-branch", clone_url, local_path],
+            [git_bin, "clone", "--depth=1", "--single-branch", clone_url, local_path],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -266,8 +264,11 @@ async def clone_repo_with_progress(repo_url: str, local_path: str, repo_type: st
     os.makedirs(local_path, exist_ok=True)
     clone_url = _build_clone_url(repo_url, repo_type, access_token)
 
+    # May download portable MinGit on first Windows run; keep it off the loop.
+    git_bin = await asyncio.to_thread(git_executable)
+
     proc = await asyncio.create_subprocess_exec(
-        "git", "clone", "--progress", "--depth=1", "--single-branch", clone_url, local_path,
+        git_bin, "clone", "--progress", "--depth=1", "--single-branch", clone_url, local_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -338,7 +339,7 @@ def _walk_repo_tree(local_dir: str):
 def _repo_default_branch(local_dir: str) -> str:
     try:
         result = subprocess.run(
-            ["git", "branch", "--show-current"],
+            [git_executable(), "branch", "--show-current"],
             cwd=local_dir, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         return result.stdout.decode("utf-8").strip() or "main"
@@ -450,7 +451,7 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
         final_included_dirs = set(included_dirs) if included_dirs else set()
         final_included_files = set(included_files) if included_files else set()
 
-        logger.info(f"Using inclusion mode")
+        logger.info("Using inclusion mode")
         logger.info(f"Included directories: {list(final_included_dirs)}")
         logger.info(f"Included files: {list(final_included_files)}")
 
@@ -485,7 +486,7 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
         included_dirs = []
         included_files = []
 
-        logger.info(f"Using exclusion mode")
+        logger.info("Using exclusion mode")
         logger.info(f"Excluded directories: {excluded_dirs}")
         logger.info(f"Excluded files: {excluded_files}")
 
@@ -905,7 +906,7 @@ def get_gitlab_file_content(repo_url: str, file_path: str, access_token: str = N
                 default_branch = project_data.get('default_branch', 'main')
                 logger.info(f"Found default branch: {default_branch}")
             else:
-                logger.warning(f"Could not fetch project info, using 'main' as default branch")
+                logger.warning("Could not fetch project info, using 'main' as default branch")
                 default_branch = 'main'
         except Exception as e:
             logger.warning(f"Error fetching project info: {e}, using 'main' as default branch")
@@ -984,7 +985,7 @@ def get_bitbucket_file_content(repo_url: str, file_path: str, access_token: str 
                 default_branch = repo_data.get('mainbranch', {}).get('name', 'main')
                 logger.info(f"Found default branch: {default_branch}")
             else:
-                logger.warning(f"Could not fetch repository info, using 'main' as default branch")
+                logger.warning("Could not fetch repository info, using 'main' as default branch")
                 default_branch = 'main'
         except Exception as e:
             logger.warning(f"Error fetching repository info: {e}, using 'main' as default branch")

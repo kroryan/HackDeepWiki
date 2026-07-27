@@ -1,9 +1,10 @@
+import logging
 import os
 import sys
-import logging
+import warnings
+
 from dotenv import load_dotenv
 
-import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="pydantic")
 
 # Load environment variables from .env file
@@ -52,7 +53,7 @@ import uvicorn
 # on every startup of a pure-Ollama install is noise that implies setup is
 # broken when it isn't.
 try:
-    from api.config import get_model_config, configs
+    from api.config import configs
     _default_provider = configs.get("generator_config", {}).get("default_provider", "ollama")
     _provider_needs_keys = {
         "openai": ["OPENAI_API_KEY"],
@@ -85,7 +86,6 @@ if __name__ == "__main__":
     os.environ["HACKDEEPWIKI_BACKEND_PORT"] = str(port)
 
     # Import the app here to ensure environment variables are set first
-    from api.api import app
 
     logger.info(f"Starting Streaming API on port {port}")
 

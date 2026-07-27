@@ -7,17 +7,30 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from api import search_tool, zim_reader
 from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
-from api.chat_models import ChatCompletionRequest, ChatMessage  # noqa: F401 (ChatMessage re-exported for callers)
-from api.config import get_model_config, configs, OPENROUTER_API_KEY, OPENAI_API_KEY, LITELLM_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, normalize_language, language_display_name
+from api.chat_models import (  # noqa: F401 (ChatMessage re-exported for callers)
+    ChatCompletionRequest,
+    ChatMessage,
+)
+from api.config import (
+    AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY,
+    LITELLM_API_KEY,
+    OPENAI_API_KEY,
+    OPENROUTER_API_KEY,
+    get_model_config,
+    language_display_name,
+    normalize_language,
+)
 from api.context_budget import summarize_file_tree_in_query
 from api.data_pipeline import count_tokens, get_file_content
-from api.rag import RAG
-from api import search_tool
-from api import zim_reader
+
+# Configure logging
+from api.logging_config import setup_logging
 from api.prompts import (
-    DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
     DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
+    DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
     DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT,
     SIMPLE_CHAT_SYSTEM_PROMPT,
     SIMPLE_CHAT_SYSTEM_PROMPT_WEBSITE,
@@ -25,9 +38,7 @@ from api.prompts import (
     TOOL_CALLING_INSTRUCTIONS,
     prepend_no_think,
 )
-
-# Configure logging
-from api.logging_config import setup_logging
+from api.rag import RAG
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -38,12 +49,11 @@ logger = logging.getLogger(__name__)
 # the two transports can't drift on the fallback path. Previously these were
 # hand-mirrored here with cross-referencing comments.
 from api.chat_common import (
-    MAX_FALLBACK_QUERY_CHARS,
+    apply_memory_to_system_prompt,
+    apply_skills_to_system_prompt,
+    capture_chat_exchange,
     is_context_limit_error,
     truncate_query_for_fallback,
-    apply_skills_to_system_prompt,
-    apply_memory_to_system_prompt,
-    capture_chat_exchange,
 )
 from api.stream_events import is_process_frame
 
@@ -639,7 +649,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                             yield text
                     except Exception as e2:
                         logger.error(f"Error in fallback streaming response: {str(e2)}")
-                        yield f"\nI apologize, but your request is too large for me to process. Please try a shorter query or break it into smaller parts."
+                        yield "\nI apologize, but your request is too large for me to process. Please try a shorter query or break it into smaller parts."
                 else:
                     # For other errors, return the error message
                     yield f"\nError: {error_message}"

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 from typing import Iterable, Optional
 
 from api.storage import connect, repo_db_path

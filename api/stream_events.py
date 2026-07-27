@@ -24,7 +24,7 @@ a control-char sentinel that never occurs in normal prose:
 The frontend mirrors this in src/utils/streamParser.ts.
 """
 import json
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 # A process frame, complete: SOH + "FDW" + SOH + kind + STX + json + ETX.
 PROC_INTRO = "\x01FDW\x01"

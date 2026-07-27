@@ -1,13 +1,14 @@
-from typing import Sequence
-from copy import deepcopy
-from tqdm import tqdm
 import logging
-import adalflow as adal
-from adalflow.core.types import Document
-from adalflow.core.component import DataComponent
-import requests
 import os
+from copy import deepcopy
+from typing import Sequence
+
+import adalflow as adal
+import requests
 import tiktoken
+from adalflow.core.component import DataComponent
+from adalflow.core.types import Document
+from tqdm import tqdm
 
 # Configure logging
 from api.logging_config import setup_logging

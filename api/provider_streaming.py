@@ -23,10 +23,10 @@ that already existed in the original code:
 import logging
 from typing import AsyncIterator, Optional
 
-from google import genai
-from google.genai import types as genai_types
 from adalflow.components.model_client.ollama_client import OllamaClient
 from adalflow.core.types import ModelType
+from google import genai
+from google.genai import types as genai_types
 
 from api.anthropic_client import AnthropicClient
 from api.azureai_client import AzureAIClient

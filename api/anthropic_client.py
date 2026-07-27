@@ -12,14 +12,13 @@ never starts. Accepts either:
   Anthropic requires for OAuth-authenticated requests.
 """
 
-from typing import Any, AsyncIterator, Dict
 import json
 import logging
 import os
+from typing import Any, AsyncIterator, Dict
 
 import aiohttp
 import requests
-
 from adalflow.core.model_client import ModelClient
 from adalflow.core.types import ModelType
 
@@ -284,9 +283,12 @@ class AnthropicClient(ModelClient):
                     data = await response.json()
         except Exception as e:
             log.error(f"Error calling Anthropic API: {str(e)}")
+            # Bind the message now: Python unbinds `e` when the except block
+            # ends, and the generator runs after that (NameError otherwise).
+            error_message = f"Error calling Anthropic API: {str(e)}"
 
             async def exception_generator():
-                yield f"Error calling Anthropic API: {str(e)}"
+                yield error_message
             return exception_generator()
 
         text = self._extract_text(data)

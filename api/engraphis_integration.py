@@ -48,10 +48,19 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from typing import Any, Optional
 
-from api.memory.evolution import (
+from api.memory.dashboard_runtime import (
+    DashboardRuntime,
+    start_dashboard,
+    stop_dashboard,
+)
+# The private aliases keep this module's original names during the extraction
+# of the git-history logic into api.memory.evolution; tests and older callers
+# still import them from here, so the "unused" ones are deliberate re-exports.
+from api.memory.evolution import (  # noqa: F401
     EMPTY_TREE as _EMPTY_TREE,
     HISTORY_BATCH as _HISTORY_BATCH,
     MAX_CHECKPOINT_LINES as _MAX_CHECKPOINT_LINES,
@@ -70,14 +79,11 @@ from api.memory.evolution import (
     pick_milestones as _pick_milestones,
     record_line as _record_line,
 )
-from api.memory.dashboard_runtime import (
-    DashboardRuntime,
-    start_dashboard,
-    stop_dashboard,
-)
 from api.memory.ingestion_state import IngestionState
 from api.memory.workspaces import (
     clean_component as _clean_component,
+)
+from api.memory.workspaces import (
     workspace_for_evolution,
     workspace_for_version,
 )
@@ -440,8 +446,8 @@ def _install_embedder() -> None:
         return
 
     try:
-        from engraphis.backends import embedder_st
         import engraphis.core.engine as _engine
+        from engraphis.backends import embedder_st
 
         def _hackdeepwiki_get_embedder(model_name=None, dim: int = 256,
                                        _adapter=adapter):
@@ -587,8 +593,8 @@ def _ensure_started() -> None:
             # tools for chat + code editor still work -- only the embedded
             # web UI is unavailable, and status() reports why.
             try:
-                from engraphis.service import MemoryService
                 from engraphis.config import settings
+                from engraphis.service import MemoryService
 
                 _service = MemoryService.create(
                     settings.db_path,

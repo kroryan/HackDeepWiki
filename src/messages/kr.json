@@ -87,7 +87,23 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "위키 대상",
+    "audienceDeveloper": "개발자용",
+    "audienceDeveloperDescription": "아키텍처, 구현 및 코드 수준의 세부 정보",
+    "audienceUser": "최종 사용자용",
+    "audienceUserDescription": "설치, 구성, 기능 및 사용법 -- 소스 코드 없음",
+    "pageCount": "페이지 수",
+    "pageCountHelp": "{min}~{max} 페이지 중에서 선택하세요. 포괄 모드는 기본 10페이지, 간결 모드는 5페이지입니다.",
+    "includedDirs": "포함된 디렉터리",
+    "includedFiles": "포함된 파일",
+    "enterIncludedDirs": "포함할 디렉터리를 한 줄에 하나씩 입력...",
+    "enterIncludedFiles": "포함할 파일을 한 줄에 하나씩 입력...",
+    "filterMode": "필터 모드",
+    "excludeMode": "경로 제외",
+    "includeMode": "지정 경로만 포함",
+    "excludeModeDescription": "처리에서 제외할 경로 지정(기본 동작)",
+    "includeModeDescription": "포함할 경로만 지정하고 나머지는 모두 무시"
   },
   "footer": {
     "copyright": "HackDeepWiki - 코드 저장소를 위한 AI 기반 문서화"
@@ -106,7 +122,20 @@
     "codeVersionCheck": "버전 확인",
     "codeAgentError": "코드 에이전트 오류",
     "codeAgentConnectionError": "오류: 코드 에이전트와의 연결이 끊어졌습니다. 메시지를 다시 보내 재시도하세요.",
-    "codeRepoNotCloned": "저장소에 아직 로컬 클론이 없습니다. 먼저 위키를 생성하여 저장소를 로컬에 클론하세요."
+    "codeRepoNotCloned": "저장소에 아직 로컬 클론이 없습니다. 먼저 위키를 생성하여 저장소를 로컬에 클론하세요.",
+    "title": "저장소 채팅",
+    "newChat": "새 채팅",
+    "chatHistory": "채팅 기록",
+    "messages": "메시지",
+    "deleteChat": "채팅 삭제",
+    "deleteChatConfirm": "이 채팅과 전체 기록을 삭제하시겠습니까?",
+    "clearConversation": "대화 지우기",
+    "download": "다운로드",
+    "you": "나",
+    "assistant": "어시스턴트",
+    "thinking": "생각 중...",
+    "process": "프로세스",
+    "emptyConversation": "질문을 입력하여 대화를 시작하세요."
   },
   "repoPage": {
     "refreshWiki": "위키 새로고침",
@@ -137,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "편집",
+    "editInstructionPlaceholder": "AI에게 변경할 내용을 알려주세요(선택 사항)...",
+    "askAi": "AI에게 질문",
+    "save": "저장"
   },
   "nav": {
     "wikiProjects": "프로젝트 목록"
@@ -204,5 +237,16 @@
     "updatePending": "실행 중인 에이전트는 다시 시작될 때까지 이전 버전을 유지합니다",
     "working": "작업 중…",
     "idle": "대기 중"
+  },
+  "diagram": {
+    "title": "다이어그램 보기",
+    "renderError": "다이어그램 렌더링 오류",
+    "syntaxError": "다이어그램에 잘못된 Mermaid 구문이 있어 렌더링할 수 없습니다.",
+    "source": "다이어그램 소스",
+    "rendering": "다이어그램 렌더링 중...",
+    "clickToZoom": "클릭하여 확대",
+    "zoomOut": "축소",
+    "zoomIn": "확대",
+    "resetZoom": "확대/축소 재설정"
   }
 }

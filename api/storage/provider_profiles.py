@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from api.security import encrypt_secret, decrypt_secret
+from api.security import decrypt_secret, encrypt_secret
 from api.storage import connect, profile_db_path
 
 logger = logging.getLogger(__name__)

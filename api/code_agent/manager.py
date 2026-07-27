@@ -39,6 +39,17 @@ from api.code_agent.config import (
 
 logger = logging.getLogger(__name__)
 
+
+def _git() -> str:
+    """Resolved git binary; falls back to bare "git" so these best-effort
+    helpers keep their None-on-failure contract instead of raising."""
+    try:
+        from api.git_exe import git_executable
+        return git_executable()
+    except Exception:
+        return "git"
+
+
 IDLE_SHUTDOWN_SECONDS = 30 * 60
 HEALTH_TIMEOUT_SECONDS = 30
 # Kept small: only used for error surfacing when the process dies.
@@ -119,7 +130,7 @@ def repo_head_commit(repo_dir: str) -> Optional[str]:
     """HEAD commit of a clone, or None for non-git dirs / errors."""
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            [_git(), "rev-parse", "HEAD"],
             cwd=repo_dir, capture_output=True, text=True, timeout=10,
         )
         if out.returncode == 0:
@@ -138,13 +149,13 @@ def repo_worktree_fingerprint(repo_dir: str) -> Optional[str]:
     """
     try:
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            [_git(), "rev-parse", "HEAD"],
             cwd=repo_dir,
             capture_output=True,
             timeout=10,
         )
         status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            [_git(), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
             cwd=repo_dir,
             capture_output=True,
             timeout=20,
@@ -162,14 +173,14 @@ def _maybe_unshallow(repo_dir: str) -> None:
     just leave the clone shallow (editing still works)."""
     try:
         probe = subprocess.run(
-            ["git", "rev-parse", "--is-shallow-repository"],
+            [_git(), "rev-parse", "--is-shallow-repository"],
             cwd=repo_dir, capture_output=True, text=True, timeout=10,
         )
         if probe.returncode != 0 or probe.stdout.strip() != "true":
             return
         logger.info("Unshallowing clone at %s for code editing...", repo_dir)
         subprocess.run(
-            ["git", "fetch", "--unshallow", "--tags"],
+            [_git(), "fetch", "--unshallow", "--tags"],
             cwd=repo_dir, capture_output=True, text=True, timeout=120,
         )
     except (subprocess.TimeoutExpired, OSError) as e:

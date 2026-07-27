@@ -94,7 +94,16 @@
     "fanwikiRegisterError": "La importación terminó, pero no se pudo registrar la wiki.",
     "fanwikiWsError": "Error de WebSocket durante la importación",
     "fanwikiCloseError": "La conexión se cerró antes de terminar la importación",
-    "fanwikiSuccess": "Importadas {pages} página(s), {images} imagen(es), {links} enlace(s) resueltos."
+    "fanwikiSuccess": "Importadas {pages} página(s), {images} imagen(es), {links} enlace(s) resueltos.",
+    "includedDirs": "Directorios incluidos",
+    "includedFiles": "Archivos incluidos",
+    "enterIncludedDirs": "Introduce los directorios a incluir, uno por línea...",
+    "enterIncludedFiles": "Introduce los archivos a incluir, uno por línea...",
+    "filterMode": "Modo de filtrado",
+    "excludeMode": "Excluir rutas",
+    "includeMode": "Incluir solo rutas",
+    "excludeModeDescription": "Especifica las rutas a excluir del procesamiento (comportamiento por defecto)",
+    "includeModeDescription": "Especifica solo las rutas a incluir, ignorando el resto"
   },
   "footer": {
     "copyright": "HackDeepWiki - Documentación impulsada por IA para repositorios de código"
@@ -136,7 +145,8 @@
     "codeVersionCheck": "Comprobación de versión",
     "codeAgentError": "Error del agente de código",
     "codeAgentConnectionError": "Error: se perdió la conexión con el agente de código. Envía el mensaje de nuevo para reintentar.",
-    "codeRepoNotCloned": "El repositorio aún no tiene clon local. Genera la wiki primero para que el repo se clone localmente."
+    "codeRepoNotCloned": "El repositorio aún no tiene clon local. Genera la wiki primero para que el repo se clone localmente.",
+    "process": "Proceso"
   },
   "repoPage": {
     "refreshWiki": "Actualizar Wiki",
@@ -167,7 +177,11 @@
     "modelNoPagesError": "El modelo no devolvió ninguna página para esta wiki. Vuelve a intentar la generación.",
     "backendConnectionError": "Se interrumpió la conexión con el backend de HackDeepWiki. El repositorio es válido; vuelve a intentar la generación.",
     "analysisConnectionError": "La conexión con el servicio se interrumpió durante el análisis. Puedes volver a intentarlo sin cambiar la URL del repositorio.",
-    "generationErrorRetry": "El repositorio o sitio se leyó correctamente; el problema ocurrió generando el contenido con el modelo de IA. Vuelve a intentarlo -- cambiar de modelo o reducir el número de páginas también puede ayudar."
+    "generationErrorRetry": "El repositorio o sitio se leyó correctamente; el problema ocurrió generando el contenido con el modelo de IA. Vuelve a intentarlo -- cambiar de modelo o reducir el número de páginas también puede ayudar.",
+    "editPage": "Editar",
+    "editInstructionPlaceholder": "Dile a la IA qué cambiar (opcional)...",
+    "askAi": "Preguntar a la IA",
+    "save": "Guardar"
   },
   "nav": {
     "wikiProjects": "Lista de Proyectos"

@@ -1,12 +1,12 @@
 """Google AI Embeddings ModelClient integration."""
 
-import os
 import logging
-import backoff
-from typing import Dict, Any, Optional, List, Sequence
+import os
+from typing import Any, Dict, Optional, Sequence
 
+import backoff
 from adalflow.core.model_client import ModelClient
-from adalflow.core.types import ModelType, EmbedderOutput
+from adalflow.core.types import EmbedderOutput, ModelType
 
 try:
     from google import genai
@@ -223,7 +223,7 @@ class GoogleEmbedderClient(ModelClient):
             Google AI embedding response
         """
         if model_type != ModelType.EMBEDDER:
-            raise ValueError(f"GoogleEmbedderClient only supports EMBEDDER model type")
+            raise ValueError("GoogleEmbedderClient only supports EMBEDDER model type")
             
         safe_log_kwargs = {k: v for k, v in api_kwargs.items() if k not in {"content", "contents"}}
         if "content" in api_kwargs:

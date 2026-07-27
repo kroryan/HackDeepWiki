@@ -1,13 +1,13 @@
 import logging
 import weakref
-import re
 from dataclasses import dataclass
-from typing import Any, List, Tuple, Dict
+from typing import Dict, List
 from uuid import uuid4
 
 import adalflow as adal
 
 from api.tools.embedder import get_embedder
+
 # RAG_SYSTEM_PROMPT / RAG_TEMPLATE are no longer imported here: the
 # adal.Generator that used them was dead code (chat generation goes through
 # api.provider_streaming, not this component) and has been removed.
@@ -49,6 +49,7 @@ class CustomConversation:
 
 # Import other adalflow components
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
+
 from api.config import configs
 from api.data_pipeline import DatabaseManager
 
@@ -150,6 +151,7 @@ class Memory(adal.core.component.DataComponent):
 
 from dataclasses import dataclass, field
 
+
 @dataclass
 class RAGAnswer(adal.DataClass):
     rationale: str = field(default="", metadata={"desc": "Chain of thoughts for the answer."})
@@ -188,8 +190,8 @@ class RAG(adal.Component):
 
         # Check if Ollama model exists before proceeding
         if self.is_ollama_embedder:
-            from api.ollama_patch import check_ollama_model_exists
             from api.config import get_embedder_config
+            from api.ollama_patch import check_ollama_model_exists
             
             embedder_config = get_embedder_config()
             if embedder_config and embedder_config.get("model_kwargs", {}).get("model"):

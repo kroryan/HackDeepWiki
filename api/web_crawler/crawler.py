@@ -347,8 +347,8 @@ async def crawl_site(
                 soup_links = BeautifulSoup(html, "html.parser")
                 links = _extract_links(soup_links, url)
                 same_site_links = [
-                    l for l in links
-                    if _same_site(l, root_netloc, include_subdomains) and not _looks_skippable(l)
+                    link for link in links
+                    if _same_site(link, root_netloc, include_subdomains) and not _looks_skippable(link)
                 ]
 
                 crawl_page = CrawlPage(

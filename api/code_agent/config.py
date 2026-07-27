@@ -17,12 +17,13 @@ The config also:
   * disables sharing and self-update (the app manages the binary).
 """
 
-import json
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
+import shutil
 import sys
 from typing import Optional, Tuple
 
@@ -302,6 +303,16 @@ def build_child_env(config_path: str, extra_env: dict, server_password: str) -> 
         env["XDG_CONFIG_HOME"] = os.path.join(home, "config")
         env["XDG_CACHE_HOME"] = os.path.join(home, "cache")
         env["XDG_STATE_HOME"] = os.path.join(home, "state")
+    # opencode shells out to git itself; when git only exists as our managed
+    # portable MinGit (Windows machines without Git installed), the child
+    # needs its cmd/ dir on PATH to find it.
+    try:
+        from api.git_exe import resolve_git
+        resolved = resolve_git()
+        if resolved and not shutil.which("git", path=env.get("PATH")):
+            env["PATH"] = os.path.dirname(resolved) + os.pathsep + env.get("PATH", "")
+    except Exception:  # noqa: BLE001 - a git-less env is still usable for editing
+        pass
     return env
 
 

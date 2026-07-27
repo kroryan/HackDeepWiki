@@ -87,7 +87,23 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "Đối tượng của wiki",
+    "audienceDeveloper": "Dành cho nhà phát triển",
+    "audienceDeveloperDescription": "Kiến trúc, triển khai và chi tiết ở cấp mã nguồn",
+    "audienceUser": "Dành cho người dùng cuối",
+    "audienceUserDescription": "Cài đặt, cấu hình, tính năng và cách dùng -- không có mã nguồn",
+    "pageCount": "Số trang",
+    "pageCountHelp": "Chọn từ {min} đến {max} trang. Chế độ toàn diện mặc định là 10 và ngắn gọn là 5.",
+    "includedDirs": "Thư mục được bao gồm",
+    "includedFiles": "Tệp được bao gồm",
+    "enterIncludedDirs": "Nhập các thư mục cần bao gồm, mỗi dòng một mục...",
+    "enterIncludedFiles": "Nhập các tệp cần bao gồm, mỗi dòng một mục...",
+    "filterMode": "Chế độ lọc",
+    "excludeMode": "Loại trừ đường dẫn",
+    "includeMode": "Chỉ bao gồm đường dẫn",
+    "excludeModeDescription": "Chỉ định các đường dẫn cần loại trừ khỏi xử lý (hành vi mặc định)",
+    "includeModeDescription": "Chỉ định các đường dẫn cần bao gồm, bỏ qua tất cả các đường dẫn khác"
   },
   "footer": {
     "copyright": "HackDeepWiki - Tài liệu hỗ trợ bởi AI cho repository"
@@ -106,7 +122,20 @@
     "codeVersionCheck": "Kiểm tra phiên bản",
     "codeAgentError": "Lỗi tác nhân mã",
     "codeAgentConnectionError": "Lỗi: mất kết nối với tác nhân mã. Gửi lại tin nhắn để thử lại.",
-    "codeRepoNotCloned": "Kho lưu trữ chưa có bản sao cục bộ. Hãy tạo wiki trước để kho được nhân bản cục bộ."
+    "codeRepoNotCloned": "Kho lưu trữ chưa có bản sao cục bộ. Hãy tạo wiki trước để kho được nhân bản cục bộ.",
+    "title": "Trò chuyện về kho lưu trữ",
+    "newChat": "Cuộc trò chuyện mới",
+    "chatHistory": "Lịch sử trò chuyện",
+    "messages": "tin nhắn",
+    "deleteChat": "Xóa cuộc trò chuyện",
+    "deleteChatConfirm": "Xóa cuộc trò chuyện này và toàn bộ lịch sử?",
+    "clearConversation": "Xóa cuộc trò chuyện",
+    "download": "Tải xuống",
+    "you": "Bạn",
+    "assistant": "Trợ lý",
+    "thinking": "Đang suy nghĩ...",
+    "process": "Quá trình",
+    "emptyConversation": "Đặt câu hỏi để bắt đầu cuộc trò chuyện."
   },
   "repoPage": {
     "refreshWiki": "Làm mới Wiki",
@@ -137,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "Chỉnh sửa",
+    "editInstructionPlaceholder": "Cho AI biết cần thay đổi gì (tùy chọn)...",
+    "askAi": "Hỏi AI",
+    "save": "Lưu"
   },
   "nav": {
     "wikiProjects": "Danh sách dự án"
@@ -204,5 +237,16 @@
     "updatePending": "các tác nhân đang chạy giữ phiên bản cũ cho đến khi khởi động lại",
     "working": "Đang làm việc…",
     "idle": "Sẵn sàng"
+  },
+  "diagram": {
+    "title": "Chế độ xem sơ đồ",
+    "renderError": "Lỗi hiển thị sơ đồ",
+    "syntaxError": "Sơ đồ chứa cú pháp Mermaid không hợp lệ và không thể hiển thị.",
+    "source": "Mã nguồn sơ đồ",
+    "rendering": "Đang hiển thị sơ đồ...",
+    "clickToZoom": "Nhấp để phóng to",
+    "zoomOut": "Thu nhỏ",
+    "zoomIn": "Phóng to",
+    "resetZoom": "Đặt lại thu phóng"
   }
 }

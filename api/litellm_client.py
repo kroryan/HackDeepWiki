@@ -1,5 +1,6 @@
 import os
-from typing import Optional, Callable
+from typing import Callable, Optional
+
 from openai import AsyncOpenAI, OpenAI
 
 from api.openai_client import OpenAIClient

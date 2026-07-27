@@ -13,12 +13,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, List, Optional
 
-from api.vuln_scanner import dep_parser, osv_client, nvd_client, llm_analyzer
+from api.vuln_scanner import dep_parser, llm_analyzer, nvd_client, osv_client
 from api.vuln_scanner.models import (
+    SEVERITY_RANKS,
     CVEFinding,
     Dependency,
     GraphData,
-    SEVERITY_RANKS,
     VulnReport,
     build_graph,
 )

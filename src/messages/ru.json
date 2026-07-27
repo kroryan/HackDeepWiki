@@ -96,7 +96,14 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "Аудитория вики",
+    "audienceDeveloper": "Для разработчиков",
+    "audienceDeveloperDescription": "Архитектура, реализация и детали на уровне кода",
+    "audienceUser": "Для конечных пользователей",
+    "audienceUserDescription": "Установка, настройка, функции и использование -- без исходного кода",
+    "pageCount": "Количество страниц",
+    "pageCountHelp": "Выберите от {min} до {max} страниц. Подробный режим по умолчанию 10, краткий -- 5."
   },
   "footer": {
     "copyright": "HackDeepWiki — документация с поддержкой ИИ для репозиториев кода"
@@ -115,7 +122,20 @@
     "codeVersionCheck": "Проверка версии",
     "codeAgentError": "Ошибка агента кода",
     "codeAgentConnectionError": "Ошибка: соединение с агентом кода потеряно. Отправьте сообщение ещё раз.",
-    "codeRepoNotCloned": "У репозитория ещё нет локального клона. Сначала сгенерируйте вики, чтобы репозиторий был клонирован локально."
+    "codeRepoNotCloned": "У репозитория ещё нет локального клона. Сначала сгенерируйте вики, чтобы репозиторий был клонирован локально.",
+    "title": "Чат репозитория",
+    "newChat": "Новый чат",
+    "chatHistory": "История чатов",
+    "messages": "сообщений",
+    "deleteChat": "Удалить чат",
+    "deleteChatConfirm": "Удалить этот чат и всю его историю?",
+    "clearConversation": "Очистить беседу",
+    "download": "Скачать",
+    "you": "Вы",
+    "assistant": "Ассистент",
+    "thinking": "Думаю...",
+    "process": "Процесс",
+    "emptyConversation": "Задайте вопрос, чтобы начать беседу."
   },
   "repoPage": {
     "refreshWiki": "Обновить Wiki",
@@ -146,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "Редактировать",
+    "editInstructionPlaceholder": "Скажите ИИ, что изменить (необязательно)...",
+    "askAi": "Спросить ИИ",
+    "save": "Сохранить"
   },
   "nav": {
     "wikiProjects": "Проекты Wiki"
@@ -213,5 +237,16 @@
     "updatePending": "активные агенты используют предыдущую версию до перезапуска",
     "working": "Работает…",
     "idle": "Готов"
+  },
+  "diagram": {
+    "title": "Просмотр диаграммы",
+    "renderError": "Ошибка отрисовки диаграммы",
+    "syntaxError": "Диаграмма содержит недопустимый синтаксис Mermaid и не может быть отрисована.",
+    "source": "Исходный код диаграммы",
+    "rendering": "Отрисовка диаграммы...",
+    "clickToZoom": "Нажмите для увеличения",
+    "zoomOut": "Уменьшить",
+    "zoomIn": "Увеличить",
+    "resetZoom": "Сбросить масштаб"
   }
 }

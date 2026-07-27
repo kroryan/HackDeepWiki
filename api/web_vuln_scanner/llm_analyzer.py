@@ -100,8 +100,8 @@ async def analyze_web_findings(
     model flagged as likely false positives -- never removes them, just
     annotates, so the user can judge for themselves."""
     try:
-        from api.config import get_model_config
         from api.agent_loop import stream_chat
+        from api.config import get_model_config
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLM modules unavailable for web scan analysis: %s", exc)
         return []

@@ -16,13 +16,13 @@ alongside the wiki itself (100% portable, no extra dependencies).
 """
 
 from api.vuln_scanner.models import (
-    Dependency,
-    CVEFinding,
-    VulnReport,
-    GraphData,
-    GraphNode,
-    GraphLink,
     SEVERITY_ORDER,
+    CVEFinding,
+    Dependency,
+    GraphData,
+    GraphLink,
+    GraphNode,
+    VulnReport,
     severity_from_score,
 )
 

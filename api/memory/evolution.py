@@ -8,6 +8,17 @@ import subprocess
 from typing import Optional
 
 HISTORY_BATCH = 25
+
+
+def _git() -> str:
+    """Resolved git binary; falls back to bare "git" so these best-effort
+    helpers keep their return-empty-on-failure contract instead of raising
+    GitNotFoundError (the clone that got us here already provisioned git)."""
+    try:
+        from api.git_exe import git_executable
+        return git_executable()
+    except Exception:
+        return "git"
 MAX_HISTORY_COMMITS = 2000
 CHECKPOINT_TARGET = 20
 MIN_CHECKPOINT_STRIDE = 10
@@ -23,7 +34,7 @@ def is_shallow_clone(clone_dir: Optional[str]) -> bool:
         return False
     try:
         out = subprocess.run(
-            ["git", "-C", clone_dir, "rev-parse", "--is-shallow-repository"],
+            [_git(), "-C", clone_dir, "rev-parse", "--is-shallow-repository"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -40,7 +51,7 @@ def ensure_deep_clone(clone_dir: Optional[str]) -> bool:
         return bool(clone_dir)
     try:
         subprocess.run(
-            ["git", "-C", clone_dir, "fetch", "--unshallow", "--tags"],
+            [_git(), "-C", clone_dir, "fetch", "--unshallow", "--tags"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -56,7 +67,7 @@ def git_history_records(clone_dir: str) -> list[dict]:
     try:
         out = subprocess.run(
             [
-                "git",
+                _git(),
                 "-C",
                 clone_dir,
                 "log",
@@ -94,7 +105,7 @@ def git_history_records(clone_dir: str) -> list[dict]:
 def git_history_count(clone_dir: str) -> int:
     try:
         out = subprocess.run(
-            ["git", "-C", clone_dir, "rev-list", "--count", "HEAD"],
+            [_git(), "-C", clone_dir, "rev-list", "--count", "HEAD"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -131,7 +142,7 @@ def git_progress_stat(clone_dir: str, old: str, new: str) -> str:
     try:
         out = subprocess.run(
             [
-                "git",
+                _git(),
                 "-C",
                 clone_dir,
                 "diff",
@@ -223,7 +234,7 @@ def git_commit_range_detailed(
     try:
         out = subprocess.run(
             [
-                "git",
+                _git(),
                 "-C",
                 clone_dir,
                 "log",
@@ -257,7 +268,7 @@ def git_history_stats(clone_dir: str) -> str:
         ]
         results = [
             subprocess.run(
-                ["git", "-C", clone_dir, *command],
+                [_git(), "-C", clone_dir, *command],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -289,7 +300,7 @@ def git_commit_range(
     try:
         out = subprocess.run(
             [
-                "git",
+                _git(),
                 "-C",
                 clone_dir,
                 "log",
@@ -319,7 +330,7 @@ def git_diff_stat(
         return ""
     try:
         out = subprocess.run(
-            ["git", "-C", clone_dir, "diff", "--stat=120", f"{old}..{new}"],
+            [_git(), "-C", clone_dir, "diff", "--stat=120", f"{old}..{new}"],
             capture_output=True,
             text=True,
             encoding="utf-8",

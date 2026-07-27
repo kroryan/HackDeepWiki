@@ -85,7 +85,25 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "Wiki 受眾",
+    "audienceDeveloper": "面向開發者",
+    "audienceDeveloperDescription": "架構、實作和程式碼層級細節",
+    "audienceUser": "面向終端使用者",
+    "audienceUserDescription": "安裝、設定、功能和使用 -- 不含原始碼",
+    "pageCount": "頁面數量",
+    "pageCountHelp": "在 {min} 到 {max} 頁之間選擇。全面模式預設 10 頁，簡潔模式預設 5 頁。",
+    "includedDirs": "包含的目錄",
+    "includedFiles": "包含的檔案",
+    "enterIncludedDirs": "輸入要包含的目錄，每行一個...",
+    "enterIncludedFiles": "輸入要包含的檔案，每行一個...",
+    "filterMode": "篩選模式",
+    "excludeMode": "排除路徑",
+    "includeMode": "僅包含路徑",
+    "excludeModeDescription": "指定要從處理中排除的路徑（預設行為）",
+    "includeModeDescription": "僅指定要包含的路徑，忽略其他所有路徑",
+    "authorizationCode": "授權碼",
+    "authorizationRequired": "產生 Wiki 需要身分驗證。"
   },
   "footer": {
     "copyright": "HackDeepWiki - 為程式碼儲存庫提供 AI 驅動的文件"
@@ -104,7 +122,20 @@
     "codeVersionCheck": "版本檢查",
     "codeAgentError": "程式碼代理錯誤",
     "codeAgentConnectionError": "錯誤：與程式碼代理的連線已中斷。請重新傳送訊息重試。",
-    "codeRepoNotCloned": "該儲存庫尚無本機克隆。請先產生 wiki，以便將儲存庫克隆到本機。"
+    "codeRepoNotCloned": "該儲存庫尚無本機克隆。請先產生 wiki，以便將儲存庫克隆到本機。",
+    "title": "儲存庫聊天",
+    "newChat": "新聊天",
+    "chatHistory": "聊天記錄",
+    "messages": "則訊息",
+    "deleteChat": "刪除聊天",
+    "deleteChatConfirm": "刪除此聊天及其全部歷史記錄？",
+    "clearConversation": "清空對話",
+    "download": "下載",
+    "you": "你",
+    "assistant": "助手",
+    "thinking": "思考中...",
+    "process": "過程",
+    "emptyConversation": "提出問題以開始對話。"
   },
   "repoPage": {
     "refreshWiki": "重新整理 Wiki",
@@ -135,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "編輯",
+    "editInstructionPlaceholder": "告訴 AI 要修改什麼（可選）...",
+    "askAi": "詢問 AI",
+    "save": "儲存"
   },
   "nav": {
     "wikiProjects": "專案清單"
@@ -202,5 +237,16 @@
     "updatePending": "執行中的代理在重新啟動前繼續使用舊版本",
     "working": "工作中…",
     "idle": "就緒"
+  },
+  "diagram": {
+    "title": "圖表檢視",
+    "renderError": "圖表渲染錯誤",
+    "syntaxError": "圖表包含無效的 Mermaid 語法，無法渲染。",
+    "source": "圖表原始碼",
+    "rendering": "正在渲染圖表...",
+    "clickToZoom": "點擊縮放",
+    "zoomOut": "縮小",
+    "zoomIn": "放大",
+    "resetZoom": "重置縮放"
   }
 }

@@ -29,6 +29,11 @@
     "version": "1.0.1",
     "commit": "74f58494fa0c57fade8b938fdac43dee939446af"
   },
+  "mingit": {
+    "version": "2.55.0.3",
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip",
+    "sha256": "f48e2d2dc74a24454adc6d8fd0ac25bf9c2386f19cfb06202b9465aaad4f9f05"
+  },
   "appimage": {
     "tool": {
       "url": "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage",

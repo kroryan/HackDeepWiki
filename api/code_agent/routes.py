@@ -36,6 +36,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 
+from api.chat_common import capture_chat_exchange
 from api.code_agent import events as oc_events
 from api.code_agent.binary import (
     OPENCODE_VERSION,
@@ -43,13 +44,13 @@ from api.code_agent.binary import (
     installed_opencode_version,
     resolve_opencode_binary,
 )
+from api.code_agent.config import describe_target, map_provider
 from api.code_agent.context import build_code_session_context
 from api.code_agent.manager import (
     CodeAgentError,
     repo_key_for,
     repo_worktree_fingerprint,
 )
-from api.code_agent.service import code_agent as manager
 from api.code_agent.models import (
     CodeAbortRequest,
     CodeAgentUpdateRequest,
@@ -57,8 +58,7 @@ from api.code_agent.models import (
     CodeSessionRequest,
     CodeSessionResponse,
 )
-from api.code_agent.config import describe_target, map_provider
-from api.chat_common import capture_chat_exchange
+from api.code_agent.service import code_agent as manager
 from api.security import (
     authorization_is_valid,
     authorize_websocket,

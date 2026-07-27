@@ -1,55 +1,56 @@
 """OpenAI ModelClient integration."""
 
-import json
-import os
 import base64
-from typing import (
-    Dict,
-    Sequence,
-    Optional,
-    List,
-    Any,
-    TypeVar,
-    Callable,
-    Generator,
-    Union,
-    Literal,
-)
-import re
-
+import json
 import logging
+import os
+import re
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+)
+
 import backoff
 
 # optional import
-from adalflow.utils.lazy_import import safe_import, OptionalPackages
+from adalflow.utils.lazy_import import OptionalPackages, safe_import
 from openai.types.chat.chat_completion import Choice
 
 openai = safe_import(OptionalPackages.OPENAI.value[0], OptionalPackages.OPENAI.value[1])
 
-from openai import OpenAI, AsyncOpenAI, Stream
+from adalflow.components.model_client.utils import parse_embedding_response
+from adalflow.core.model_client import ModelClient
+from adalflow.core.types import (
+    CompletionUsage,
+    EmbedderOutput,
+    GeneratorOutput,
+    ModelType,
+    TokenLogProb,
+)
 from openai import (
     APITimeoutError,
-    InternalServerError,
-    RateLimitError,
-    UnprocessableEntityError,
+    AsyncOpenAI,
     BadRequestError,
+    InternalServerError,
+    OpenAI,
+    RateLimitError,
+    Stream,
+    UnprocessableEntityError,
 )
 from openai.types import (
     Completion,
     CreateEmbeddingResponse,
     Image,
 )
-from openai.types.chat import ChatCompletionChunk, ChatCompletion, ChatCompletionMessage
-
-from adalflow.core.model_client import ModelClient
-from adalflow.core.types import (
-    ModelType,
-    EmbedderOutput,
-    TokenLogProb,
-    CompletionUsage,
-    GeneratorOutput,
-)
-from adalflow.components.model_client.utils import parse_embedding_response
+from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")

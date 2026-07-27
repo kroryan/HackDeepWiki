@@ -29,7 +29,7 @@ import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from api.web_vuln_scanner.models import WebFinding, WebVulnReport
+from api.web_vuln_scanner.models import WebVulnReport
 
 logger = logging.getLogger(__name__)
 

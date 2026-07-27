@@ -18,8 +18,8 @@ clear error instead of a crash. Downloads are atomic (temp file + rename) so
 a killed download never leaves a half-written binary behind.
 """
 
-import logging
 import hashlib
+import logging
 import os
 import platform
 import re
@@ -35,8 +35,8 @@ import zipfile
 from contextlib import contextmanager
 from typing import Awaitable, Callable, Optional
 
-from api.data_root import get_data_root
 from api.component_manifest import component_manifest
+from api.data_root import get_data_root
 
 logger = logging.getLogger(__name__)
 

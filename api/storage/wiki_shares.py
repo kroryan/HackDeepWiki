@@ -88,7 +88,6 @@ def resolve_share(share_id: str) -> Optional[dict]:
     # Expiry is advisory (a share is local-first; there's no scheduler to
     # reap), but we honor it at resolve time so an expired link 404s.
     if d.get("expires_at"):
-        import sqlite3
         expired = conn.execute(
             "SELECT 1 FROM wiki_shares WHERE id=? AND expires_at < datetime('now')", (share_id,)
         ).fetchone() if False else None  # cheap check below instead

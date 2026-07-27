@@ -1,29 +1,34 @@
 import asyncio
 import logging
 import os
-from typing import Optional, Dict, Any
 from urllib.parse import unquote
 
-from fastapi import WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import WebSocket, WebSocketDisconnect
 
+from api import search_tool, zim_reader
+from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
+from api.chat_models import (  # noqa: F401 (ChatMessage re-exported for callers)
+    ChatCompletionRequest,
+    ChatMessage,
+)
 from api.config import (
-    get_model_config,
-    configs,
-    OPENROUTER_API_KEY,
-    OPENAI_API_KEY,
-    LITELLM_API_KEY,
     AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY,
-    normalize_language,
+    LITELLM_API_KEY,
+    OPENAI_API_KEY,
+    OPENROUTER_API_KEY,
+    get_model_config,
     language_display_name,
+    normalize_language,
 )
-from api.agent_loop import MAX_TOOL_ROUNDS, run_agent_chat, run_native_tool_chat, stream_chat
-from api.chat_models import ChatCompletionRequest, ChatMessage  # noqa: F401 (ChatMessage re-exported for callers)
 from api.context_budget import summarize_file_tree_in_query
 from api.data_pipeline import count_tokens, get_file_content
+
+# Configure logging
+from api.logging_config import setup_logging
 from api.prompts import (
-    DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
     DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
+    DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
     DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT,
     SIMPLE_CHAT_SYSTEM_PROMPT,
     SIMPLE_CHAT_SYSTEM_PROMPT_WEBSITE,
@@ -32,11 +37,6 @@ from api.prompts import (
     prepend_no_think,
 )
 from api.rag import RAG
-from api import search_tool
-from api import zim_reader
-
-# Configure logging
-from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -45,15 +45,14 @@ logger = logging.getLogger(__name__)
 # api.chat_common now, shared with simple_chat.py so the two transports
 # can't drift on the fallback path (Fase 8.2). Previously these were
 # hand-mirrored here and in simple_chat.py with cross-referencing comments.
-from api.stream_events import is_process_frame
 from api.chat_common import (
-    MAX_FALLBACK_QUERY_CHARS,
+    apply_memory_to_system_prompt,
+    apply_skills_to_system_prompt,
+    capture_chat_exchange,
     is_context_limit_error,
     truncate_query_for_fallback,
-    apply_skills_to_system_prompt,
-    apply_memory_to_system_prompt,
-    capture_chat_exchange,
 )
+from api.stream_events import is_process_frame
 
 # Back-compat alias for the original private name this module used internally
 # and that callers in this file still reference.
@@ -707,7 +706,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                         await websocket.send_text(text)
                 except Exception as e2:
                     logger.error(f"Error in fallback streaming response: {str(e2)}")
-                    await websocket.send_text(f"\nI apologize, but your request is too large for me to process. Please try a shorter query or break it into smaller parts.")
+                    await websocket.send_text("\nI apologize, but your request is too large for me to process. Please try a shorter query or break it into smaller parts.")
                     # Close the WebSocket connection after sending the error message
                     await websocket.close()
             else:

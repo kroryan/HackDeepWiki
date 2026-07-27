@@ -31,7 +31,11 @@ from api.web_vuln_scanner.checks import (
     check_tls,
 )
 from api.web_vuln_scanner.docker_tools import run_docker_toolkit
-from api.web_vuln_scanner.fingerprint import fingerprint_page, js_libs_to_osv_queries, known_server_cves
+from api.web_vuln_scanner.fingerprint import (
+    fingerprint_page,
+    js_libs_to_osv_queries,
+    known_server_cves,
+)
 from api.web_vuln_scanner.models import SEVERITY_RANKS, WebFinding, WebVulnReport
 from api.web_vuln_scanner.portscan import scan_ports
 

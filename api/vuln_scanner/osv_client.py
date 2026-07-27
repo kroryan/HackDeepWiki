@@ -137,7 +137,6 @@ def _extract_severity(record: dict) -> Tuple[str, Optional[float]]:
         if isinstance(raw, str):
             # NVD-style vector string sometimes carries a numeric score in
             # database_specific; try to parse a trailing number, else None.
-            m = None
             score = _cvss_score_from_vector(raw)
             if score is not None:
                 break

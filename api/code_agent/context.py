@@ -57,7 +57,7 @@ def _maybe_backfill_wiki_commit(cached, owner: str, repo: str, repo_type: str,
         return None
     try:
         import json
-        import os
+
         from api.wiki_cache_paths import list_cache_files
 
         files = list_cache_files(repo_type, owner, repo, language)

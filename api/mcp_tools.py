@@ -211,8 +211,8 @@ def list_wiki_structure(owner: str, repo: str, language: str = "en",
 def read_file(owner: str, repo: str, path: str, repo_type: str = "github") -> str:
     # Resolve the local clone path the same way the app does (repos/<owner>_<repo>).
     try:
-        from api.data_root import get_data_root
         from api.data_pipeline import get_local_file_content
+        from api.data_root import get_data_root
         clone_dir = os.path.join(get_data_root(), "repos", f"{owner}_{repo}")
         if not os.path.isdir(clone_dir):
             return f"Repository {owner}/{repo} is not cloned locally. Generate its wiki first."
@@ -242,8 +242,8 @@ def ask_repo(owner: str, repo: str, question: str, repo_type: str = "github") ->
     calling agent stays in control of synthesis and there's no recursive
     model call inside a tool)."""
     try:
-        from api.rag import RAG
         from api.data_pipeline import DatabaseManager
+        from api.rag import RAG
         # DatabaseManager.prepare_retriever loads/creates the embedding index
         # for owner/repo exactly as the chat path does.
         mgr = DatabaseManager()

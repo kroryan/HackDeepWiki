@@ -1,17 +1,16 @@
 """AWS Bedrock ModelClient integration."""
 
 import asyncio
-import os
 import json
 import logging
 import threading
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
+
+import backoff
 import boto3
 import botocore
-import backoff
-from typing import Dict, Any, Optional, List, Generator, Union, AsyncGenerator, Sequence
-
 from adalflow.core.model_client import ModelClient
-from adalflow.core.types import ModelType, GeneratorOutput, EmbedderOutput
+from adalflow.core.types import EmbedderOutput, ModelType
 
 # Configure logging
 from api.logging_config import setup_logging
@@ -59,10 +58,10 @@ class BedrockClient(ModelClient):
         super().__init__(*args, **kwargs)
         from api.config import (
             AWS_ACCESS_KEY_ID,
-            AWS_SECRET_ACCESS_KEY,
-            AWS_SESSION_TOKEN,
             AWS_REGION,
             AWS_ROLE_ARN,
+            AWS_SECRET_ACCESS_KEY,
+            AWS_SESSION_TOKEN,
         )
 
         self.aws_access_key_id = aws_access_key_id or AWS_ACCESS_KEY_ID
@@ -512,7 +511,7 @@ class BedrockClient(ModelClient):
                 request_body["topP"] = api_kwargs["top_p"]
 
         body = json.dumps(request_body)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         queue: "asyncio.Queue[Any]" = asyncio.Queue()
         _DONE = object()
 

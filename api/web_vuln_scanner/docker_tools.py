@@ -566,7 +566,7 @@ def run_testssl(hostname: str) -> List[WebFinding]:
                 description=finding_text,
                 evidence=finding_text[:200],
                 cve_id=cve.split()[0] if cve else None,
-                references=[f"https://testssl.sh/"] if not cve else [f"https://osv.dev/vulnerability/{cve.split()[0]}"],
+                references=["https://testssl.sh/"] if not cve else [f"https://osv.dev/vulnerability/{cve.split()[0]}"],
                 remediation=f"Review testssl's '{category}' finding ({finding_id}) and adjust the server's TLS configuration accordingly.",
             ))
     return findings
@@ -1003,7 +1003,7 @@ def run_semgrep(repo_dir: str) -> List[WebFinding]:
             category="exposure",
             severity=severity,
             title=message[:120],
-            description=message,
+            description=message + (f" [{', '.join(str(c) for c in cwe_ids)}]" if cwe_ids else ""),
             url=path,
             evidence=f"{path}:{start_line}" if start_line else path,
             references=metadata.get("references", []) or [],

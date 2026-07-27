@@ -96,7 +96,14 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "Public du wiki",
+    "audienceDeveloper": "Pour les développeurs",
+    "audienceDeveloperDescription": "Architecture, implémentation et détails au niveau du code",
+    "audienceUser": "Pour les utilisateurs finaux",
+    "audienceUserDescription": "Installation, configuration, fonctionnalités et utilisation -- sans code source",
+    "pageCount": "Nombre de pages",
+    "pageCountHelp": "Choisissez entre {min} et {max} pages. Le mode complet est de 10 par défaut et le mode concis de 5."
   },
   "footer": {
     "copyright": "HackDeepWiki - Documentation assistée par l'IA pour les dépôts de code"
@@ -115,7 +122,20 @@
     "codeVersionCheck": "Vérification de version",
     "codeAgentError": "Erreur de l'agent de code",
     "codeAgentConnectionError": "Erreur : connexion à l'agent de code perdue. Renvoyez le message pour réessayer.",
-    "codeRepoNotCloned": "Le dépôt n'a pas encore de clone local. Générez d'abord le wiki pour que le dépôt soit cloné localement."
+    "codeRepoNotCloned": "Le dépôt n'a pas encore de clone local. Générez d'abord le wiki pour que le dépôt soit cloné localement.",
+    "title": "Discussion du dépôt",
+    "newChat": "Nouvelle conversation",
+    "chatHistory": "Historique des conversations",
+    "messages": "messages",
+    "deleteChat": "Supprimer la conversation",
+    "deleteChatConfirm": "Supprimer cette conversation et tout son historique ?",
+    "clearConversation": "Effacer la conversation",
+    "download": "Télécharger",
+    "you": "Vous",
+    "assistant": "Assistant",
+    "thinking": "Réflexion...",
+    "process": "Processus",
+    "emptyConversation": "Posez une question pour démarrer cette conversation."
   },
   "repoPage": {
     "refreshWiki": "Rafraîchir le Wiki",
@@ -146,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "Modifier",
+    "editInstructionPlaceholder": "Dites à l'IA quoi modifier (facultatif)...",
+    "askAi": "Demander à l'IA",
+    "save": "Enregistrer"
   },
   "nav": {
     "wikiProjects": "Projets Wiki"
@@ -213,5 +237,16 @@
     "updatePending": "les agents actifs conservent la version précédente jusqu'à leur redémarrage",
     "working": "En cours…",
     "idle": "Prêt"
+  },
+  "diagram": {
+    "title": "Vue du diagramme",
+    "renderError": "Erreur de rendu du diagramme",
+    "syntaxError": "Le diagramme contient une syntaxe Mermaid non valide et n'a pas pu être rendu.",
+    "source": "Source du diagramme",
+    "rendering": "Rendu du diagramme...",
+    "clickToZoom": "Cliquez pour zoomer",
+    "zoomOut": "Zoom arrière",
+    "zoomIn": "Zoom avant",
+    "resetZoom": "Réinitialiser le zoom"
   }
 }

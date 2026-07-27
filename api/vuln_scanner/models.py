@@ -141,7 +141,7 @@ class GraphData:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "nodes": [n.to_dict() for n in self.nodes],
-            "links": [l.to_dict() for l in self.links],
+            "links": [link.to_dict() for link in self.links],
         }
 
 

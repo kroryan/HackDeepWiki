@@ -21,7 +21,6 @@ at runtime; ``list_pricing`` returns the table for an admin UI.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Optional
 
 from api.storage import connect, profile_db_path

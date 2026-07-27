@@ -24,10 +24,11 @@ def component_manifest() -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("schema") != 1:
         raise RuntimeError("Unsupported build/components.json schema")
-    for component in ("node", "opencode", "engraphis", "appimage"):
+    for component in ("node", "opencode", "engraphis", "appimage", "mingit"):
         if component not in data:
             raise RuntimeError(f"Component manifest is missing {component}")
     hashes: list[str] = []
+    hashes.append(data["mingit"]["sha256"])
     hashes.extend(data["opencode"]["assets"].values())
     hashes.extend(
         asset["sha256"] for asset in data["node"]["assets"].values()
@@ -54,5 +55,6 @@ def public_component_inventory() -> dict[str, Any]:
             "version": manifest["engraphis"]["version"],
             "commit": manifest["engraphis"]["commit"],
         },
+        "mingit": {"version": manifest["mingit"]["version"]},
         "appimage": {"verified": True},
     }

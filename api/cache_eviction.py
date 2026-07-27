@@ -38,9 +38,9 @@ import time
 from typing import Optional
 
 from api.wiki_cache_paths import (
+    LEGACY_WIKI_CACHE_FILE_PREFIX,
     WIKI_CACHE_DIR,
     WIKI_CACHE_FILE_PREFIX,
-    LEGACY_WIKI_CACHE_FILE_PREFIX,
 )
 
 logger = logging.getLogger(__name__)

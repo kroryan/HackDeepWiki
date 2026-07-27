@@ -15,15 +15,14 @@ Robustness strategy (this must never break a report):
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 import re
 from typing import Awaitable, Callable, List, Optional
 
-from api.vuln_scanner.models import CVEFinding, SEVERITY_ORDER
-from api.vuln_scanner.prompts import build_analysis_prompt, build_stack_summary
+from api.vuln_scanner.models import SEVERITY_ORDER, CVEFinding
+from api.vuln_scanner.prompts import build_analysis_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -208,8 +207,8 @@ async def analyze_findings(
     # Lazily import the LLM facade + config so a misconfigured provider never
     # breaks the report (defaults already applied above).
     try:
-        from api.config import get_model_config
         from api.agent_loop import stream_chat
+        from api.config import get_model_config
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLM modules unavailable, using defaults only: %s", exc)
         if on_progress:

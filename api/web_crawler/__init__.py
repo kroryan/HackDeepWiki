@@ -15,7 +15,7 @@ a lighter requests-only crawler specifically to handle JS-rendered sites.
 BeautifulSoup + markdownify do the HTML -> Markdown conversion.
 """
 
-from api.web_crawler.models import CrawlPage, CrawlScope, CrawlProgress
 from api.web_crawler.crawler import crawl_site
+from api.web_crawler.models import CrawlPage, CrawlProgress, CrawlScope
 
 __all__ = ["CrawlPage", "CrawlScope", "CrawlProgress", "crawl_site"]

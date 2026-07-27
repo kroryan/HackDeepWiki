@@ -10,7 +10,7 @@ import re
 import socket
 import ssl
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List
 from urllib.parse import urljoin, urlparse
 
 import requests

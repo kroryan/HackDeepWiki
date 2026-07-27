@@ -26,7 +26,7 @@ import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import BinaryIO, Callable, Dict, List, Optional, Set
 from urllib.parse import quote, urljoin
@@ -35,7 +35,11 @@ import mwparserfromhell
 
 from api.web_crawler.models import CrawlPage
 from api.web_crawler.site_store import (
-    page_to_relpath, read_site_meta, website_local_dir, write_page, write_site_meta,
+    page_to_relpath,
+    read_site_meta,
+    website_local_dir,
+    write_page,
+    write_site_meta,
 )
 
 logger = logging.getLogger(__name__)

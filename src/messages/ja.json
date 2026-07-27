@@ -87,7 +87,23 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "Wikiの対象読者",
+    "audienceDeveloper": "開発者向け",
+    "audienceDeveloperDescription": "アーキテクチャ、実装、コードレベルの詳細",
+    "audienceUser": "エンドユーザー向け",
+    "audienceUserDescription": "インストール、設定、機能、使い方 -- ソースコードなし",
+    "pageCount": "ページ数",
+    "pageCountHelp": "{min}〜{max}ページの間で選択してください。網羅的モードは既定で10ページ、簡潔モードは5ページです。",
+    "includedDirs": "含めるディレクトリ",
+    "includedFiles": "含めるファイル",
+    "enterIncludedDirs": "含めるディレクトリを1行に1つずつ入力...",
+    "enterIncludedFiles": "含めるファイルを1行に1つずつ入力...",
+    "filterMode": "フィルターモード",
+    "excludeMode": "パスを除外",
+    "includeMode": "指定パスのみを含める",
+    "excludeModeDescription": "処理から除外するパスを指定（デフォルトの動作）",
+    "includeModeDescription": "含めるパスのみを指定し、それ以外はすべて無視"
   },
   "footer": {
     "copyright": "HackDeepWiki - コードリポジトリのためのAI駆動ドキュメンテーション"
@@ -106,7 +122,20 @@
     "codeVersionCheck": "バージョン確認",
     "codeAgentError": "コードエージェントエラー",
     "codeAgentConnectionError": "エラー：コードエージェントとの接続が切断されました。もう一度メッセージを送信してください。",
-    "codeRepoNotCloned": "リポジトリのローカルクローンがまだありません。先にウィキを生成してリポジトリをローカルにクローンしてください。"
+    "codeRepoNotCloned": "リポジトリのローカルクローンがまだありません。先にウィキを生成してリポジトリをローカルにクローンしてください。",
+    "title": "リポジトリチャット",
+    "newChat": "新しいチャット",
+    "chatHistory": "チャット履歴",
+    "messages": "件のメッセージ",
+    "deleteChat": "チャットを削除",
+    "deleteChatConfirm": "このチャットと履歴をすべて削除しますか？",
+    "clearConversation": "会話をクリア",
+    "download": "ダウンロード",
+    "you": "あなた",
+    "assistant": "アシスタント",
+    "thinking": "考え中...",
+    "process": "プロセス",
+    "emptyConversation": "質問を入力して会話を始めてください。"
   },
   "repoPage": {
     "refreshWiki": "Wikiを更新",
@@ -137,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "編集",
+    "editInstructionPlaceholder": "AIに変更内容を指示（任意）...",
+    "askAi": "AIに質問",
+    "save": "保存"
   },
   "nav": {
     "wikiProjects": "プロジェクト一覧"
@@ -204,5 +237,16 @@
     "updatePending": "実行中のエージェントは再起動するまで以前のバージョンを使用します",
     "working": "作業中…",
     "idle": "待機中"
+  },
+  "diagram": {
+    "title": "図の表示",
+    "renderError": "図のレンダリングエラー",
+    "syntaxError": "図に無効なMermaid構文が含まれているため、レンダリングできませんでした。",
+    "source": "図のソース",
+    "rendering": "図をレンダリング中...",
+    "clickToZoom": "クリックでズーム",
+    "zoomOut": "縮小",
+    "zoomIn": "拡大",
+    "resetZoom": "ズームをリセット"
   }
 }

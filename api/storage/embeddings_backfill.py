@@ -31,7 +31,6 @@ import os
 from typing import Optional
 
 from api.data_root import get_data_root as get_adalflow_default_root_path
-from api.storage import connect, repo_db_path
 from api.storage import embeddings as embeddings_store
 
 logger = logging.getLogger(__name__)

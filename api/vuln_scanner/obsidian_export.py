@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 SEVERITY_COLORS: Dict[str, str] = {
     "CRITICAL": "#ff3333",
@@ -45,7 +45,6 @@ def _safe_filename(name: str) -> str:
 def _md_finding(f: Dict[str, Any]) -> str:
     """One finding as a Markdown block for a subsection note."""
     sev = f.get("severity", "UNKNOWN")
-    color = SEVERITY_COLORS.get(sev, SEVERITY_COLORS["UNKNOWN"])
     lines: List[str] = []
     lines.append(f"## `{f.get('id', '')}`")
     lines.append("")
@@ -131,9 +130,11 @@ def build_mermaid(report: Dict[str, Any]) -> str:
         key=lambda n: sev_rank.get(n.get("severity") or "UNKNOWN", 4),
     )[:40]
     keep = set(n["id"] for n in cve_nodes)
-    keep_links = [l for l in links if l.get("source") in keep or l.get("target") in keep]
-    for l in keep_links:
-        keep.add(l["source"]); keep.add(l["target"])
+    keep_links = [link for link in links
+                  if link.get("source") in keep or link.get("target") in keep]
+    for link in keep_links:
+        keep.add(link["source"])
+        keep.add(link["target"])
     keep_nodes = [n for n in nodes if n.get("id") in keep]
 
     def sid(i: str) -> str:
@@ -155,8 +156,8 @@ def build_mermaid(report: Dict[str, Any]) -> str:
             lines.append(f'  {s}["🛡️ {label}"]')
         else:
             lines.append(f'  {s}["📁 {label}"]')
-    for l in keep_links:
-        lines.append(f'  {sid(l["source"])} -->|{l.get("label","")}| {sid(l["target"])}')
+    for link in keep_links:
+        lines.append(f'  {sid(link["source"])} -->|{link.get("label","")}| {sid(link["target"])}')
     lines += [
         "  classDef crit fill:#ff3333,color:#fff;",
         "  classDef high fill:#ef4444,color:#fff;",
@@ -197,9 +198,11 @@ def build_canvas(report: Dict[str, Any]) -> Dict[str, Any]:
         key=lambda n: sev_rank.get(n.get("severity") or "UNKNOWN", 4),
     )[:60]
     keep = set(n["id"] for n in cve_nodes)
-    keep_links = [l for l in links if l.get("source") in keep or l.get("target") in keep]
-    for l in keep_links:
-        keep.add(l["source"]); keep.add(l["target"])
+    keep_links = [link for link in links
+                  if link.get("source") in keep or link.get("target") in keep]
+    for link in keep_links:
+        keep.add(link["source"])
+        keep.add(link["target"])
     keep_nodes = [n for n in nodes if n.get("id") in keep]
 
     canvas_nodes: List[Dict[str, Any]] = []
@@ -251,12 +254,12 @@ def build_canvas(report: Dict[str, Any]) -> Dict[str, Any]:
         })
 
     edges: List[Dict[str, Any]] = []
-    for i, l in enumerate(keep_links):
+    for i, link in enumerate(keep_links):
         edges.append({
             "id": f"e{i}",
-            "fromNode": l.get("source"),
-            "toNode": l.get("target"),
-            "label": l.get("label", ""),
+            "fromNode": link.get("source"),
+            "toNode": link.get("target"),
+            "label": link.get("label", ""),
         })
     return {"nodes": canvas_nodes, "edges": edges}
 

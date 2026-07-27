@@ -20,7 +20,6 @@ row back to its (repo, language, page_id) so a hit can deep-link.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Optional
 
 from api.storage import connect, profile_db_path

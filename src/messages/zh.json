@@ -87,7 +87,23 @@
     "fanwikiRegisterError": "Import finished, but failed to register the wiki.",
     "fanwikiWsError": "WebSocket error during import",
     "fanwikiCloseError": "Connection closed before import finished",
-    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved."
+    "fanwikiSuccess": "Imported {pages} page(s), {images} image(s), {links} link(s) resolved.",
+    "wikiAudience": "Wiki 受众",
+    "audienceDeveloper": "面向开发者",
+    "audienceDeveloperDescription": "架构、实现和代码级细节",
+    "audienceUser": "面向最终用户",
+    "audienceUserDescription": "安装、配置、功能和使用 -- 不含源代码",
+    "pageCount": "页面数量",
+    "pageCountHelp": "在 {min} 到 {max} 页之间选择。全面模式默认 10 页，简洁模式默认 5 页。",
+    "includedDirs": "包含的目录",
+    "includedFiles": "包含的文件",
+    "enterIncludedDirs": "输入要包含的目录，每行一个...",
+    "enterIncludedFiles": "输入要包含的文件，每行一个...",
+    "filterMode": "过滤模式",
+    "excludeMode": "排除路径",
+    "includeMode": "仅包含路径",
+    "excludeModeDescription": "指定要从处理中排除的路径（默认行为）",
+    "includeModeDescription": "仅指定要包含的路径，忽略其他所有路径"
   },
   "footer": {
     "copyright": "HackDeepWiki - 为代码仓库提供AI驱动的文档"
@@ -106,7 +122,20 @@
     "codeVersionCheck": "版本检查",
     "codeAgentError": "代码智能体错误",
     "codeAgentConnectionError": "错误：与代码智能体的连接已断开。请重新发送消息重试。",
-    "codeRepoNotCloned": "该仓库尚无本地克隆。请先生成 wiki，以便将仓库克隆到本地。"
+    "codeRepoNotCloned": "该仓库尚无本地克隆。请先生成 wiki，以便将仓库克隆到本地。",
+    "title": "仓库聊天",
+    "newChat": "新聊天",
+    "chatHistory": "聊天记录",
+    "messages": "条消息",
+    "deleteChat": "删除聊天",
+    "deleteChatConfirm": "删除此聊天及其全部历史记录？",
+    "clearConversation": "清空对话",
+    "download": "下载",
+    "you": "你",
+    "assistant": "助手",
+    "thinking": "思考中...",
+    "process": "过程",
+    "emptyConversation": "提出问题以开始对话。"
   },
   "repoPage": {
     "refreshWiki": "刷新Wiki",
@@ -137,7 +166,11 @@
     "modelNoPagesError": "The model did not return any pages for this wiki. Try generating again.",
     "backendConnectionError": "Connection to the HackDeepWiki backend was interrupted. The repository is valid; try generating again.",
     "analysisConnectionError": "The connection to the service was interrupted during analysis. You can try again without changing the repository URL.",
-    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help."
+    "generationErrorRetry": "The repository or site was read successfully; the problem occurred generating content with the AI model. Try again -- changing the model or reducing the number of pages may also help.",
+    "editPage": "编辑",
+    "editInstructionPlaceholder": "告诉 AI 要修改什么（可选）...",
+    "askAi": "询问 AI",
+    "save": "保存"
   },
   "nav": {
     "wikiProjects": "项目列表"
@@ -204,5 +237,16 @@
     "updatePending": "运行中的智能体在重启前继续使用旧版本",
     "working": "工作中…",
     "idle": "就绪"
+  },
+  "diagram": {
+    "title": "图表视图",
+    "renderError": "图表渲染错误",
+    "syntaxError": "图表包含无效的 Mermaid 语法，无法渲染。",
+    "source": "图表源码",
+    "rendering": "正在渲染图表...",
+    "clickToZoom": "点击缩放",
+    "zoomOut": "缩小",
+    "zoomIn": "放大",
+    "resetZoom": "重置缩放"
   }
 }

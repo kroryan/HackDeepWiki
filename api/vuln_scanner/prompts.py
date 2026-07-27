@@ -107,7 +107,6 @@ def build_stack_summary(deps) -> str:
 
     # surface notable frameworks
     notable = []
-    lowered = {(d.name.lower(), d.category) for d in deps}
     names = {d.name.lower() for d in deps}
     framework_signals = {
         "react": "React (frontend)", "vue": "Vue (frontend)",
