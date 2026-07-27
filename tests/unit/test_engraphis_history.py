@@ -31,6 +31,22 @@ GIT_ENV = {
 }
 
 
+# Disable git's background auto-maintenance for every command in this test.
+# Building 45 commits back-to-back otherwise races `gc --auto` / `git
+# maintenance`, which forks a detached process that repacks loose objects
+# while the next commit is still reading them -- surfacing intermittently on
+# CI as "invalid object <sha> ... error: Error building trees" mid-fixture
+# (never locally, where the machine is faster). These `-c` overrides turn the
+# race off deterministically. protocol.file.allow keeps the file:// shallow
+# clone working on git >= 2.38.
+_GIT_HARDENING = [
+    "-c", "gc.auto=0",
+    "-c", "maintenance.auto=false",
+    "-c", "commit.gpgSign=false",
+    "-c", "protocol.file.allow=always",
+]
+
+
 def _git(cwd, *args, env=None):
     import os
 
@@ -40,8 +56,8 @@ def _git(cwd, *args, env=None):
             full.pop(k)
     full.update(GIT_ENV)
     full.update(env or {})
-    out = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
-                         text=True, env=full)
+    out = subprocess.run(["git", *_GIT_HARDENING, "-C", str(cwd), *args],
+                         capture_output=True, text=True, env=full)
     assert out.returncode == 0, f"git {' '.join(args)}: {out.stderr}"
     return out.stdout.strip()
 
