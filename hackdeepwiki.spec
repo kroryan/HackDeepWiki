@@ -60,7 +60,12 @@ tiktoken_cache_source = os.path.abspath('tiktoken_cache')
 # commit. Filtering here keeps local and CI builds byte-identical in content
 # regardless of working-tree state.
 _TREE_EXCLUDED_DIRS = {'dist', 'build', 'logs', '__pycache__', '.pytest_cache',
-                       '.mypy_cache', '.ruff_cache', '.claude'}
+                       '.mypy_cache', '.ruff_cache', '.claude',
+                       # api/.venv is the build environment itself (poetry
+                       # installs it in-project, locally AND in CI) -- bundling
+                       # it shipped ~460 MB of site-packages as dead weight
+                       # inside the frozen app's api/ source tree.
+                       '.venv', '.venv311', '.git'}
 _TREE_EXCLUDED_EXTS = ('.pyc', '.pyo', '.log')
 
 
