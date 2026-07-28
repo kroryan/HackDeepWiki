@@ -16,6 +16,14 @@ class IgnoreEngraphisCloudWarningFilter(logging.Filter):
         return "managed cloud operation failed" not in record.getMessage()
 
 
+class IgnoreMlflowUnavailableFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord):
+        # adalflow's optional MLflow tracing integration warns on every startup
+        # when mlflow isn't installed. We never enable MLflow tracing, so the
+        # warning is expected noise, not an actionable condition.
+        return "MLflow not available" not in record.getMessage()
+
+
 def setup_logging(format: str = None):
     """
     Configure logging for the application with log rotation.
@@ -29,6 +37,16 @@ def setup_logging(format: str = None):
     Ensures log directory exists, prevents path traversal, and configures
     both rotating file and console handlers.
     """
+    # Silence adalflow's "MLflow not available" warning before importing
+    # api.data_root: that import transitively imports adalflow (to patch its
+    # default root path), which imports adalflow.tracing.mlflow_integration
+    # at module load time -- i.e. before logging.basicConfig() below runs and
+    # before any handler-level filter would be attached. Filtering the
+    # logger itself, this early, is the only way to catch it.
+    logging.getLogger("adalflow.tracing.mlflow_integration").addFilter(
+        IgnoreMlflowUnavailableFilter()
+    )
+
     # Determine log directory and default file path
     try:
         from api.data_root import get_data_root
@@ -100,8 +118,10 @@ def setup_logging(format: str = None):
     if file_handler is not None:
         file_handler.addFilter(IgnoreLogChangeDetectedFilter())
         file_handler.addFilter(IgnoreEngraphisCloudWarningFilter())
+        file_handler.addFilter(IgnoreMlflowUnavailableFilter())
     console_handler.addFilter(IgnoreLogChangeDetectedFilter())
     console_handler.addFilter(IgnoreEngraphisCloudWarningFilter())
+    console_handler.addFilter(IgnoreMlflowUnavailableFilter())
 
     # Apply logging configuration
     logging.basicConfig(level=log_level, handlers=handlers, force=True)
