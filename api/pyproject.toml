@@ -19,8 +19,8 @@ python = "^3.11"
 # project was otherwise stuck on (see api/pyproject.toml's implicit pull via
 # fastapi's own dependency bound) only gets fully patched by Starlette
 # 1.3.1+, which no fastapi <0.120 release accepts.
-fastapi = ">=0.119.0"
-uvicorn = { extras = ["standard"], version = ">=0.21.1" }
+fastapi = ">=0.141.1"
+uvicorn = { extras = ["standard"], version = ">=0.52.4" }
 # Engraphis's embedded dashboard mounts routes with Form/UploadFile params;
 # FastAPI refuses to build those without python-multipart (verified live --
 # the dashboard fails to mount and the app degrades to memory-only mode).
@@ -28,13 +28,13 @@ uvicorn = { extras = ["standard"], version = ">=0.21.1" }
 # format and dashboard are part of the executable contract, so builds must
 # never silently compile whatever happened to be on upstream ``main``.
 python-multipart = ">=0.0.18"
-pydantic = ">=2.0.0"
-google-genai = ">=2.14.0,<3.0.0"
+pydantic = ">=2.13.5"
+google-genai = ">=2.23.0,<3.0.0"
 engraphis = { git = "https://github.com/Coding-Dev-Tools/engraphis.git", rev = "74f58494fa0c57fade8b938fdac43dee939446af" }
-tiktoken = ">=0.5.0"
+tiktoken = ">=0.14.0"
 adalflow = ">=0.1.0"
 numpy = ">=1.24.0"
-faiss-cpu = ">=1.7.4"
+faiss-cpu = ">=1.15.0"
 langid = ">=1.1.6"
 requests = ">=2.33.0"
 # Direct dependency of api/code_agent (talking to the embedded opencode
@@ -44,11 +44,11 @@ httpx = ">=0.27.0"
 # storage.  Do not rely on Azure/Google pulling it transitively.
 cryptography = ">=46.0.3"
 jinja2 = ">=3.1.6"
-python-dotenv = ">=1.2.2"
+python-dotenv = ">=1.2.3"
 openai = ">=1.76.2"
 ollama = ">=0.4.8"
 aiohttp = ">=3.13.3"
-boto3 = ">=1.34.0"
+boto3 = ">=1.43.92"
 websockets = ">=11.0.3"
 azure-identity = ">=1.12.0"
 azure-core = ">=1.38.0"
@@ -61,11 +61,11 @@ azure-core = ">=1.38.0"
 # up with real, fixable advisories even though nothing in this project
 # imports them directly).
 urllib3 = ">=2.7.0"
-idna = ">=3.15"
+idna = ">=3.19"
 protobuf = ">=5.29.6"
 pyasn1 = ">=0.6.4"
-pygments = ">=2.20.0"
-pyjwt = ">=2.13.0"
+pygments = ">=2.21.0"
+pyjwt = ">=2.14.0"
 
 # Fanwiki XML import (api.fanwiki_import): converts MediaWiki export dumps
 # (Special:Export, the format Fandom/Wikia and any other MediaWiki-based fan
@@ -75,10 +75,10 @@ mwparserfromhell = ">=0.7.2"
 # Upper-bounded to match libzim's own supported Python range (<3.15); without
 # this poetry's solver fails outright since the project's own `python = "^3.11"`
 # is otherwise unbounded above 3.15.
-libzim = { version = ">=3.12.0", python = ">=3.11,<3.15" }
+libzim = { version = ">=3.13.0", python = ">=3.11,<3.15" }
 
 # Website wiki crawler (api.web_crawler): headless-browser fetch + HTML -> Markdown.
-playwright = ">=1.40.0"
+playwright = ">=1.62.0"
 beautifulsoup4 = ">=4.12.0"
 markdownify = ">=0.11.0"
 
@@ -93,7 +93,7 @@ markdown-it-py = ">=3.0.0"
 # Purely optional at runtime (lazy-imported, wrapped in try/except) -- Neo4j
 # itself is a separate opt-in Docker service (docker/vulnscan/docker-compose.yml),
 # never required for the scan to complete.
-neo4j = ">=5.0.0"
+neo4j = ">=6.3.0"
 
 
 [build-system]
@@ -103,12 +103,12 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.0.3"
 pytest-cov = ">=6.1.1"
-ruff = ">=0.14.0"
-mypy = ">=1.15.0"
+ruff = ">=0.16.7"
+mypy = ">=2.3.1"
 pip-audit = ">=2.9.0"
 
 [tool.poetry.group.build.dependencies]
-pyinstaller = { version = "==6.21.0", python = ">=3.11,<3.16" }
+pyinstaller = { version = "==6.22.2", python = ">=3.11,<3.16" }
 
 [tool.ruff]
 target-version = "py311"
